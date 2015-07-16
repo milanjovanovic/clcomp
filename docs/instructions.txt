@@ -1,0 +1,89 @@
+---------------------------------------------------------------------
+
+/digit — Indicates that the ModRM byte specifies only one register or
+memory (r/m) operand. The digit is specified by the ModRM reg field
+and is used as an instruction-opcode extension. Valid digit values
+range from 0 to 7.
+
+/r — Indicates that the ModRM byte specifies both a register operand
+and a reg/mem (register or memory) operand.
+
+cb, cw, cd, cp — Specifies a code-offset value and possibly a new
+code-segment register value. The value following the opcode is either
+one byte (cb), two bytes (cw), four bytes (cd), or six bytes (cp).
+
+ib, iw, id — Specifies an immediate-operand value. The opcode
+determines whether the value is signed or unsigned. The value
+following the opcode, ModRM, or SIB byte is either one byte (ib), two
+bytes (iw), or four bytes (id). Word and doubleword values start with
+the low-order byte.
+
++rb, +rw, +rd, +rq — Specifies a register value that is added to the
+hexadecimal byte on the left, forming a one-byte opcode. The result is
+an instruction that operates on the register specified by the register
+code. Valid register-code values are shown in Table 2-2.
+
+m64 — Specifies a quadword (64-bit) operand in memory.
+
++i — Specifies an x87 floating-point stack operand, ST(i). The value
+is used only with x87 floating-point instructions. It is added to the
+hexadecimal byte on the left, forming a one- byte opcode. Valid values
+range from 0 to 7.
+
+
+
+-------------------------------------------------------------------------
+
+cReg—Control register. 
+dReg—Debug register. 
+imm8—Byte (8-bit) immediate. 
+imm16—Word (16-bit) immediate. 
+imm16/32—Word (16-bit) or doubleword (32-bit) immediate. 
+imm32—Doubleword (32-bit) immediate. 
+imm32/64—Doubleword (32-bit) or quadword (64-bit) immediate. 
+imm64—Quadword (64-bit) immediate. 
+mem—An operand of unspecified size in memory. 
+mem8—Byte (8-bit) operand in memory. 
+mem16—Word (16-bit) operand in memory. 
+mem16/32—Word (16-bit) or doubleword (32-bit) operand in memory. 
+mem32—Doubleword (32-bit) operand in memory. 
+mem32/48 — Doubleword (32-bit) or 48-bit operand in memory. 
+mem48—48-bit operand in memory. 
+mem64—Quadword (64-bit) operand in memory. 
+mem128—Double quadword (128-bit) operand in memory. 
+mem16:16—Two sequential word (16-bit) operands in mem- ory. 
+mem16:32—A doubleword (32-bit) operand followed by a word (16-bit) operand in memory. 
+mem32real — Single-precision (32-bit) floating-point operand in memory. 
+mem32int — Doubleword (32-bit) integer operand in mem- ory. 
+mem64real — Double-precision (64-bit) floating-point oper- and in memory. 
+mem64int — Quadword (64-bit) integer operand in memory. mem80real — Double-extended-precision (80-bit) floating- 
+point operand in memory. 
+mem80dec — 80-bit packed BCD operand in memory, contain- ing 18 4-bit BCD digits. 
+mem2env—16-bit x87 control word or x87 status word. 
+mem14/28env—14-byte or 28-byte x87 environment. The x87 environment consists of the x87 control word, x87 status word, x87 tag word, last non-control instruction pointer, last data pointer, and opcode of the last non-control instruction completed. 
+mem94/108env— 94-byte or 108-byte x87 environment and register stack. 
+mem512env— 512-byte environment for 128-bit media, 64-bit media, and x87 instructions. 
+mmx—Quadword (64-bit) operand in an MMX register. 
+mmx1—Quadword (64-bit) operand in an MMX register, specified as the left-most (first) operand in the instruction syntax. 
+mmx2—Quadword (64-bit) operand in an MMX register, specified as the right-most (second) operand in the instruction syntax. 
+mmx/mem32—Doubleword (32-bit) operand in an MMX register or memory. 
+mmx/mem64—Quadword (64-bit) operand in an MMX register or memory. 
+mmx1/mem64—Quadword (64-bit) operand in an MMX register or memory, specified as the left-most (first) operand in the instruction syntax. 
+mmx2/mem64—Quadword (64-bit) operand in an MMX register or memory, specified as the right-most (second) operand in the instruction syntax. 
+moffset— Memory offset of unspecified size. moffset8—Operand in memory located at the specified byte 
+(8-bit) offset from the instruction pointer. 
+moffset16—Operand in memory located at the specified word (16-bit) offset from the instruction pointer. 
+moffset32—Operand in memory located at the specified doubleword (32-bit) offset from the instruction pointer. 
+pntr16:16—Far pointer with 16-bit selector and 16-bit offset. pntr16:32—Far pointer with 16-bit selector and 32-bit offset. reg—Operand of unspecified size in a GPR register. reg8—Byte (8-bit) operand in a GPR register. 
+reg16—Word (16-bit) operand in a GPR register. reg16/32—Word (16-bit) or doubleword (32-bit) operand in a 
+GPR register. 
+reg32—Doubleword (32-bit) operand in a GPR register. 
+reg64—Quadword (64-bit) operand in a GPR register. 
+reg/mem8—Byte (8-bit) operand in a GPR register or memory. 
+reg/mem16—Word (16-bit) operand in a GPR register or memory. 
+reg/mem32—Doubleword (32-bit) operand in a GPR register or memory. 
+reg/mem64—Quadword (64-bit) operand in a GPR register or memory. 
+rel8off—Relative address in the current code segment, in 8- bit offset range. 
+rel16off—Relative address in the current code segment, for 16-bit operand size. 
+rel32off—Relative address in the current code segment, for 32-bit operand size. 
+segReg or sReg—Word (16-bit) operand in a segment register.  

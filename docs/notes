@@ -1,0 +1,12 @@
+-------------------------------------
+CLOMP
+------------------------------------
+
+This is humbly attempt to write toy lisp compiler (not Common Lisp compiler).
+Objective is to bootstrap compiler and nothing else.
+Using Common Lisp (SBCL precisely) for bootstraping.
+Since our objective is only to bootstrap compiler we don't want to use heavy CL stuff in writing it (that is the reason code is archaic).
+Simple design consist of small C runtime/gc and compiler/assembler written in lisp.
+
+Why are you doing this ?
+Because our regular java jobs are boring and this is fun, and because I dont have extensive knowledge in writing compilers.
