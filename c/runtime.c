@@ -22,7 +22,7 @@ int load_code(int size, char *code) {
   return(size);
 }
 
-int foo() {
+void foo() {
   asm("mov $5, %eax");
 }
 

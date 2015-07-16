@@ -8,7 +8,6 @@
       (setf bits (/ bits 2))
       (setf (gethash register *registers*) (list register-bits extend-bit bits)))))
 
-
 (defun get-register (register)
   (gethash register *registers*))
 
@@ -67,16 +66,6 @@
 (defparameter *rex.w.position* 3)
 (defparameter *rex.extension.bits* 1)
 
-#+nil(defun get-rex-extension-bit-for-sib (sib-position)
-  (cond ((= sib-position *sib.base.position*) *rex.b.position*)
-	((= sib-position *sib.index.position*) *rex.x.position*)))
-
-(defun get-rex-extension-bit-for-modrm (modrm-position)
-  (cond ((= modrm-position *modrm.rm.position*) *rex.b.position*)
-	((= modrm-position *modrm.reg.position*) *rex.r.position*)
-	(t (error "Unknown position"))))
-
-
 (defun modrm (mod reg rm)
   (let ((modrm 0))
     (setf (ldb (byte 2 6) modrm) mod)
@@ -95,6 +84,10 @@
 (defparameter *modrm-1byte-displacement* #b01)
 (defparameter *modrm-register-indirect-or-sib* #b00)
 
+(defun rex-ext-bit (modrm-position)
+  (cond ((= modrm-position *modrm.rm.position*) *rex.b.position*)
+	((= modrm-position *modrm.reg.position*) *rex.r.position*)
+	(t (error "Unknown position"))))
 
 (defun get-scale-bits (scale)
   (if (null scale)
@@ -119,7 +112,6 @@
 (defparameter *sib.index.bits* 3)
 (defparameter *sib.base.position* 0)
 (defparameter *sib.base.bits* 3)
-
 
 (defparameter *instructions* (make-hash-table))
 
@@ -161,24 +153,30 @@
 (defun contain-flag (flag flags)
   (find flag flags))
 
-(defun match-instruction-operand-type (inst-template-operand operand)
-  (cond ((eq inst-template-operand :imm) (typep operand 'number))
-	((eq inst-template-operand :reg) (is-register operand))
-	((eq inst-template-operand :addr) (and (typep operand 'list)
-					       (= (length operand) 4)))
+(defun op-address? (operand)
+  (when (listp operand) operand))
+
+(defun tmpl-op-address? (template-operand)
+  (or (eq template-operand :addr)))
+
+(defun match-instruction-operand-type (template-operand operand)
+  (cond ((eq template-operand :imm) (typep operand 'number))
+	((eq template-operand :reg) (is-register operand))
+	((eq template-operand :addr) (and (typep operand 'list)
+					  (= (length operand) 4)))
 	(t (error (format nil "Unknown instruction with argument ~A" operand)))))
 
-(defun match-operands-type (inst-template-operands operands)
-  (and (match-instruction-operand-type (first inst-template-operands) (first operands))
-       (or (and (null (second inst-template-operands))
+(defun match-operands-type (template-operands operands)
+  (and (match-instruction-operand-type (first template-operands) (first operands))
+       (or (and (null (second template-operands))
 		(null (second operands)))
-	   (match-instruction-operand-type (second inst-template-operands) (second operands)))))
+	   (match-instruction-operand-type (second template-operands) (second operands)))))
 
 (defun match-mnemonic-operands (mnemonic-templates operands)
-  (let ((inst-number-of-operands (length operands)))
+  (let ((operands-count (length operands)))
     (dolist (template mnemonic-templates)
-      (let ((template-number-of-operands (length (inst-template-operands template))))
-	(when (and (= inst-number-of-operands template-number-of-operands)
+      (let ((template-operands-count (length (inst-template-operands template))))
+	(when (and (= operands-count template-operands-count)
 		   (match-operands-type (inst-template-operands template) operands))
 	  (return-from  match-mnemonic-operands template))))))
 
@@ -189,91 +187,14 @@
     (or (match-mnemonic-operands mnemonic-templates operands)
 	(error (format nil "Unknown instruction ~A with arguments ~A" mnemonic operands)))))
 
-(defun encode-operands (rex modrm dest-operand source-operand template-dest-operand template-source-operand opcode-d-bit)
-  (let (
-	;; on opcode position 1 bit depends destination/source position in modrm byte
-	(modrm-source-position (if opcode-d-bit *modrm.rm.position* *modrm.reg.position*))
-	(modrm-extend-source-rex-position (if opcode-d-bit *rex.b.position* *rex.r.position*))
-	(modrm-destination-position (if opcode-d-bit *modrm.reg.position* *modrm.rm.position*))
-	(modrm-extend-dest-rex-position (if opcode-d-bit *rex.r.position* *rex.b.position*)))
-    (cond ((eq template-source-operand :reg)
-	   (setf (ldb (byte *modrm.reg.rm.bits* modrm-source-position) modrm) (get-register-bits source-operand))
-	   (when (extended-register? source-operand)
-	     (setf (ldb (byte *rex.extension.bits* modrm-extend-source-rex-position) rex) #b1))))
-    (cond ((eq template-dest-operand :reg)
-	   (setf (ldb (byte *modrm.reg.rm.bits* modrm-destination-position) modrm) (get-register-bits dest-operand))
-	   (when (extended-register? dest-operand)
-	     (setf (ldb (byte *rex.extension.bits* modrm-extend-dest-rex-position) rex) #b1))))
-    (let ((effective-addr-operand (or (effective-address? source-operand) (effective-address? dest-operand)))
-	  (modrm-operand-position (or (and (effective-address? source-operand) modrm-source-position)
-				      (and (effective-address? dest-operand) modrm-destination-position))))
-      (if (null effective-addr-operand)
-	  (progn
-	    (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b11)
-	    (list rex modrm nil nil))
-	  ;; if there is memory operand
-	  (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm effective-addr-operand modrm-operand-position)
-	    (list rex modrm sib displacement))))))
-
-(defun encode-effective-memory-address (rex modrm effective-addr-operand modrm-operand-position)
-  (let ((sib nil))
-    (destructuring-bind (base index scale displacement) effective-addr-operand
-      (cond
-	;; if base register is instruction pointer we don't need SIB encoding
-	;; can't have index or scale when base is instruction pointer register
-	((and base (ip-register? base))
-	 (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b00)
-	 (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) #b101)
-	 (list rex modrm sib (dword-as-byte-list (or displacement 0))))
-	    
-	;; when base register is null displacement as dword needs to be encoded
-	((not base)
-	 ;; we can't have base-scale combo, only index-scale
-	 ;; FIXME, we should check instruction format before encoding it
-	 ;; when using SIB modrm.RM need to be #b100
-	 (setf (ldb (byte *modrm.reg.rm.bits* modrm-operand-position) modrm) #b100)
-	 (destructuring-bind (rex sib) (encode-sib rex 0 effective-addr-operand)
-	   (list rex modrm sib (dword-as-byte-list (make-signed-dword (or displacement 0))))))
-
-	;; no displacement but we have base register
-	((null displacement)
-	 (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b00)
-	 (if (or scale index)
-	     (progn
-	       ;; when using SIB modrm.RM need to be #b100
-	       (setf (ldb (byte *modrm.reg.rm.bits* modrm-operand-position) modrm) #b100)
-	       (destructuring-bind (nrex nsib) (encode-sib rex 0 effective-addr-operand)
-		 (list nrex modrm nsib displacement)))
-	     ;; no SIB
-	     (progn
-	       (setf (ldb (byte *modrm.reg.rm.bits* modrm-operand-position) modrm) (get-register-bits base))
-	       (when (extended-register? base)
-		 (setf (ldb (byte *rex.extension.bits* (get-rex-extension-bit-for-modrm modrm-operand-position)) rex) #b1))
-	       (list rex modrm sib displacement))))
-	
-	;; we have displacement
-	(t (let ((displacement-type (number-type displacement)))
-	     (cond ((eq displacement-type 'byte)
-		    ;; one byte displacement
-		    (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
-		    (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b01))
-		   ((or (eq displacement-type 'word)
-			(eq displacement-type 'dword))
-		    ;; dword (4 bytes) displacement
-		    (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
-		    (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b10))
-		   (t (error "Bad displacement"))
-		   )
-	     (if (or scale index)
-		 (progn
-		   (setf (ldb (byte *modrm.reg.rm.bits* modrm-operand-position) modrm) #b100)
-		   (destructuring-bind (rex sib) (encode-sib rex 0 effective-addr-operand)
-		     (list rex modrm sib displacement)))
-		 (progn
-		   (setf (ldb (byte *modrm.reg.rm.bits* modrm-operand-position) modrm) (get-register-bits base))
-		   (when (extended-register? base)
-		     (setf (ldb (byte *rex.extension.bits* (get-rex-extension-bit-for-modrm modrm-operand-position)) rex) #b1))	       
-		   (list rex modrm sib displacement)))))))))
+(defun get-modrm-operand-positions (template-source-operand template-dest-operand)
+  (let* ((source-is-address (tmpl-op-address? template-source-operand))
+	 (dest-is-address (tmpl-op-address? template-dest-operand)))
+    (if (or source-is-address dest-is-address)
+	(if source-is-address
+	    (list *modrm.rm.position* *modrm.reg.position*)
+	    (list *modrm.reg.position* *modrm.rm.position*))
+	(list *modrm.reg.position* *modrm.rm.position*))))
 
 (defun encode-sib (rex sib effective-addr-operand)
   (destructuring-bind (base index scale displacement) effective-addr-operand
@@ -292,6 +213,86 @@
 	(setf (ldb (byte *sib.index.bits* *sib.index.position*) sib) #b100))
     (setf (ldb (byte *sib.scale.bits* *sib.scale.position*) sib) (get-scale-bits scale))
     (list rex sib)))
+
+(defun encode-effective-memory-address (rex modrm addr-operand)
+  (let ((sib nil))
+    (destructuring-bind (base index scale displacement) addr-operand
+      (cond
+	;; if base register is instruction pointer we don't need SIB encoding
+	;; can't have index or scale when base is instruction pointer register
+	((and base (ip-register? base))
+	 (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b00)
+	 (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) #b101)
+	 (list rex modrm sib (dword-as-byte-list (or displacement 0))))
+	    
+	;; when base register is null displacement as dword needs to be encoded
+	((not base)
+	 ;; we can't have base-scale combo, only index-scale
+	 ;; FIXME, we should check instruction format before encoding it
+	 ;; when using SIB modrm.RM need to be #b100
+	 (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) #b100)
+	 (destructuring-bind (rex sib) (encode-sib rex 0 addr-operand)
+	   (list rex modrm sib (dword-as-byte-list (make-signed-dword (or displacement 0))))))
+
+	;; no displacement but we have base register
+	((null displacement)
+	 (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b00)
+	 (if (or scale index)
+	     (progn
+	       ;; when using SIB modrm.RM need to be #b100
+	       (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) #b100)
+	       (destructuring-bind (nrex nsib) (encode-sib rex 0 addr-operand)
+		 (list nrex modrm nsib displacement)))
+	     ;; no SIB
+	     (progn
+	       (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) (get-register-bits base))
+	       (when (extended-register? base)
+		 (setf (ldb (byte *rex.extension.bits* (rex-ext-bit *modrm.rm.position*)) rex) #b1))
+	       (list rex modrm sib displacement))))
+	
+	;; we have displacement
+	(t (let ((displacement-type (number-type displacement)))
+	     (cond ((eq displacement-type 'byte)
+		    ;; one byte displacement
+		    (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
+		    (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b01))
+		   ((or (eq displacement-type 'word)
+			(eq displacement-type 'dword))
+		    ;; dword (4 bytes) displacement
+		    (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
+		    (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b10))
+		   (t (error "Bad displacement")))
+	     (if (or scale index)
+		 (progn
+		   (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) #b100)
+		   (destructuring-bind (rex sib) (encode-sib rex 0 addr-operand)
+		     (list rex modrm sib displacement)))
+		 (progn
+		   (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) (get-register-bits base))
+		   (when (extended-register? base)
+		     (setf (ldb (byte *rex.extension.bits* (rex-ext-bit *modrm.rm.position*)) rex) #b1))	       
+		   (list rex modrm sib displacement)))))))))
+
+(defun encode-operands (rex modrm dest-operand source-operand template-dest-operand template-source-operand)
+  (destructuring-bind (source-operand-modrm-position dest-operand-modrm-position) (get-modrm-operand-positions template-source-operand template-dest-operand)
+    (let ((rex-source-extend-bit (rex-ext-bit source-operand-modrm-position))
+	  (rex-dest-extend-bit (rex-ext-bit dest-operand-modrm-position)))
+      (cond ((eq template-source-operand :reg)
+	     (setf (ldb (byte *modrm.reg.rm.bits* source-operand-modrm-position) modrm) (get-register-bits source-operand))
+	     (when (extended-register? source-operand)
+	       (setf (ldb (byte *rex.extension.bits* rex-source-extend-bit) rex) #b1))))
+      (cond ((eq template-dest-operand :reg)
+	     (setf (ldb (byte *modrm.reg.rm.bits* dest-operand-modrm-position) modrm) (get-register-bits dest-operand))
+	     (when (extended-register? dest-operand)
+	       (setf (ldb (byte *rex.extension.bits* rex-dest-extend-bit) rex) #b1))))
+      (let ((addr-operand (or (op-address? source-operand)
+			      (op-address? dest-operand))))
+	(if addr-operand
+	    (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm addr-operand)
+	      (list rex modrm sib displacement))
+	    (progn
+	      (setf (ldb (byte *modrm.mod.bits* *modrm.mod.position*) modrm) #b11)
+	      (list rex modrm nil nil)))))))
 
 #+nil
 (defun encode-one-operand-direct (operand template-operand template-flags template-prefixes template-rex template-opcode template-modrm)
@@ -341,13 +342,9 @@
 								      dest-operand
 								      source-operand
 								      template-dest-operand
-								      template-source-operand
-								      template-opcode-d-bit)
+								      template-source-operand)
       (filter (append (list template-prefixes rex template-opcode modrm sib) (reverse displacement))
 	      nil))))
-
-(defun effective-address? (operand)
-  (when (listp operand) operand))
 
 (defun check-instruction-format (inst args)
   ;; TODO
@@ -385,6 +382,9 @@
 
 (define-inst-template :mov (:addr :reg) ()
 		      nil #x48 #x89 nil)
+
+(define-inst-template :lea (:reg :addr) ()
+		      nil #x48 #x8D nil)
 
 
 
