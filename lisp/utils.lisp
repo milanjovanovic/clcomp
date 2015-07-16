@@ -12,6 +12,9 @@
 (defparameter *qword-min* (- (expt 2 63)))
 (defparameter *qword-max* (- (expt 2 63) 1))
 
+(defun byte-as-byte-list (byte)
+  (list byte))
+
 (defun dword-as-byte-list (dword)
   (let ((res nil))
     (dotimes (i 4)
@@ -23,6 +26,11 @@
     (dotimes (i 8)
       (push (ldb (byte 8 (* i 8)) qword) res))
     res))
+
+(defun make-signed-byte (number)
+  (if (minusp number)
+      (- (- (expt 2 7) 1) (- number))
+      number))
 
 (defun make-signed-dword (number)
   (if (minusp number)
