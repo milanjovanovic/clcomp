@@ -2,8 +2,12 @@
 
 (defparameter *registers* (make-hash-table))
 
-(defun defregister (register register-bits extend-bit)
-  (setf (gethash register *registers*) (list register-bits extend-bit)))
+(defun defregister (registers register-bits extend-bit)
+  (let ((bits 128))
+    (dolist (register registers)
+      (setf bits (/ bits 2))
+      (setf (gethash register *registers*) (list register-bits extend-bit bits)))))
+
 
 (defun get-register (register)
   (gethash register *registers*))
@@ -14,6 +18,9 @@
 (defun get-register-extend-bit (register)
   (second (get-register register)))
 
+(defun get-register-size (register)
+  (third (get-register register)))
+
 (defun is-register (what)
   (nth-value 1 (get-register what)))
 
@@ -21,22 +28,22 @@
   (let ((extend-bit (get-register-extend-bit register)))
    (and extend-bit (= 1 extend-bit))))
 
-(defregister :rax #b000 #b0)
-(defregister :rcx #b001 #b0)
-(defregister :rdx #b010 #b0)
-(defregister :rbx #b011 #b0)
-(defregister :rsp #b100 #b0)
-(defregister :rbp #b101 #b0)
-(defregister :rsi #b110 #b0)
-(defregister :rdi #b111 #b0)
-(defregister :r8 #b000 #b1)
-(defregister :r9 #b001 #b1)
-(defregister :r10 #b010 #b1)
-(defregister :r11 #b011 #b1)
-(defregister :r12 #b100 #b1)
-(defregister :r13 #b101 #b1)
-(defregister :r14 #b110 #b1)
-(defregister :r15 #b110 #b1)
+(defregister '(:rax :eax :ax :al) #b000 #b0)
+(defregister '(:rcx :ecx :cx :cl) #b001 #b0)
+(defregister '(:rdx :edx :dx :dl) #b010 #b0)
+(defregister '(:rbx :ebx :bx :bl) #b011 #b0)
+(defregister '(:rsp :esp :sp :ah) #b100 #b0)
+(defregister '(:rbp :ebp :bp :ch) #b101 #b0)
+(defregister '(:rsi :esi :si :dh) #b110 #b0)
+(defregister '(:rdi :edi :di :bh) #b111 #b0)
+(defregister '(:r8 :r8d :r8w :r8L) #b000 #b1)
+(defregister '(:r9 :r9d :r9w :r9L) #b001 #b1)
+(defregister '(:r10 :r10d :r10w :r10l) #b010 #b1)
+(defregister '(:r11 :r11d :r11w :r11l) #b011 #b1)
+(defregister '(:r12 :r12d :r12w :r12l) #b100 #b1)
+(defregister '(:r13 :r13d :r13w :r13l) #b101 #b1)
+(defregister '(:r14 :r14d :r14w :r14l) #b110 #b1)
+(defregister '(:r15 :r15 :r15w :r15l) #b110 #b1)
 
 (defparameter *instruction-pointer-register* :rip)
 (defun ip-register? (register)
