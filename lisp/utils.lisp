@@ -27,6 +27,14 @@
       (push (ldb (byte 8 (* i 8)) qword) res))
     res))
 
+(defun immediate-as-byte-list (immediate template)
+  (let ((bits (immediate-bits template))
+	(signed-immediate (make-signed-immediate immediate template)))
+    (let ((res nil))
+      (dotimes (i (/ bits 8))
+	(push (ldb (byte 8 (* i 8)) signed-immediate) res))
+      res)))
+
 (defun make-signed-byte (number)
   (if (minusp number)
       (- (- (expt 2 7) 1) (- number))
@@ -40,6 +48,11 @@
 (defun make-signed-qword (number)
   (if (minusp number)
       (- (- (expt 2 63) 1) (- number))
+      number))
+
+(defun make-signed-immediate (number template)
+  (if (minusp number)
+      (- (- (expt 2 (immediate-bits template)) 1) (- number))
       number))
 
 (defun little-endian-64bit (num)
@@ -82,3 +95,16 @@
     (dolist (byte instruction)
       (when byte (push byte bytes)))
     (reverse (mapcar (lambda (b) (format nil "#x~2,'0x" b)) bytes))))
+
+
+(defun make-byte-object ()
+  (make-array 8 :initial-element nil))
+
+(defun set-byte-index (byte-object index bit)
+  (setf (aref byte-object index) bit))
+
+(defun set-in-byte (byte-object start size what)
+  (dotimes (i size)
+    (print (list (+ i start) (- size i)))
+    (setf (aref byte-object (+ i start)) (logbitp (- size i 1) what))))
+

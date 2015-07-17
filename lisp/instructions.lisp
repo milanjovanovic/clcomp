@@ -19,22 +19,22 @@
 (define-inst-template :mov (:reg32 :addr) ()
 		      #x67 nil #x8b nil)
 
-(define-inst-template :mov (:reg64 :imm64) ()
-		      nil nil nil nil)
-(define-inst-template :mov (:reg32 :imm32) ()
+(define-inst-template :mov (:reg64 :imm64) (/d)
+		      nil #x48 #xb8 nil)
+#+nil(define-inst-template :mov (:reg32 :imm32) ()
 		      nil nil nil nil)
 
 
-(define-inst-template :push (:reg64) (register-added-to-opcode) 
+(define-inst-template :push (:reg64) (/d) 
 		      nil nil #x50 nil)
 
 (define-inst-template :push (:imm64) ()
-		      nil nil #x68 nil)
+		      nil #x48 #x68 nil)
 
 (define-inst-template :push (:addr) ()
 		      nil nil #xff #b00110000)
 
-(define-inst-template :pop (:reg64) (register-added-to-opcode)
+(define-inst-template :pop (:reg64) (/d)
 		      nil nil #x58 nil)
 
 (define-inst-template :lea (:reg64 :addr) ()

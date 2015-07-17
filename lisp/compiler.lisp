@@ -4,6 +4,8 @@
 (load "/Users/milan/projects/clcomp/lisp/assembler.lisp")
 (load "/Users/milan/projects/clcomp/lisp/instructions.lisp")
 (load "/Users/milan/projects/clcomp/lisp/tests.lisp")
+(load "/Users/milan/projects/clcomp/lisp/vops.lisp")
+
 
 
 #+nil
