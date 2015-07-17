@@ -12,6 +12,17 @@
 
 (define-inst-template :mov (:addr :reg64) ()
 		      nil #x48 #x89 nil)
+(define-inst-template :mov (:addr :reg32) ()
+		      #x67 nil #x89 nil)
+(define-inst-template :mov (:reg64 :addr) ()
+		      nil #x48 #x8b nil)
+(define-inst-template :mov (:reg32 :addr) ()
+		      #x67 nil #x8b nil)
+
+(define-inst-template :mov (:reg64 :imm64) ()
+		      nil nil nil nil)
+(define-inst-template :mov (:reg32 :imm32) ()
+		      nil nil nil nil)
 
 
 (define-inst-template :push (:reg64) (register-added-to-opcode) 

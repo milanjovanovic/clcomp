@@ -21,7 +21,7 @@
   (third (get-register register)))
 
 (defun is-register (what)
-  (nth-value 1 (get-register what)))
+  (get-register what))
 
 (defun extended-register? (register)
   (let ((extend-bit (get-register-extend-bit register)))
@@ -424,17 +424,70 @@
       (filter (append (list template-prefixes rex template-opcode modrm sib) (reverse displacement))
 	      nil))))
 
-(defun check-instruction-format (inst args)
-  ;; TODO
-  t)
+(defun reformat-3size-addr (addr)
+  (let ((first (first addr))
+	(second (second addr))
+	(third (third addr)))
+    (cond ((and (is-register first)
+		(is-register second)
+		(typep third 'number))
+	   (list first second third nil))
+	  ((and (typep third 'number)
+		(typep second 'number)
+		(is-register first))
+	   (list nil first second third))
+	  (t (error "Bad addr format")))))
+
+(defun reformat-2size-addr (addr)
+  (let ((first (first addr))
+	(second (second addr)))
+    (cond ((and (is-register first)
+		(is-register second))
+	   (list first second nil nil))
+	  ((and (is-register first)
+		(typep second 'number))
+	   (list nil first second nil))
+	  (t (error "Bad addr format")))))
+
+(defun reformat-1size-addr (addr)
+  (let ((first (first addr)))
+    (cond ((is-register first) (list first nil nil nil))
+	  ((typep first 'number) (list nil nil nil first)))))
+
+(defun reformat-operand (addr)
+  (if (listp addr)
+      (let ((size (length addr)))
+	(cond ((= 4 size) addr)
+	      ((= 3 size) (reformat-3size-addr addr))
+	      ((= 2 size) (reformat-2size-addr addr))
+	      ((= 1 size) (reformat-1size-addr addr))
+	      (t (error "Bad addr format"))))
+      addr))
+
+(defun reparse-operands (operands)
+  (let ((op1 (first operands))
+	(op2 (second operands)))
+    (if op2
+	(list (reformat-operand op1) (reformat-operand op2))
+	(list (reformat-operand op1)))))
 
 (defun encode-instruction (mnemonic operands)
   (if (= (length operands) 1)
       (encode-one-operand-instruction mnemonic operands)
       (encode-two-operand-instruction mnemonic operands)))
 
-(defun @ (base index scale displacement)
-    (list base index scale displacement))
+(defun @ (&rest rest)
+    rest)
 
-(defun inst (inst &rest args)
-  (encode-instruction inst args))
+(defun inst (inst &rest operands)
+  (encode-instruction inst (reparse-operands operands)))
+
+
+;;; posible effective address format
+;;; full format: (@ base index scale displacement)
+;;; short: (@ base index scale)
+;;;        (@ index scale displacement)
+;;;        (@ base index)
+;;;        (@ index scale)
+;;;        (@ base)
+;;;        (@ displacement)
