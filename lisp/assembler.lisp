@@ -48,6 +48,61 @@
 (defun ip-register? (register)
   (eq register *instruction-pointer-register*))
 
+(defparameter *tmpl-reg-operands* '(:reg8 :reg16 :reg32 :reg64))
+
+(defun register-type (register)
+  (let ((register-bits (get-register-size register)))
+    (case register-bits
+      (8 :reg8)
+      (16 :reg16)
+      (32 :reg32)
+      (64 :reg64))))
+
+(defun register-operand? (template-operand)
+  (find template-operand *tmpl-reg-operands*))
+
+(defparameter *tmpl-imm-operands* '(:imm8 :imm16 :imm32 :imm64))
+
+(defun immediate-type (number)
+  (let ((type (signed-number-type number)))
+    (case type
+      (byte :imm8)
+      (word :imm16)
+      (dword :imm32)
+      (qword :imm64)
+      (t :too-large))))
+
+(defun immediate-bits (type)
+  (case type
+    (:imm8 8)
+    (:imm16 16)
+    (:imm32 32)
+    (:imm64 64)
+    ;; FIXME
+    (t 128)))
+
+(defun imm-is-of-type (immediate type)
+  (let ((exact-type (immediate-type immediate)))
+    (<= (immediate-bits exact-type)
+	(immediate-bits type))))
+
+(defun immediate-operand? (template-operand)
+  (find template-operand *tmpl-imm-operands*))
+
+;; we will use this to sort our matched templates
+;; this is needed because of immediate matching (smaller is better)
+(defun operand-matching-value (template-operand operand)
+  (cond ((and (null template-operand)
+	      (null operand))
+	 0)
+	((register-operand? template-operand)
+	 0)
+	((eq template-operand :addr)
+	 0)
+	((immediate-operand? template-operand)
+	 (- (immediate-bits template-operand)
+	    (immediate-bits (immediate-type operand))))))
+
 (defun rex (w r x b)
   (let ((rex 0))
     (setf (ldb (byte 4 4) rex) #b0100)	; fixed value
@@ -160,10 +215,12 @@
   (or (eq template-operand :addr)))
 
 (defun match-instruction-operand-type (template-operand operand)
-  (cond ((eq template-operand :imm) (typep operand 'number))
-	((eq template-operand :reg) (is-register operand))
+  (cond ((register-operand? template-operand) (eq (register-type operand)
+						  template-operand))
 	((eq template-operand :addr) (and (typep operand 'list)
 					  (= (length operand) 4)))
+	((immediate-operand? template-operand) (and (typep operand 'number)
+						    (imm-is-of-type operand template-operand)))	
 	(t (error (format nil "Unknown instruction with argument ~A" operand)))))
 
 (defun match-operands-type (template-operands operands)
@@ -172,13 +229,32 @@
 		(null (second operands)))
 	   (match-instruction-operand-type (second template-operands) (second operands)))))
 
+(defun sort-matched-templates (matched-templates operands)
+  (let ((last-template nil)
+	(last-matched-value 10000)) ;; some big number
+    (dolist (template matched-templates)
+      (let* ((templ-operands (inst-template-operands template))
+	     (match-value (+ (operand-matching-value (first templ-operands) (first operands))
+			     (operand-matching-value (second templ-operands) (second operands)))))
+	(when (< match-value last-matched-value)
+	  (setf last-template template)
+	  (setf last-matched-value match-value))))
+    last-template))
+
+(defun best-template-match (matched-templates operands)
+  (cond ((null matched-templates) nil)
+	((= 1 (length matched-templates)) (first matched-templates))
+	(t (sort-matched-templates matched-templates operands))))
+
 (defun match-mnemonic-operands (mnemonic-templates operands)
-  (let ((operands-count (length operands)))
+  (let ((operands-count (length operands))
+	(matched))
     (dolist (template mnemonic-templates)
-      (let ((template-operands-count (length (inst-template-operands template))))
-	(when (and (= operands-count template-operands-count)
+      (let ((tmpl-operands-count (length (inst-template-operands template))))
+	(when (and (= tmpl-operands-count operands-count)
 		   (match-operands-type (inst-template-operands template) operands))
-	  (return-from  match-mnemonic-operands template))))))
+	  (push template matched))))
+    (best-template-match matched operands)))
 
 (defun find-instruction-template (mnemonic operands)
   (let ((mnemonic-templates (get-mnemonic-templates mnemonic)))
@@ -251,7 +327,7 @@
 	       (list rex modrm sib displacement))))
 	
 	;; we have displacement
-	(t (let ((displacement-type (number-type displacement)))
+	(t (let ((displacement-type (signed-number-type displacement)))
 	     (cond ((eq displacement-type 'byte)
 		    ;; one byte displacement
 		    (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
@@ -277,13 +353,15 @@
   (destructuring-bind (source-operand-modrm-position dest-operand-modrm-position) (get-modrm-operand-positions template-source-operand template-dest-operand)
     (let ((rex-source-extend-bit (rex-ext-bit source-operand-modrm-position))
 	  (rex-dest-extend-bit (rex-ext-bit dest-operand-modrm-position)))
-      (cond ((eq template-source-operand :reg)
+      (cond ((register-operand? template-source-operand)
 	     (setf (ldb (byte *modrm.reg.rm.bits* source-operand-modrm-position) modrm) (get-register-bits source-operand))
 	     (when (extended-register? source-operand)
+	       (setf rex (or rex 0))
 	       (setf (ldb (byte *rex.extension.bits* rex-source-extend-bit) rex) #b1))))
-      (cond ((eq template-dest-operand :reg)
+      (cond ((register-operand? template-dest-operand)
 	     (setf (ldb (byte *modrm.reg.rm.bits* dest-operand-modrm-position) modrm) (get-register-bits dest-operand))
 	     (when (extended-register? dest-operand)
+	       (setf rex (or rex 0))
 	       (setf (ldb (byte *rex.extension.bits* rex-dest-extend-bit) rex) #b1))))
       (let ((addr-operand (or (op-address? source-operand)
 			      (op-address? dest-operand))))
@@ -348,7 +426,6 @@
 
 (defun check-instruction-format (inst args)
   ;; TODO
-  (declare (ignorable inst args))
   t)
 
 (defun encode-instruction (mnemonic operands)
@@ -361,42 +438,3 @@
 
 (defun inst (inst &rest args)
   (encode-instruction inst args))
-
-
-;;; instruction templates
-
-(define-inst-template :push (:reg) (register-added-to-opcode) 
-		      nil nil #x50 nil)
-
-(define-inst-template :push (:imm) ()
-		      nil nil #x68 nil)
-
-(define-inst-template :push (:addr) ()
-		      nil nil #xff #b00110000)
-
-(define-inst-template :pop (:reg) (register-added-to-opcode)
-		      nil nil #x58 nil)
-
-(define-inst-template :mov (:reg :reg) ()
-		      nil #x48 #x89 nil)
-
-(define-inst-template :mov (:addr :reg) ()
-		      nil #x48 #x89 nil)
-
-(define-inst-template :lea (:reg :addr) ()
-		      nil #x48 #x8D nil)
-
-
-
-;;; instrucions
-
-#+nil
-(
-;;; instruction examples
- ;;
- (inst :mov :RAX 10)
- (inst :mov :RAX :RBX)
- (inst :leal :RBX (@ :RCX :RAX 4 16))
- (inst :push RBX)
- (inst :push (@ :RAX))
- )

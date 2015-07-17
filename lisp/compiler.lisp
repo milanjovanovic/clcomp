@@ -2,6 +2,7 @@
 (load "/Users/milan/projects/clcomp/lisp/utils.lisp")
 (load "/Users/milan/projects/clcomp/lisp/ffi.lisp")
 (load "/Users/milan/projects/clcomp/lisp/assembler.lisp")
+(load "/Users/milan/projects/clcomp/lisp/instructions.lisp")
 (load "/Users/milan/projects/clcomp/lisp/tests.lisp")
 
 

@@ -59,7 +59,7 @@
   (mapcar (lambda (x) (format nil "#x~2,'0x" x))
 	  instructions))
 
-(defun number-type (number)
+(defun signed-number-type (number)
   (cond ((and (>= number *byte-min*)
 	      (<=  number *byte-max*))
 	 'byte)
@@ -72,8 +72,7 @@
 	((and (>= number *qword-min*)
 	      (<= number *qword-max*))
 	 'qword)
-	(t
-	 (error (format nil "Overflow on ~A" number)))))
+	(t 'too-large)))
 
 (defun opcode-d-bit (opcode)
   (logbitp 1 opcode))
