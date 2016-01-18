@@ -1,0 +1,2 @@
+(defpackage #:clcomp
+  (:use #:cl))

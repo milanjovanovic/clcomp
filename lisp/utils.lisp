@@ -1,3 +1,5 @@
+(in-package #:clcomp)
+
 (defun print-byte (n)
   (format t "#b~8,'0b" n)
   (format t "~%#x~2,'0x" n)
