@@ -2,6 +2,7 @@
 
 (declaim (optimize (debug 3) (safety 3) (speed 0)))
 
+#|
 (defparameter *binary-functions* '((+ two-arg-+) (- two-arg--) (* two-arg-*) (/ two-arg-/)))
 
 (defun is-binary-function (symbol)
@@ -27,6 +28,7 @@
 				(list two-arg-version (first arguments) (second arguments))
 				(third arguments)))
 		    (nthcdr 3 arguments)))))))
+|#
 
 (defun transform-lambda-form (lambda-form)
   (list 'lambda (second lambda-form)
@@ -56,7 +58,7 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; transform sex expression to structures tree
+;;; transform sexp expression to structures tree
 
 (defstruct constant-node value)
 (defstruct quoted-node form)
