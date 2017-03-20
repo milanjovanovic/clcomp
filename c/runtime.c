@@ -12,16 +12,33 @@
 #include "lispo.h"
 
 
-#define STACK_SIZE 2097152 // 2 MB
-#define HEAP_SIZE 52428800 // 50 MB
-#define HEAP_START 0x200000000
-#define STACK (HEAP_START + (2 * 1024 * 1024))
+#define STACK_SIZE (2 * 1024 * 1024)
+#define STATIC_HEAP_SIZE (30 * 1024 * 1024)
+#define LISP_HEAP_SIZE (100 * 1024 * 1024)
+#define LISP_HEAP_START 0x200000000
 
 lispobj entry(uintptr_t stack, uintptr_t heap);
 
-uintptr_t heap = HEAP_START;
-uintptr_t stack = STACK;
-uintptr_t current_heap = HEAP_START;
+/*
+  high address
+---------------- 0x200000000
+   lisp heap
+----------------
+   static heap
+---------------- 
+    stack
+----------------
+ low addresses
+*/
+
+uintptr_t allocation_start = LISP_HEAP_START - (STACK_SIZE + STATIC_HEAP_SIZE);
+uintptr_t stack_start = LISP_HEAP_START - (STATIC_HEAP_SIZE + WORD_SIZE);
+uintptr_t static_heap_start = LISP_HEAP_START - STATIC_HEAP_SIZE;
+
+size_t memory_size = LISP_HEAP_SIZE + STACK_SIZE  + STATIC_HEAP_SIZE;
+
+void *current_heap;
+
 
 int is_pointer(lispobj obj) {
   return (obj & MASK) == POINTER_TAG ? 1 : 0;
@@ -43,6 +60,17 @@ int is_fun(lispobj obj) {
   return (obj & MASK) == FUNCTION_TAG ? 1 : 0;
 }
 
+int is_string(lispobj obj) {
+  if(!is_pointer(obj)) {
+    return 0;
+  }
+
+  lispobj *tag = (lispobj *) untag_pointer(obj);
+
+  return (*tag & 0xFF) == CHAR_ARRAY_TAG ? 1 : 0;
+   
+}
+
 enum base_lisp_type get_lisp_type(lispobj obj) {
   
   if (is_fixnum(obj)) {
@@ -61,33 +89,57 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
 }
 
 void print_lisp(lispobj obj) {
-  
-  enum base_lisp_type type = get_lisp_type(obj);
-  
-  switch(type) {
+
+  if(obj == LISP_NIL) {
     
-  case FIXNUM :
-    // FIXME, this don't work for negative fixnums
-    printf("FIXNUM: %lld\n", (int64_t) obj >> TAG_SIZE);
-    break;
-  case CHAR :
-    printf("CHAR: %c\n", (char) ((obj >> 8) << 1));
-    break;
-  case LIST :
-    printf("LIST\n");
-    break;
-  case FUNCTION :
-    printf("FUNCTION\n");
-    break;
-  default :
-    printf("UNKNOWN PRINT: %d", type);
-    break;
+    printf("NIL");
+    
+  } else if (obj == LISP_T) {
+    
+    printf("T");
+    
+  } else {
+
+    enum base_lisp_type type = get_lisp_type(obj);
+    
+    switch(type) {
+    
+    case FIXNUM :
+      // FIXME, this don't work for negative fixnums
+      printf("%lli", untag_fixnum(obj));
+      break;
+    case CHAR :
+      printf("%c", untag_char(obj));
+      break;
+    case LIST :
+      printf("(");
+      print_lisp(car(obj));
+      if(cdr(obj) == LISP_NIL) {
+	printf(")");
+      } else if(get_lisp_type(cdr(obj)) == LIST) {
+	printf(" ");
+	print_lisp(cdr(obj));
+      } else {
+	printf(" . ");
+	print_lisp(cdr(obj));
+      }
+      printf(")");
+      break;
+    case FUNCTION :
+      printf("FUNCTION\n");
+      break;
+    case POINTER :
+      printf("POINTER\n");
+    default :
+      printf("UNKNOWN PRINT: %d", type);
+      break;
+    }
   }
 }
 
 void *allocate_heap() {
-  return mmap((void *) HEAP_START,
-	      HEAP_SIZE,
+  return mmap((void *) allocation_start,
+	      memory_size,
 	      PROT_READ | PROT_WRITE | PROT_EXEC,
 	      MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
 }
@@ -97,28 +149,35 @@ void copy_code(void *code, int size) {
 }
 
 int main() {
-  
-  //  print_lisp(entry(stack, heap));
-  void *p = allocate_heap();
-  printf("heap start: %p\n", p);
 
   
-  //printf("%p\n", p);
-  //struct cons *cons = allocate_lisp_cons(&p, (lispobj) 1, (lispobj) 2);
-  //printf("%p\n", p);
-  //printf("%lu\n", cons->cdr);
-
-  char *str = "abcd";
-  struct array *lisp_str = allocate_lisp_string(&p, str);
-  printf("current heap start: %p\n", p);
-
+  current_heap = allocate_heap();
   
-  // printf("%lu\n", lisp_str->tag);
-  //printf("%lu\n", lisp_str->size);
-  //  printf("%c\n", lisp_str->elements);
+  printf("memory start address: %p\n", current_heap);
+  printf("static heap start address: %p\n", static_heap_start);
+  printf("stack start: %p\n", stack_start);
 
-  //char *x = (char *) p;
-  //x--;
-  //printf("%c\n", *x);
-  munmap(p, HEAP_SIZE);
+  current_heap += STACK_SIZE + STATIC_HEAP_SIZE;
+  
+  printf("lisp heap start address: %p\n", current_heap);
+  
+  // set NIL car and cdr
+  lispobj *lp = current_heap;
+  *lp = LISP_NIL;
+  lp++;
+  *lp = LISP_NIL;
+  lp++;
+  current_heap = (void *) lp;
+
+  printf("heap start address: %p\n", current_heap);
+
+  char *cstr = "abcd";
+  struct array *s1 = allocate_string(&current_heap, cstr);
+
+  printf("heap start address: %p\n", current_heap);
+  printf("%d\n", is_string(tag_array(s1)));
+
+  //print_lisp(entry(stack, heap));
+  
+  munmap((void *) allocation_start, memory_size);
 }

@@ -5,7 +5,7 @@
 #include "lispo.h"
 
 
-struct cons *allocate_lisp_cons(void **heap, lispobj car, lispobj cdr) {
+struct cons *allocate_cons(void **heap, lispobj car, lispobj cdr) {
   struct cons *cons = (struct cons *) *heap;
   *heap += sizeof(struct cons);
   cons->car = car;
@@ -13,33 +13,98 @@ struct cons *allocate_lisp_cons(void **heap, lispobj car, lispobj cdr) {
   return cons;
 }
 
-struct array *allocate_lisp_string(void **heap, char *cstring) {
+lispobj tag_cons(struct cons *cons) {
+  return (lispobj) cons | LIST_TAG;
+}
 
-  uintptr_t start = (uintptr_t) *heap;
-  
+struct cons *untag_cons(lispobj cons) {
+  return (struct cons *) untag_pointer(cons);
+}
+
+lispobj car(lispobj lisp_cons) {
+  struct cons *cons = untag_cons(lisp_cons);
+  return cons->car;
+}
+
+lispobj cdr(lispobj lisp_cons) {
+  struct cons *cons = untag_cons(lisp_cons);
+  return cons->cdr;
+}
+
+struct array *allocate_string(void **heap, char *cstring) {
+
   struct array *lisp_str = (struct array *) *heap;
-  int cs_size = strlen(cstring);
+  int cstr_size = strlen(cstring);
+
+  lisp_str->tag = CHAR_ARRAY_TAG;
+  lisp_str->size = cstr_size;
   
   *heap += sizeof(struct array);
-  
   *heap -= WORD_SIZE;
-
-  strncpy(*heap, cstring, cs_size);
-
-  *heap += cs_size;
-  // FIXME, change to right ARRA& STRING TAG
-  lisp_str->tag = 0;
-  lisp_str->size = cs_size;
-
-  uintptr_t end = (uintptr_t) *heap;
-  uintptr_t allocated = (uintptr_t) *heap - start;
-
-  int diff = WORD_SIZE - ((uintptr_t) *heap % WORD_SIZE);
-  if(diff > 0) {
-    memset(*heap, 0, diff);
+  
+  for(int i = 0; i < cstr_size; i++) {
+    uintptr_t word_char = cstring[i];
+    word_char <<= 8;
+    word_char |= CHAR_TAG;
+    memcpy(*heap, &word_char, WORD_SIZE);
+    *heap += WORD_SIZE;
   }
 
-  *heap += diff;
-
   return lisp_str;
+}
+
+lispobj tag_array(struct array *array) {
+  return (lispobj) array | POINTER_TAG;
+}
+  
+
+lispobj tag_fixnum(int64_t obj) {
+
+  // don't just shift, check for sign bit first
+  unsigned long mask = 0x8000000000000000UL;
+  unsigned long negative = mask & obj;
+  
+  long c = obj << TAG_SIZE;
+  
+  if(negative) {
+    c |= mask;
+  }
+  
+  return c;
+}
+
+int64_t untag_fixnum(lispobj obj) {
+  
+   // don't just shift, check for sign bit first
+  uint64_t mask = 0x8000000000000000UL;
+  uint64_t negative = mask & obj;
+  
+  int64_t c = obj >> TAG_SIZE;
+  
+  if(negative) {
+    c |= mask;
+  }
+  
+  return c;
+}
+
+lispobj tag_char(char c) {
+  lispobj lc = 0L;
+  lc |= c;
+  lc <<= CHAR_SHIFT;
+  lc |= CHAR_TAG;
+  return lc;
+}
+
+char untag_char(lispobj obj) {
+  obj >>= CHAR_SHIFT;
+  return (char) obj;
+}
+
+lispobj tag_pointer(uintptr_t pointer) {
+  return pointer | POINTER_TAG;
+}
+
+uintptr_t untag_pointer(lispobj obj) {
+  return obj & CLEAR_TAG_MASK;
 }

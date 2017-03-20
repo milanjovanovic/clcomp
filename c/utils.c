@@ -34,5 +34,3 @@ void read_nm(char *file) {
    free(line);
    fclose(nm);
 }
-
-
