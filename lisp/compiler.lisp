@@ -17,12 +17,11 @@
 				:element-type '(unsigned-byte 8)
 				:initial-contents))
 
+(defparameter *stack-pointer-reg* :RSP)
+(defparameter *base-pointer-reg* :RBP)
 (defparameter *fun-address-reg* :RAX)
+(defparameter *return-value-reg* :RBX)
 (defparameter *fun-number-of-arguments-reg* :RCX)
-(defparameter *fun-arguments-registers #(:RDX :RBX :RSI :RDI))
-(defparameter *caller-save-registers* #(:R8 :R9 :R10 :R11))
-(defparameter *callee-save-registers* #(:R11 :R12 :R13 :R14))
-
-
-(defun clcomp-compile (name definition)
-  (print (list name definition)))
+(defparameter *heap-header-reg* :R15)
+(defparameter *fun-arguments-regs* '(:RDX :RSI :RDI :R8 :R9 :R10))
+(defparameter *free-regs* '(:R11 :R12 :R13 :R14))

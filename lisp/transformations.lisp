@@ -2,65 +2,63 @@
 
 (declaim (optimize (debug 3) (safety 3) (speed 0)))
 
-#|
-(defparameter *binary-functions* '((+ two-arg-+) (- two-arg--) (* two-arg-*) (/ two-arg-/)))
-
-(defun is-binary-function (symbol)
-  (assoc symbol *binary-functions*))
-
-(defun get-two-arg-version (fun)
-  (second (is-binary-function fun)))
-
-;;; FIXME, wrong expanding of two-arg-funs
-(defun transform-binary-function-form (form)
-  (let* ((function (first form))
-	 (two-arg-version (get-two-arg-version function))
-	 (arguments (rest form))
-	 (arg-size (length arguments)))
-    (cond ((= arg-size 1) (expand-form (first arguments)))
-	  ((= arg-size 2) (list two-arg-version
-				(expand-form (first arguments))
-				(expand-form (second arguments))))
-	  (t
-	   (transform-binary-function-form 
-	    (append (list two-arg-version
-			  (list two-arg-version
-				(list two-arg-version (first arguments) (second arguments))
-				(third arguments)))
-		    (nthcdr 3 arguments)))))))
-|#
-
 (defun transform-lambda-form (lambda-form)
   (list 'lambda (second lambda-form)
-	(append (list 'progn) (mapcar #'expand-form (nthcdr 2 lambda-form)))))
+	(append (list 'progn) (mapcar #'%expand (nthcdr 2 lambda-form)))))
 
 (defun transform-let-bindings (bindings)
   (mapcar (lambda (pair)
 	    (if (atom pair)
 		(list pair nil)
 		(list (first pair)
-		      (expand-form (second pair)))))
+		      (%expand (second pair)))))
 	  bindings))
 
 (defun transform-let-form (let-form)
   (list 'let (transform-let-bindings (second let-form))
-	(append (list 'progn) (mapcar #'expand-form (nthcdr 2 let-form)))))
+	(append (list 'progn) (mapcar #'%expand (nthcdr 2 let-form)))))
 
-(defun expand-form (form)
+(defun transform-defun (defun-form)
+  (list 'setf-symbol-function (second defun-form)
+	(append (list 'lambda)
+		(list (third defun-form))
+		(mapcar #'%expand (nthcdr 3 defun-form)))))
+
+(defun transform-setf-form (setf-form)
+  (let ((place (second setf-form))
+	(form (third setf-form)))
+    (if (symbolp place)
+	(list 'setq place (%expand form))
+	(let ((accessor (first place)))
+	  ;; FIXME, missing most of accessors
+	  (cond
+	    ((eq accessor 'car)
+	     (list '%setf-car (%expand (second place)) (%expand form)))
+	    ((eq accessor 'cdr)
+	     (list '%setf-cdr (%expand (second place)) (%expand form))))))))
+
+(defun %expand (form)
   (if (atom form)
       form
       (let ((first (first form))
 	    (rest (rest form)))
 	(cond
+	  ((eq first 'defun) (transform-defun form))
 	  ((eq first 'lambda) (transform-lambda-form form))
 	  ((eq first 'let) (transform-let-form form))
-	  (t (append (list first) (mapcar #'expand-form rest)))))))
+	  ((eq first 'setf) (transform-setf-form form))	  
+	  (t (append (list first) (mapcar #'%expand rest)))))))
+
+(defun expand (form)
+  (list 'lambda nil
+	(%expand form)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; transform sexp expression to structures tree
 
-(defstruct constant-node value)
+(defstruct immediate-constant-node value)
+(defstruct heap-constant-node form)
 (defstruct quoted-node form)
 (defstruct lexical-var-node name form)
 (defstruct if-node test-form true-form false-form)
@@ -68,7 +66,7 @@
 (defstruct progn-node forms)
 (defstruct call-node function arguments)
 (defstruct block-node name form)
-
+(defstruct setf-node place form)
 (defstruct lambda-node name arguments body)
 
 (defun create-lambda-arguments-nodes (arguments)
@@ -79,36 +77,44 @@
 (defun create-lambda-node (form)
   (make-lambda-node :name nil
 		    :arguments (create-lambda-arguments-nodes (second form))
-		    :body (transform-to-nodes (third form))))
+		    :body (create-node (third form))))
 
 (defun create-if-node (form)
-  (make-if-node :test-form (transform-to-nodes (second form))
-		:true-form (transform-to-nodes (third form))
-		:false-form (transform-to-nodes (fourth form))))
+  (make-if-node :test-form (create-node (second form))
+		:true-form (create-node (third form))
+		:false-form (create-node (fourth form))))
 
 (defun create-let-binding-nodes (bindings)
   (mapcar (lambda (binding)
 	    (if (atom binding)
 		(make-lexical-var-node :name binding :form nil)
-		(make-lexical-var-node :name (first binding) :form (transform-to-nodes (second binding)))))
+		(make-lexical-var-node :name (first binding) :form (create-node (second binding)))))
 	  bindings))
 
 (defun create-let-node (form)
   (make-let-node :bindings (create-let-binding-nodes (second form))
-		 :form (transform-to-nodes (third form))))
+		 :form (create-node (third form))))
 
 (defun create-progn-node (form)
-  (make-progn-node :forms (mapcar #'transform-to-nodes (rest form))))
+  (make-progn-node :forms (mapcar #'create-node (rest form))))
 
 (defun create-call-node (form)
-  (make-call-node :function (first form) :arguments (mapcar #'transform-to-nodes (rest form))))
+  (make-call-node :function (first form) :arguments (mapcar #'create-node (rest form))))
 
+(defun create-constant-node (form)
+  (if (or (characterp form)
+	  (integerp form))
+      (make-immediate-constant-node :value form)
+      (make-heap-constant-node :form form)))
 
-(defun transform-to-nodes (form)
+(defun create-setf-node (form)
+  (make-setf-node :place (create-node (first form))
+		  :form (create-node (second form))))
+
+(defun create-node (form)
   (if (atom form)
-      ;; FIXME, constants are not ok
       (cond ((constantp form)
-	     (make-constant-node :value form))
+	     (create-constant-node form))
 	    ((make-lexical-var-node :name form :form nil)))
       (let ((first (first form)))
 	(cond ((eq first 'quote)
@@ -121,5 +127,6 @@
 	       (create-let-node form))
 	      ((eq first 'progn)
 	       (create-progn-node form))
+	      ((eq first 'setf)
+	       (create-setf-node form))
 	      (t (create-call-node form))))))
-

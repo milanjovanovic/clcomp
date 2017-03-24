@@ -1,6 +1,6 @@
-#define LISP_NIL ((lispobj) 0x200000002) // LISP_NIL - LIST_TAG = HEAP
+#define LISP_NIL ((lispobj) 0x20000002)
 // FIXME, T values has bad tag
-#define LISP_T ((lispobj) 0x20000000B)   // LISP_T - POINTER_TAG = HEAP + 8
+#define LISP_T ((lispobj) 0x2000000F)  
 
 #define WORD_SIZE 8
 
