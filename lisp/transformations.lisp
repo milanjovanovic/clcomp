@@ -2,6 +2,7 @@
 
 (declaim (optimize (debug 3) (safety 3) (speed 0)))
 
+
 (defun transform-lambda-form (lambda-form)
   (list 'lambda (second lambda-form)
 	(append (list 'progn) (mapcar #'%expand (nthcdr 2 lambda-form)))))
@@ -20,9 +21,9 @@
 
 (defun transform-defun (defun-form)
   (list 'setf-symbol-function (second defun-form)
-	(append (list 'lambda)
-		(list (third defun-form))
-		(mapcar #'%expand (nthcdr 3 defun-form)))))
+	(list 'lambda
+	      (third defun-form)
+	      (append (list 'progn) (mapcar #'%expand (nthcdr 3 defun-form))))))
 
 (defun transform-setf-form (setf-form)
   (let ((place (second setf-form))
