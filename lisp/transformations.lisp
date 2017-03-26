@@ -67,8 +67,10 @@
 (defstruct progn-node forms)
 (defstruct call-node function arguments)
 (defstruct block-node name form)
-(defstruct setf-node place form)
 (defstruct lambda-node name arguments body)
+(defstruct tagbody-node forms)
+(defstruct setq-node symbol form)
+(defstruct go-node tag)
 
 (defun create-lambda-arguments-nodes (arguments)
   (mapcar (lambda (var)
@@ -108,9 +110,14 @@
       (make-immediate-constant-node :value form)
       (make-heap-constant-node :form form)))
 
-(defun create-setf-node (form)
-  (make-setf-node :place (create-node (first form))
-		  :form (create-node (second form))))
+(defun create-tagbody-node (forms)
+  (make-tagbody-node :forms (mapcar #'create-node (rest forms))))
+
+(defun create-setq-node (form)
+  (make-setq-node :symbol (second form) :form (create-node (third form))))
+
+(defun create-go-node (form)
+  (make-go-node :tag (create-node (second form))))
 
 (defun create-node (form)
   (if (atom form)
@@ -128,6 +135,10 @@
 	       (create-let-node form))
 	      ((eq first 'progn)
 	       (create-progn-node form))
-	      ((eq first 'setf)
-	       (create-setf-node form))
+	      ((eq first 'tagbody)
+	       (create-tagbody-node form))
+	      ((eq first 'setq)
+	       (create-setq-node form))
+	      ((eq first 'go)
+	       (create-go-node form))
 	      (t (create-call-node form))))))
