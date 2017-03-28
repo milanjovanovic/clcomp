@@ -599,7 +599,8 @@
 (defun @ (&rest rest)
     rest)
 
-(defun inst (inst &rest operands)
+
+(defun assembly-inst (inst &rest operands)
   (encode-instruction inst (reparse-operands operands)))
 
 

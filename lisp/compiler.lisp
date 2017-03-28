@@ -17,11 +17,15 @@
 				:element-type '(unsigned-byte 8)
 				:initial-contents))
 
+
 (defparameter *stack-pointer-reg* :RSP)
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *fun-address-reg* :RAX)
 (defparameter *return-value-reg* :RBX)
 (defparameter *fun-number-of-arguments-reg* :RCX)
 (defparameter *heap-header-reg* :R15)
-(defparameter *fun-arguments-regs* '(:RDX :RSI :RDI :R8 :R9 :R10))
-(defparameter *free-regs* '(:R11 :R12 :R13 :R14))
+(defparameter *fun-arguments-regs* '(:RDX :RSI :RDI :R8))
+(defparameter *scratch-regs* '(:R9 :R10 :R11 :R12))
+(defparameter *preserved-regs* '(:R13 :R14))
+
+(defparameter *segment-instructions* nil)
