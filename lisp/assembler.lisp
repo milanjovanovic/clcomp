@@ -599,9 +599,11 @@
 (defun @ (&rest rest)
     rest)
 
+(defun make-instruction (&rest instruction)
+  instruction)
 
-(defun assembly-inst (inst &rest operands)
-  (encode-instruction inst (reparse-operands operands)))
+(defun assemble-instruction (instruction)
+  (encode-instruction (first instruction) (reparse-operands (rest instruction ))))
 
 
 ;;; posible effective address format

@@ -5,6 +5,7 @@
   :serial t
   :depends-on ()
   :components ((:file "lisp/clcomp")
+	       (:file "lisp/constants.lisp")
 	       (:file "lisp/utils")
 	       (:file "lisp/ffi")
 	       (:file "lisp/assembler")

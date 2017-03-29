@@ -12,17 +12,34 @@
 (defun make-fixnum (num)
   (ash num 3))
 
-(defun regs-listify (dest no-more-arguments-label)
+(defun vop-regs-listify (dest no-more-arguments-label)
   ;; dest should be list tagged pointer
   (dolist (arg-reg *fun-arguments-regs*)
     ;; set CAR
     (inst :mov (@ dest nil nil (- *list-tag*)) arg-reg)
+    ;;; no more args ?
     (inst :sub :RCX (make-fixnum 1))
     (inst :cmp :RCX 0)
     (inst :je no-more-arguments-label)
     ;; set CDR
-    (inst :add :R10 (* 2 *word-size*))
-    (inst :mov (@ :R10 nil nil (- (+ *list-tag* *word-size*))) :R10)))
+    (inst :add dest (* 2 *word-size*))
+    (inst :mov (@ dest nil nil (- (+ *list-tag* *word-size*))) dest))) ; FIXME, we need second register here
+
+(defun vop-stack-listify (dest temp-reg1 temp-reg2 no-more-arguments-label)
+  (inst :mov temp-reg1 1)
+  (inst :label :start)
+  ;; FIXME, check args location on stack, we still didn't decided where arguments are on stack
+  (inst :mov temp-reg2 (@ *base-pointer-reg* temp-reg1 *word-size* nil))
+  (inst :mov (@ dest nil nil (- *list-tag*)) temp-reg2)
+  ;; no more args ?
+  (inst :sub :RCX (make-fixnum 1))
+  (inst :cmp :RCX 0)
+  (inst :je no-more-arguments-label)
+  ;; move to next cons
+  (inst :add dest (* 2 *word-size*))
+  (inst :mov (@ dest nil nil (- (+ *list-tag* *word-size*))) dest)
+  (inst :add temp-reg1 1)
+  (inst :jmp :start))
 
 (defun vop-call-listify ()
   (inst :cmp :RCX 0)
@@ -37,12 +54,14 @@
   (inst :mov :R9 *return-value-reg*)
   (inst :add *return-value-reg* *list-tag*)
   (inst :mov :R9 *return-value-reg*)
-  (regs-listify :R9 :set-cdr)
+  (vop-regs-listify :R9 :set-cdr)
+  (vop-stack-listify :R9 :R10 :R11 :set-cdr)
   (inst :label :zero-args)
   (inst :mov *return-value-reg* *nil*)
   (inst :jmp :end)
+  ;; FIXME, this is not ok
   (inst :label :set-cdr)
-  (inst :mov (@ :R10 nil nil (- (+ *list-tag* *word-size*))) :R10)
+  (inst :mov (@ :R10 nil nil (- *word-size* *list-tag*)) *nil*)
   (inst :label :end))
 
 (defun vop-cons (arg1 arg2 res)
