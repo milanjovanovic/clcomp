@@ -29,6 +29,13 @@
    (list (make-instruction :mov :R15 -35184372088832) '(#x49 #xbf #x00 #x00 #x00 #x00 #x00 #xe0 #xff #xff))
    (list (make-instruction :mov :R15 3) '(#x49 #xc7 #xc7 #x03 #x00 #x00 #x00))
    (list (make-instruction :mov :RAX -3) '(#x48 #xc7 #xc0 #xfd #xff #xff #xff))
+   (list (make-instruction :mov :RCX (@ :RSP)) '(#x48 #x8b #x0c #x24))
+   (list (make-instruction :mov :RAX (@ :RSP :RCX 8 20)) '(#x48 #x8b #x44 #xcc #x14))
+   (list (make-instruction :mov :RAX (@ :RBP :RCX 8 20)) '(#x48 #x8b #x44 #xcd #x14 ))
+   (list (make-instruction :mov :RBP (@ :RSP)) '(#x48 #x8b #x2c #x24))
+   (list (make-instruction :MOV :RAX (@ nil :RBP 2 nil)) '(#x48 #x8b #x04 #x6d #x00 #x00 #x00 #x00))
+   (list (make-instruction :MOV :RAX (@ :RBP :RCX nil nil)) '(#x48 #x8b #x44 #x0d #x00))
+   
    ;; LEA
    (list (make-instruction :lea :RAX (@ :RCX nil nil nil)) '(#x48 #x8D #x01))
    (list (make-instruction :lea :RBX (@ :RAX :RCX nil nil)) '(#x48 #x8D #x1C #x08))
@@ -45,6 +52,37 @@
    (list (make-instruction :sub :RDX (@ :RAX :RCX 4 213)) '(#x48 #x2b #x94 #x88 #xd5 #x00 #x00 #x00))
    (list (make-instruction :sub :RBP 1122334455) '(#x48 #x81 #xed #xf7 #x76 #xe5 #x42))
    (list (make-instruction :sub (@ :RBP :RCX 4 123) :RAX) '(#x48 #x29 #x44 #x8d #x7b))
+
+   ;; CMP
+   
+
+   ;; PUSH
+   (list (make-instruction :push :RAX) '(#x50))
+   (list (make-instruction :push :R8) '(#x41 #x50))
+   (list (make-instruction :push :RDI) '(#x57))
+   (list (make-instruction :push :R15) '(#x41 #x57))
+   (list (make-instruction :push :RSP) '(#x54))
+   (list (make-instruction :push :RBP) '(#x55))
+   (list (make-instruction :push (@ :RAX)) '(#xff #x30))
+   (list (make-instruction :push (@ :R8)) '(#x41 #xff #x30))
+   (list (make-instruction :push (@ :R9)) '(#x41 #xff #x31))
+   (list (make-instruction :push (@ :R12)) '(#x41 #xff #x34 #x24))
+   (list (make-instruction :push (@ :R13)) '(#x41 #xff #x75 #x00))
+   (list (make-instruction :push (@ :RSP)) '(#xff #x34 #x24))
+   (list (make-instruction :push (@ :RAX :RBX 4 nil)) '(#xff #x34 #x98))
+   (list (make-instruction :push (@ :RAX :RBX 4 -12)) '(#xff #x74 #x98 #xf4))
+   (list (make-instruction :push (@ :RAX :R8)) '(#x42 #xff #x34 #x00))
+   (list (make-instruction :push (@ :r8 :r12)) '(#x43 #xff #x34 #x20))
+   (list (make-instruction :push (@ :R8 :R13)) '(#x43 #xff #x34 #x28))
+   (list (make-instruction :push (@ :R8 :R13 8 -10)) '(#x43 #xff #x74 #xe8 #xf6))
+   (list (make-instruction :push (@ :RSP :RBP nil -10)) '(#xff #x74 #x2c #xf6))
+
+   ;; POP
+
+
+
+   ;; CALL
+
    ))
 
 (defun run-instruction-tests ()

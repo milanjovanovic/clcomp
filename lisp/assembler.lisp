@@ -32,7 +32,11 @@
 
 (defun extended-register? (register)
   (let ((extend-bit (get-register-extend-bit register)))
-   (and extend-bit (= 1 extend-bit))))
+    (and extend-bit (= 1 extend-bit))))
+
+(defun ea-has-extended-register? (effective-addres)
+  (or (extended-register? (first effective-addres))
+      (extended-register? (second effective-addres))))
 
 (defregister '(:rax :eax :ax :al) #b000 #b0)
 (defregister '(:rcx :ecx :cx :cl) #b001 #b0)
@@ -65,6 +69,16 @@
 (defparameter *instruction-pointer-register* :rip)
 (defun ip-register? (register)
   (eq register *instruction-pointer-register*))
+
+(defun rbp-or-r13 (reg)
+  ;; fixme, 32bit registers ?
+  (or (eq reg :rbp)
+      (eq reg :r13)))
+
+(defun rsp-or-r12 (reg)
+  ;; fixme. 32bit registers ?
+  (or (eq reg :rsp)
+      (eq reg :r12)))
 
 (defparameter *tmpl-reg-operands* '(:reg8 :reg16 :reg32 :reg64))
 
@@ -386,6 +400,10 @@
 (defun encode-effective-memory-address (rex modrm addr-operand)
   (let ((sib nil))
     (destructuring-bind (base index scale displacement) addr-operand
+      ;; special case for rbp and r13
+      ;; Table 2-5. Special Cases of REX Encodings
+      (when (and (rbp-or-r13 base) (null displacement))
+	(setf displacement 0))
       (cond
 	;; if base register is instruction pointer we don't need SIB encoding
 	;; can't have index or scale when base is instruction pointer register
@@ -406,7 +424,9 @@
 	;; no displacement but we have base register
 	((null displacement)
 	 (setf (ldb *modrm.mod.byte* modrm) #b00)
-	 (if (or scale index)
+	 ;; need to encode sib when base ir rsp or r12
+	 ;; Table 2-5. Special Cases of REX Encodings
+	 (if (or scale index (rsp-or-r12 base))
 	     (progn
 	       ;; when using SIB modrm.RM need to be #b100
 	       (setf (ldb *modrm.rm.byte* modrm) #b100)
@@ -477,37 +497,25 @@
 		  (setf (ldb *modrm.mod.byte* modrm) #b11))
 		(list opcode rex modrm nil nil immediate))))))))
 
-
-#+nil(defun encode-one-operand-mnemonic (prefixes rex opcode modrm operand template-operand flags)
+(defun encode-one-operand-mnemonic (prefixes rex opcode modrm operand template-operand flags)
   (cond ((register-operand? template-operand)
-	 (cond ((find '/d flags)
-		(setf (ldb (byte 3 0) template-opcode) (get-register-bits operand))
-		(when (extended-register? operand)
-		  (setf rex (or rex 0))
-		  (setf (ldb (byte *rex.extension.bits* *rex.r.position*) rex) #b1))
-		(list prefixes rex opcode modrm displacement immediate ))
-	       (t
-		(let ((modrm (or modrm 0)))
-		  (setf (ldb (byte *modrm.reg.size* *modrm.reg.position*) modrm) (get-register-bits operand))))))
-
-
-  
-	(let ((r-extended-register (extended-register? operand)))
-	  (when r-extended-register
-	    (unless template-rex
-	      (setf template-rex 0))
-	    ;; mark REX for R8-R15 registers
-	    (setf (ldb (byte rex.r.size rex.r.position) template-rex) #b1))
-	  (if (contain-flag 'register-added-to-opcode template-flags)
-	      ;; add register value to opcode
-	      (setf (ldb (byte 3 0) template-opcode) (get-register-bits operand))
-	      ;; encode register in modrm
-	      (progn
-		(unless template-modrm
-		  (setf template-modrm 0))
-		(setf (ldb (byte modrm.reg.size modrm.reg.position) template-modrm) (get-register-bits operand))))
-	  (list template-prefixes template-rex template-opcode template-modrm))))
-
+	 (when (extended-register? operand)
+	   (setf rex (rex #b0 #b0 #b0 #b0))
+	   (setf (ldb *rex.b.byte* rex) #b1))
+	 (if (contain-flag '+r flags)
+	     (setf (ldb (byte 3 0) opcode) (get-register-bits operand))
+	     (progn
+	       (setf modrm (or modrm 0))
+	       (setf (ldb *modrm.mod.byte* modrm) #b11)
+	       (setf (ldb (byte *modrm.reg.rm.bits* *modrm.rm.position*) modrm) (get-register-bits operand))))
+	 (list prefixes rex opcode modrm nil nil nil))
+	((op-address? operand)
+	 (let ((rex (or rex (rex #b0 #b0 #b0 #b0))))
+	   (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm operand)
+	     (let ((rex (if (ea-has-extended-register? operand) rex nil)))
+	       (list prefixes rex opcode modrm sib displacement nil)))))
+	((immediate-operand? template-operand)
+	 (list prefixes nil nil opcode nil nil (immediate-as-byte-list operand template-operand)))))
 
 (defun encode-one-operand-instruction (mnemonic operands)
   (let* ((template (find-instruction-template mnemonic operands))
@@ -517,7 +525,11 @@
 	 (template-prefixes (inst-template-prefixes template))
 	 (template-rex (inst-template-rex template))
 	 (template-opcode (inst-template-opcode template))
-	 (template-modrm (inst-template-modrm template)))))
+	 (template-modrm (inst-template-modrm template)))
+    (destructuring-bind (prefixes rex opcode modrm sib displacement immediate)
+	(encode-one-operand-mnemonic template-prefixes template-rex template-opcode template-modrm operand template-operand template-flags)
+      (filter (append (list prefixes rex opcode modrm sib) (reverse displacement) (reverse immediate))
+	      nil))))
 
 
 (defun encode-two-operand-instruction (mnemonic operands)
@@ -531,7 +543,8 @@
 	 (template-rex (inst-template-rex template))
 	 (template-opcode (inst-template-opcode template))
 	 (template-modrm (inst-template-modrm template))
-	 (template-opcode-d-bit (opcode-d-bit template-opcode)))
+	 (template-opcode-d-bit (opcode-d-bit template-opcode))) ; not using this currently
+    (declare (ignore template-opcode-d-bit))
     (destructuring-bind (opcode rex modrm sib displacement immediate) (encode-operands template-rex
 										template-modrm
 										dest-operand
@@ -540,7 +553,6 @@
 										template-source-operand
 										template-opcode
 										template-flags)
-      
       (filter (append (list template-prefixes rex opcode modrm sib) (reverse displacement) (reverse immediate))
 	      nil))))
 
