@@ -4,14 +4,16 @@
 (defparameter *temp-counter* 0)
 (defparameter *label-counter* 0)
 
-(defstruct ir-component code constants fixups)
+(defstruct ir-component code code-blocks constants fixups)
 
-(defparameter *special* nil)
+(defparameter *specials* nil)
 
 (defun special? (symbol)
-  (member symbol *special*))
+  (member symbol *specials*))
 
-;;; FIXME, use structures
+(defun reset-temp-location-counter ()
+  (setf *temp-counter* 0))
+
 (defun make-temp-location ()
   (incf *temp-counter*)
   (intern (concatenate 'string "TEMP-" (write-to-string *temp-counter*))))
@@ -21,7 +23,47 @@
   (intern (concatenate 'string "LABEL-" (write-to-string *label-counter*))))
 
 
+;;; environments
+
+(defparameter *env-counter* 0)
+
+(defun make-env-holder ()
+  (list 'envs nil))
+
+(defun make-env ()
+  (prog1
+   (list *env-counter* (make-hash-table))
+   (incf *env-counter*)))
+
+(defun add-env (env env-holder)
+  (push env (second env-holder))
+  env-holder)
+
+(defun remove-env (all-env)
+  (pop (second all-env))
+  (decf *envs-counter*))
+
+(defun add-var (var-node environments)
+  (let* ((env (first (second environments)))
+	 (env-number (first env))
+	 (env-map (second env)))
+    (setf (gethash (lexical-var-node-name var-node) env-map) env-number)))
+
+
+(defun get-var-ir-symbol (var-name env-holder)
+  (dolist (env (second env-holder))
+    (let* ((env-map (second env))
+	   (var-env-number (gethash var-name env-map)))
+      (when var-env-number
+	(return-from get-var-ir-symbol
+	  (intern (concatenate 'string (symbol-name var-name)
+			       (concatenate 'string "-" (write-to-string var-env-number))))))
+      ;; FIXME, unboud vars threat as special vars
+      )))
+
+
 ;;; IR code generators
+;;; FIXME, use structures
 
 (defun add-ir (component ir)
   (setf (ir-component-code component)
@@ -39,6 +81,7 @@
 (defun make-if-ir (component location label)
   (add-ir component (list (list 'if location 'go label))))
 
+;;; FIXME, this is wrong
 (defun make-quoted-ir (component to from)
   (add-ir component (list (list 'load-quoted to from))))
 
@@ -51,9 +94,10 @@
 (defun make-lambda-entry-ir (component number-of-arguments)
   (add-ir component (list (list 'lambda-entry) (list 'arg-check number-of-arguments))))
 
-(defun make-lambda-arguments-ir (component arguments)
+(defun make-lambda-arguments-ir (component arguments environments)
   (dolist (arg arguments)
-    (add-ir component (list (list 'receive-param (lexical-var-node-name arg))))))
+    (add-var arg environments)
+    (add-ir component (list (list 'receive-param (get-var-ir-symbol (lexical-var-node-name arg) environments))))))
 
 (defun make-fun-params-ir (component arg-locations)
   (dolist (arg-loc arg-locations)
@@ -63,6 +107,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Emiters
 
+;; FIXME, numbers that are larger than 32bit
 (defun emit-constant-ir (component node)
   (declare (ignore component))
   (immediate-constant-node-value node))
@@ -72,69 +117,77 @@
 (defun emit-quoted-form-ir (component node)
   (let ((location (make-temp-location)))
     (make-quoted-ir component location (quoted-node-form node))
-   location))
+    location))
 
-(defun emit-progn-ir (component node)
+(defun emit-lexical-var-node (node environments)
+  (get-var-ir-symbol (lexical-var-node-name node) environments))
+
+(defun emit-progn-ir (component node environments)
   (let ((nodes (progn-node-forms node))
 	(location (make-temp-location))
 	(last-location))
     (dolist (node nodes)
-      (setf last-location (emit-node-ir component node)))
+      (setf last-location (emit-node-ir component node environments)))
     (make-load-ir component location last-location)
     location))
 
-(defun emit-let-binding (component binding)
-  (let ((l-value (lexical-var-node-name binding))
-	(r-form (lexical-var-node-form binding)))
-    (make-load-ir component l-value (emit-node-ir component r-form))))
+(defun emit-let-binding (component binding environments)
+  (let* ((l-value (lexical-var-node-name binding))
+	(r-form (lexical-var-node-form binding))
+	(load-from (emit-node-ir component r-form environments)))
+    (add-var binding environments)
+    (make-load-ir component (get-var-ir-symbol l-value environments) load-from)))
 
-(defun emit-let-ir (component node)
-  (let ((bindings (let-node-bindings node))
+(defun emit-let-ir (component node environments)
+  (let ((env (make-env))
+	(bindings (let-node-bindings node))
 	(form (let-node-form node))
 	(location (make-temp-location)))
+    (add-env env environments)
     (dolist (binding bindings)
-      (emit-let-binding component binding))
-    (make-load-ir component location (emit-node-ir component form))
+      (emit-let-binding component binding environments))
+    (make-load-ir component location (emit-node-ir component form environments))
+    (remove-env environments)
     location))
 
-(defun emit-if-ir (component node)
+(defun emit-if-ir (component node environments)
   (let ((test-node (if-node-test-form node))
 	(true-node (if-node-true-form node))
 	(false-node (if-node-false-form node))
 	(true-label (make-label))
 	(exit-label (make-label))
 	(location (make-temp-location)))
-    (let ((test-location (emit-node-ir component test-node)))
+    (let ((test-location (emit-node-ir component test-node environments)))
       (make-if-ir component test-location true-label)
-      (make-load-ir component location (emit-node-ir component false-node))
+      (make-load-ir component location (emit-node-ir component false-node environments))
       (make-go-ir component exit-label)
       (make-label-ir component true-label)
-      (make-load-ir component location (emit-node-ir component true-node))
+      (make-load-ir component location (emit-node-ir component true-node environments))
       (make-label-ir component exit-label)
       location)))
 
-(defun emit-call-ir (component node)
+(defun emit-call-ir (component node environments)
   (let ((fun (call-node-function node))
 	(arguments (call-node-arguments node))
 	(location (make-temp-location)))
     (let ((arg-locations))
       (dolist (argument arguments)
-	(push (emit-node-ir component argument) arg-locations))
+	(push (emit-node-ir component argument environments) arg-locations))
       (make-fun-params-ir component (reverse arg-locations)))
     (make-call-ir component location fun)
     location))
 
-(defun emit-setq-ir (component node)
-  (let ((location (emit-node-ir component (setq-node-form node))))
-    (make-load-ir component (setq-node-symbol node) location)
-    (setq-node-symbol node)))
+(defun emit-setq-ir (component node environments)
+  (let ((location (emit-node-ir component (setq-node-form node) environments)))
+    (make-load-ir component (get-var-ir-symbol (setq-node-symbol node) environments) location)
+    (get-var-ir-symbol (setq-node-symbol node) environments)))
 
-(defun emit-tagbody-ir (component node)
+(defun emit-tagbody-ir (component node environments)
   (dolist (tnode (tagbody-node-forms node))
     (typecase tnode
       (lexical-var-node (make-label-ir component (lexical-var-node-name tnode)))
       (go-node (emit-go-ir component node))
-      (t (emit-node-ir component tnode))))
+      (t (emit-node-ir component tnode environments))))
   ;; tagbody returns nil
   nil)
 
@@ -149,18 +202,18 @@
     (push (cons temp-loc lambda-comp) (ir-component-constants component))
     (make-ir node lambda-comp temp-loc)))
 
-(defun emit-node-ir (component node)
+(defun emit-node-ir (component node environments)
   (typecase node
-    (lexical-var-node (lexical-var-node-name node))
-    (progn-node (emit-progn-ir component node))
-    (call-node (emit-call-ir component node))
-    (if-node (emit-if-ir component node))
-    (let-node (emit-let-ir component node))
+    (lexical-var-node (emit-lexical-var-node node environments))
+    (progn-node (emit-progn-ir component node environments))
+    (call-node (emit-call-ir component node environments))
+    (if-node (emit-if-ir component node environments))
+    (let-node (emit-let-ir component node environments))
     (lambda-node (emit-lambda-ir component node))
     (quoted-node (emit-quoted-form-ir component node))
     (immediate-constant-node (emit-constant-ir component node))
-    (setq-node (emit-setq-ir component node))
-    (tagbody-node (emit-tagbody-ir component node))
+    (setq-node (emit-setq-ir component node environments))
+    (tagbody-node (emit-tagbody-ir component node environments))
     ;; FIXME, error -> go-node returns nil now, should not return anything
     ;; anyway, dead code elimination in block analyzing solves this
     (go-node (emit-go-ir component node))))
@@ -170,21 +223,23 @@
 ;;; return (return-from nil)
 ;;; return-from
 
+;;; entry node need to be lambda
 (defun make-ir (lambda-node &optional component name)
   (let ((component (or component (make-ir-component))))
     (let ((arguments (lambda-node-arguments lambda-node))
-	  (body (lambda-node-body lambda-node)))
+	  (body (lambda-node-body lambda-node))
+	  (environments (make-env-holder))
+	  (env (make-env)))
+      (add-env env environments)
       (make-lambda-entry-ir component (length arguments))
-      (make-lambda-arguments-ir component arguments)
-      (make-return-ir component (emit-node-ir component body)))
+      (make-lambda-arguments-ir component arguments environments)
+      (make-return-ir component (emit-node-ir component body environments))
+      (remove-env environments))
     (or name component)))
 
-(defun print-ir (component)
-  (dolist (inst (ir-component-code component))
-    (print inst)))
-
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; IR blocks
+
 (defstruct ir-block ir from-blocks to-blocks)
 
 (defun new-blockp (inst counter)
