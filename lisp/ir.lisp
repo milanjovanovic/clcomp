@@ -92,8 +92,8 @@
       (when var-env-number
 	(return-from  get-label-ir-symbol
 	  (intern (concatenate 'string (symbol-name (label-node-label label-node))
-			       (concatenate 'string "-" (write-to-string var-env-number))))))
-      (error (concatenate 'string "Go tag " (symbol-name (label-node-label label-node)) " does not exist ")))))
+			       (concatenate 'string "-" (write-to-string var-env-number))))))))
+  (error (concatenate 'string "Go tag " (symbol-name (label-node-label label-node)) " does not exist ")))
 
 
 ;;; IR code generators
@@ -214,15 +214,19 @@
 
 (defun emit-setq-ir (component node environments)
   (let ((location (emit-node-ir component (setq-node-form node) environments)))
-    (make-load-ir component (get-var-ir-symbol (setq-node-symbol node) environments) location)
-    (get-var-ir-symbol (setq-node-symbol node) environments)))
+    (make-load-ir component (get-var-ir-symbol (setq-node-var node) environments) location)
+    (get-var-ir-symbol (setq-node-var node) environments)))
 
 (defun emit-label-node-ir (component node environments)
-  (add-go-label node environments)
   (make-label-ir component (get-label-ir-symbol node environments)))
 
 (defun emit-tagbody-ir (component node environments)
   (add-tagbody-env (make-tagbody-env) environments)
+  ;; first get all labels
+  ;; FIXME, do this when creating nodes
+  (dolist (tnode (tagbody-node-forms node))
+    (when (eq 'label-node (type-of tnode))
+      (add-go-label tnode environments)))
   (dolist (tnode (tagbody-node-forms node))
     (typecase tnode
       (label-node (emit-label-node-ir component tnode environments))

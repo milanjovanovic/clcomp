@@ -75,7 +75,7 @@
 (defstruct tagbody-node forms)
 (defstruct go-node label-node)
 (defstruct label-node label)
-(defstruct setq-node symbol form)
+(defstruct setq-node var form)
 
 (defun create-lambda-arguments-nodes (arguments)
   (mapcar (lambda (var)
@@ -123,7 +123,7 @@
 				    (rest forms))))
 
 (defun create-setq-node (form)
-  (make-setq-node :symbol (second form) :form (create-node (third form))))
+  (make-setq-node :var (make-lexical-var-node :name (second form)) :form (create-node (third form))))
 
 (defun create-go-node (form)
   (make-go-node :label-node (make-label-node :label (second form))))
