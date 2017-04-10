@@ -28,4 +28,9 @@
 (defparameter *scratch-regs* '(:R9 :R10 :R11 :R12))
 (defparameter *preserved-regs* '(:R13 :R14))
 
+
 (defparameter *segment-instructions* nil)
+
+
+(defun clcomp-compile (exp)
+  (make-ir (create-node (expand exp))))

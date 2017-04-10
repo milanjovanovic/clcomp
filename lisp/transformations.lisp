@@ -20,7 +20,7 @@
 	(append (list 'progn) (mapcar #'%expand (nthcdr 2 let-form)))))
 
 (defun transform-defun (defun-form)
-  (list 'setf-symbol-function (second defun-form)
+  (list '%defun (second defun-form)
 	(list 'lambda
 	      (third defun-form)
 	      (append (list 'progn) (mapcar #'%expand (nthcdr 3 defun-form))))))
@@ -51,6 +51,10 @@
 	  (t (append (list first) (mapcar #'%expand rest)))))))
 
 (defun expand (form)
+  (%expand form))
+
+#+nil
+(defun expand (form)
   (list 'lambda nil
 	(%expand form)))
 
@@ -69,8 +73,9 @@
 (defstruct block-node name form)
 (defstruct lambda-node name arguments body)
 (defstruct tagbody-node forms)
+(defstruct go-node label-node)
+(defstruct label-node label)
 (defstruct setq-node symbol form)
-(defstruct go-node tag)
 
 (defun create-lambda-arguments-nodes (arguments)
   (mapcar (lambda (var)
@@ -111,13 +116,17 @@
       (make-heap-constant-node :form form)))
 
 (defun create-tagbody-node (forms)
-  (make-tagbody-node :forms (mapcar #'create-node (rest forms))))
+  (make-tagbody-node :forms (mapcar (lambda (exp)
+				      (if (symbolp exp)
+					  (make-label-node :label exp)
+					  (create-node exp)))
+				    (rest forms))))
 
 (defun create-setq-node (form)
   (make-setq-node :symbol (second form) :form (create-node (third form))))
 
 (defun create-go-node (form)
-  (make-go-node :tag (create-node (second form))))
+  (make-go-node :label-node (make-label-node :label (second form))))
 
 (defun create-node (form)
   (if (atom form)
@@ -142,3 +151,7 @@
 	      ((eq first 'go)
 	       (create-go-node form))
 	      (t (create-call-node form))))))
+
+;;; TODO
+;; check syntax
+;; check for t nil as arguments

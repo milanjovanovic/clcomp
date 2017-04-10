@@ -27,21 +27,23 @@
 
 (defparameter *env-counter* 0)
 
+(defun reset-env-counter ()
+  (setf *env-counter* 0 ))
+
 (defun make-env-holder ()
-  (list 'envs nil))
+  (list 'envs nil nil))
 
 (defun make-env ()
   (prog1
-   (list *env-counter* (make-hash-table))
-   (incf *env-counter*)))
+      (list *env-counter* (make-hash-table) )
+    (incf *env-counter*)))
 
 (defun add-env (env env-holder)
   (push env (second env-holder))
   env-holder)
 
 (defun remove-env (all-env)
-  (pop (second all-env))
-  (decf *envs-counter*))
+  (pop (second all-env)))
 
 (defun add-var (var-node environments)
   (let* ((env (first (second environments)))
@@ -50,16 +52,48 @@
     (setf (gethash (lexical-var-node-name var-node) env-map) env-number)))
 
 
-(defun get-var-ir-symbol (var-name env-holder)
+(defun get-var-ir-symbol (var-node env-holder)
   (dolist (env (second env-holder))
     (let* ((env-map (second env))
-	   (var-env-number (gethash var-name env-map)))
+	   (var-env-number (gethash (lexical-var-node-name var-node) env-map)))
       (when var-env-number
 	(return-from get-var-ir-symbol
-	  (intern (concatenate 'string (symbol-name var-name)
+	  (intern (concatenate 'string (symbol-name (lexical-var-node-name var-node))
 			       (concatenate 'string "-" (write-to-string var-env-number))))))
       ;; FIXME, unboud vars threat as special vars
+      ;;      (error (concatenate 'string "The variable " (symbol-name var-name) " is unbound"))
       )))
+
+;;; go tags environment
+(defparameter *tagbody-envs-counter* 0)
+
+(defun make-tagbody-env ()
+  (prog1
+      (list *tagbody-envs-counter* (make-hash-table))
+    (incf *tagbody-envs-counter*)))
+
+(defun add-tagbody-env (tagb-env environments)
+  (push tagb-env (third environments))
+  environments)
+
+(defun remove-tagbody-env (environments)
+  (pop (third environments)))
+
+(defun add-go-label (label-node environments)
+  (let* ((first-env (first (third environments)))
+	 (env-number (first first-env))
+	 (tags-hash (second first-env)))
+    (setf (gethash (label-node-label label-node) tags-hash) env-number)))
+
+(defun get-label-ir-symbol (label-node environments)
+  (dolist (env (third environments))
+    (let* ((env-map (second env))
+	   (var-env-number (gethash (label-node-label label-node) env-map)))
+      (when var-env-number
+	(return-from  get-label-ir-symbol
+	  (intern (concatenate 'string (symbol-name (label-node-label label-node))
+			       (concatenate 'string "-" (write-to-string var-env-number))))))
+      (error (concatenate 'string "Go tag " (symbol-name (label-node-label label-node)) " does not exist ")))))
 
 
 ;;; IR code generators
@@ -97,7 +131,7 @@
 (defun make-lambda-arguments-ir (component arguments environments)
   (dolist (arg arguments)
     (add-var arg environments)
-    (add-ir component (list (list 'receive-param (get-var-ir-symbol (lexical-var-node-name arg) environments))))))
+    (add-ir component (list (list 'receive-param (get-var-ir-symbol arg environments))))))
 
 (defun make-fun-params-ir (component arg-locations)
   (dolist (arg-loc arg-locations)
@@ -107,10 +141,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Emiters
 
-;; FIXME, numbers that are larger than 32bit
+;;; FIXME, numbers that are larger than 32bit
+;;; for now we will first load our immediate to register
 (defun emit-constant-ir (component node)
-  (declare (ignore component))
-  (immediate-constant-node-value node))
+  (let ((location (make-temp-location)))
+    (make-load-ir component location (immediate-constant-node-value node))
+    location))
 
 ;;; FIXME, this is not right
 ;;; quick solution: transform this to runtime list
@@ -120,7 +156,7 @@
     location))
 
 (defun emit-lexical-var-node (node environments)
-  (get-var-ir-symbol (lexical-var-node-name node) environments))
+  (get-var-ir-symbol node environments))
 
 (defun emit-progn-ir (component node environments)
   (let ((nodes (progn-node-forms node))
@@ -132,11 +168,10 @@
     location))
 
 (defun emit-let-binding (component binding environments)
-  (let* ((l-value (lexical-var-node-name binding))
-	(r-form (lexical-var-node-form binding))
+  (let* ((r-form (lexical-var-node-form binding))
 	(load-from (emit-node-ir component r-form environments)))
     (add-var binding environments)
-    (make-load-ir component (get-var-ir-symbol l-value environments) load-from)))
+    (make-load-ir component (get-var-ir-symbol binding environments) load-from)))
 
 (defun emit-let-ir (component node environments)
   (let ((env (make-env))
@@ -182,17 +217,23 @@
     (make-load-ir component (get-var-ir-symbol (setq-node-symbol node) environments) location)
     (get-var-ir-symbol (setq-node-symbol node) environments)))
 
+(defun emit-label-node-ir (component node environments)
+  (add-go-label node environments)
+  (make-label-ir component (get-label-ir-symbol node environments)))
+
 (defun emit-tagbody-ir (component node environments)
+  (add-tagbody-env (make-tagbody-env) environments)
   (dolist (tnode (tagbody-node-forms node))
     (typecase tnode
-      (lexical-var-node (make-label-ir component (lexical-var-node-name tnode)))
-      (go-node (emit-go-ir component node))
+      (label-node (emit-label-node-ir component tnode environments))
+      (go-node (emit-go-ir component tnode environments))
       (t (emit-node-ir component tnode environments))))
+  (remove-tagbody-env environments)
   ;; tagbody returns nil
   nil)
 
-(defun emit-go-ir (component node)
-  (make-go-ir component (lexical-var-node-name (go-node-tag node)))
+(defun emit-go-ir (component node environments)
+  (make-go-ir component (get-label-ir-symbol (go-node-label-node node) environments))
   nil)
 
 ;;; lambda will create new component
@@ -216,12 +257,11 @@
     (tagbody-node (emit-tagbody-ir component node environments))
     ;; FIXME, error -> go-node returns nil now, should not return anything
     ;; anyway, dead code elimination in block analyzing solves this
-    (go-node (emit-go-ir component node))))
+    (go-node (emit-go-ir component node environments))))
 
 ;;;;; MISSING
 ;;; block
-;;; return (return-from nil)
-;;; return-from
+;;; return / return-from
 
 ;;; entry node need to be lambda
 (defun make-ir (lambda-node &optional component name)
