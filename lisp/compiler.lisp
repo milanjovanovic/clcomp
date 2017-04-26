@@ -1,23 +1,5 @@
 (in-package #:clcomp)
 
-#+nil
-(progn
- (load-shared-object "/Users/milan/projects/clcomp/c/runtime.so")
- (load "/Users/milan/projects/clcomp/lisp/utils.lisp")
- (load "/Users/milan/projects/clcomp/lisp/ffi.lisp")
- (load "/Users/milan/projects/clcomp/lisp/assembler.lisp")
- (load "/Users/milan/projects/clcomp/lisp/instructions.lisp")
- (load "/Users/milan/projects/clcomp/lisp/tests.lisp")
- (load "/Users/milan/projects/clcomp/lisp/vops.lisp"))
-
-
-#+nil
-(defparameter *example-code-1* (make-array
-				10
-				:element-type '(unsigned-byte 8)
-				:initial-contents))
-
-
 (defparameter *stack-pointer-reg* :RSP)
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *fun-address-reg* :RAX)
@@ -31,6 +13,19 @@
 
 (defparameter *segment-instructions* nil)
 
+(defun try-constant-component-blocks-phase (constants)
+  (dolist (constant constants)
+    (when (eq (type-of (cdr constant)) 'ir-component)
+      (component-blocks-phase (cdr constant)))))
+
+(defun component-blocks-phase (ir-component)
+  (let ((blocks (make-blocks (ir-component-code ir-component))))
+    (setf (ir-component-code-blocks ir-component)
+	  (remove-dead-blocks (connect-blocks blocks)))
+    (try-constant-component-blocks-phase (ir-component-constants ir-component))
+    (setf (ir-component-code ir-component) nil)
+    ir-component))
 
 (defun clcomp-compile (exp)
-  (make-ir (create-node (expand exp))))
+  (let* ((ir-component (make-ir (create-node (expand exp)))))
+    (component-blocks-phase ir-component)))
