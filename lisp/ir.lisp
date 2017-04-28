@@ -483,7 +483,7 @@
 			 (if tmp-to
 			     (setf current (location-symbol to))
 			     (progn
-			       (push (list current start) res)
+			       (push (list start to) res)
 			       (setf start nil)
 			       (setf current nil)))
 			 (progn
@@ -522,8 +522,11 @@
 		   (from (get-load-from ir))
 		   (tmp-to (real-tmp-loc-p to reads writes block blocks))
 		   (tmp-from (real-tmp-loc-p from reads writes block blocks)))
-	      (cond ((not tmp-from)
+	      (cond ((and (not tmp-to) (not tmp-from))
 		     (print ir))
-		    ((not tmp-to)
-		     (print (list (first ir) to (get-match-location from locs))))))
+		    ((and tmp-to (not tmp-from))
+		     (print (list (first ir) (get-match-location to locs) from)))
+		    ((and (not tmp-to) tmp-from)
+		     nil)
+		    (t nil)))
 	    (print ir))))))
