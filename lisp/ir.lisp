@@ -14,14 +14,34 @@
 (defun reset-temp-location-counter ()
   (setf *temp-counter* 0))
 
-(defun make-temp-location ()
+(defun make-temp-location-symbol ()
   (incf *temp-counter*)
   (intern (concatenate 'string "TEMP-" (write-to-string *temp-counter*))))
+
+(defun make-temp-location ()
+  (make-tmp-location :location (make-temp-location-symbol)))
 
 (defun make-label ()
   (incf *label-counter*)
   (intern (concatenate 'string "LABEL-" (write-to-string *label-counter*))))
 
+(defun make-return-location ()
+  (make-ret-location :location (make-temp-location-symbol)))
+
+
+(defstruct rip-relative-location location)
+(defstruct var-location location)
+(defstruct tmp-location location)
+(defstruct ret-location location)
+(defstruct param-location param-number)
+(defstruct immediate-constant constant)
+
+(defun location-symbol (location)
+  (typecase location
+    (tmp-location (tmp-location-location location))
+    (var-location (var-location-location location))
+    (ret-location (ret-location-location location))
+    (otherwise (error "Unknown location type"))))
 
 ;;; environments
 
@@ -58,8 +78,9 @@
 	   (var-env-number (gethash (lexical-var-node-name var-node) env-map)))
       (when var-env-number
 	(return-from get-var-ir-symbol
-	  (intern (concatenate 'string (symbol-name (lexical-var-node-name var-node))
-			       (concatenate 'string "-" (write-to-string var-env-number))))))
+	  (make-var-location :location
+	   (intern (concatenate 'string (symbol-name (lexical-var-node-name var-node))
+				(concatenate 'string "-" (write-to-string var-env-number)))))))
       ;; FIXME, unboud vars threat as special vars
       ;;      (error (concatenate 'string "The variable " (symbol-name var-name) " is unbound"))
       )))
@@ -120,10 +141,10 @@
   (add-ir component (list (list 'load-quoted to from))))
 
 (defun make-call-ir (component location fun)
-  (add-ir component (list (list 'load location 'call fun))))
+  (add-ir component (list (list 'load-return location 'call fun))))
 
 (defun make-return-ir (component location)
-  (add-ir component (list (list 'return location))))
+  (add-ir component (list (list 'load (make-return-location) location))))
 
 (defun make-lambda-entry-ir (component number-of-arguments)
   (add-ir component (list (list 'lambda-entry) (list 'arg-check number-of-arguments))))
@@ -134,8 +155,25 @@
     (add-ir component (list (list 'receive-param (get-var-ir-symbol arg environments))))))
 
 (defun make-fun-params-ir (component arg-locations)
-  (dolist (arg-loc arg-locations)
-    (add-ir component (list (list 'param arg-loc)))))
+  (add-ir component (list (list 'params-count (length arg-locations))))
+  (let ((counter 1))
+    (dolist (arg-loc arg-locations)
+      (add-ir component (list (list 'load-param (make-param-location :param-number counter) arg-loc)))
+      (incf counter))))
+
+(defun get-ir-used-location (ir)
+  (let ((mnem (first ir)))
+    (cond ((eq mnem 'if)
+	   (list (second ir)))
+	  ((eq mnem 'load)
+	   (list (second ir) (third ir)))
+	  ((eq mnem 'load-return)
+	   (list (second ir)))
+	  ((eq mnem 'param)
+	   (list (second ir)))
+	  ((eq mnem 'return)
+	   (list (second ir)))
+	  (t nil))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -145,7 +183,7 @@
 ;;; for now we will first load our immediate to register
 (defun emit-constant-ir (component node)
   (let ((location (make-temp-location)))
-    (make-load-ir component location (immediate-constant-node-value node))
+    (make-load-ir component location (make-immediate-constant :constant (immediate-constant-node-value node)))
     location))
 
 ;;; FIXME, this is not right
@@ -204,7 +242,7 @@
 (defun emit-call-ir (component node environments)
   (let ((fun (call-node-function node))
 	(arguments (call-node-arguments node))
-	(location (make-temp-location)))
+	(location (make-return-location)))
     (let ((arg-locations))
       (dolist (argument arguments)
 	(push (emit-node-ir component argument environments) arg-locations))
@@ -243,7 +281,7 @@
 ;;; lambda will create new component
 (defun emit-lambda-ir (component node)
   (let ((lambda-comp (make-ir-component))
-	(temp-loc (make-temp-location)))
+	(temp-loc (make-rip-relative-location :location (make-temp-location-symbol))))
     (push (cons temp-loc lambda-comp) (ir-component-constants component))
     (make-ir node lambda-comp temp-loc)))
 
@@ -261,7 +299,8 @@
     (tagbody-node (emit-tagbody-ir component node environments))
     ;; FIXME, error -> go-node returns nil now, should not return anything
     ;; anyway, dead code elimination in block analyzing solves this
-    (go-node (emit-go-ir component node environments))))
+    (go-node (emit-go-ir component node environments))
+    (otherwise (error "Unknown node type"))))
 
 ;;;;; MISSING
 ;;; block
@@ -284,7 +323,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; IR blocks
 
-(defstruct ir-block ir from-blocks to-blocks)
+(defstruct ir-block num ir from-blocks to-blocks used-locations)
 
 (defun new-blockp (inst counter)
   (or (= 0 counter)
@@ -314,18 +353,21 @@
   (let ((counter 0)
 	(all nil)
 	(block nil)
-	(previous-was-jump nil))
+	(previous-was-jump nil)
+	(block-num 0))
     (dolist (inst ir)
       (if (or previous-was-jump (new-blockp inst counter))
 	  (progn
-	    (when block (push (make-ir-block :ir (reverse block)) all))
+	    (when block
+	      (push (make-ir-block :num block-num :ir (reverse block)) all)
+	      (incf block-num))
 	    (setf block nil)
 	    (push inst block))
 	  (progn
 	    (push inst block)))
       (incf counter)
       (setf previous-was-jump (jump-ir-p inst)))
-    (push (make-ir-block :ir (reverse block)) all)
+    (push (make-ir-block :num block-num :ir (reverse block)) all)
     (reverse all)))
 
 (defun find-next-block-index (block-index last-ir-inst blocks)
@@ -350,10 +392,11 @@
     (let* ((block (nth index blocks))
 	   (last-ir-inst (car (last (ir-block-ir block)))))
       (setf (ir-block-to-blocks block) (find-next-block-index index last-ir-inst blocks))))
-  (dolist (block blocks)
-    (let ((to-block-indexes (ir-block-to-blocks block)))
-      (dolist (index to-block-indexes)
-	(push index (ir-block-from-blocks (nth index blocks))))))
+  ;; FIXME, setting from is bad
+  (dotimes (index (length blocks))
+    (let ((to-block-indexes (ir-block-to-blocks (nth index blocks))))
+      (dolist (to-index to-block-indexes)
+	(push index (ir-block-from-blocks (nth to-index blocks))))))
   blocks)
 
 ;;; remove blocks to which no blocks connect to
@@ -366,10 +409,121 @@
 	  (push block live-blocks))))
     (reverse live-blocks)))
 
-(defun test-print-ir (exp)
-  (let ((ir (make-ir (create-node (expand exp)))))
-    (dolist (block (remove-dead-blocks (connect-blocks (make-blocks (ir-component-code (cdr (first (ir-component-constants ir))))))))
-      (dolist (inst (ir-block-ir block))
-	(print inst))
-      (print '-----------------------------------))))
+(defun get-used-locations (ir-block)
+  (let (locations)
+    (dolist (ir (ir-block-ir ir-block))
+      (let ((loc (get-ir-used-location ir)))
+	(dolist (l loc)
+	  (when (or (typep l 'tmp-location)
+		    (typep l 'var-location)
+		    (typep l 'ret-location))
+	   (push l locations)))))
+    (setf (ir-block-used-locations ir-block) locations)))
 
+(defun fill-used-locations (blocks)
+  (dolist (ir-block blocks)
+    (setf (ir-block-used-locations ir-block)
+	  (get-used-locations ir-block)))
+  blocks)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; horrible way to remove redundant temporary store/read operations
+
+(defun get-load-to (ir)
+  (second ir))
+
+(defun get-load-from (ir)
+  (third ir))
+
+(defun load-ir-p (ir)
+  (or (eq (first ir) 'load)
+      (eq (first ir) 'load-param)))
+
+(defun block-use-location (block location)
+  (dolist (loc (ir-block-used-locations block))
+    (when (eq (location-symbol location)
+	      (location-symbol loc))
+      (return-from block-use-location t))))
+
+(defun other-block-use-location (block blocks location)
+  (let ((block-num (ir-block-num block)))
+    (dolist (ir-block blocks)
+      (when (and (/= block-num (ir-block-num ir-block))
+		 (block-use-location ir-block location))
+	(return-from other-block-use-location t)))))
+
+(defun real-tmp-loc-p (location reads writes block blocks)
+  (and (typep location 'tmp-location)
+       (not (other-block-use-location block blocks location))
+       (= 1
+	  (gethash (location-symbol location) reads)
+	  (gethash (location-symbol location) writes))))
+
+(defun redundant-load-ir-p (ir reads writes block blocks)
+  (let ((to (get-load-to ir))
+	(from (get-load-from ir)))
+    (and (real-tmp-loc-p to reads writes block blocks)
+	 (real-tmp-loc-p from reads writes block blocks))))
+
+
+(defun find-redundant (block blocks reads writes)
+  (let ((res nil)
+	(start nil)
+	(current nil))
+    (dolist (ir (ir-block-ir block))
+      (when (load-ir-p ir)
+	(let* ((to (get-load-to ir))
+	       (from (get-load-from ir))
+	       (tmp-to (real-tmp-loc-p to reads writes block blocks))
+	       (tmp-from (real-tmp-loc-p from reads writes block blocks)))
+	  (if start
+	      (cond (tmp-from
+		     (if (eq (location-symbol from) current)
+			 (if tmp-to
+			     (setf current (location-symbol to))
+			     (progn
+			       (push (list current start) res)
+			       (setf start nil)
+			       (setf current nil)))
+			 (progn
+			   (setf start nil)
+			   (setf current nil)))))
+	      (cond ((and tmp-to (not tmp-from))
+		     (setf start (location-symbol to))
+		     (setf current start)))))))
+    res))
+
+(defun get-match-location (location locs)
+  (or (second (assoc (location-symbol location) locs))
+      location))
+
+(defun remove-redundant-loads (block blocks)
+  (let ((reads (make-hash-table))
+	(writes (make-hash-table)))
+    (dolist (ir (ir-block-ir block))
+      (when (load-ir-p ir)
+	(let ((to (get-load-to ir))
+	      (from (get-load-from ir)))
+	  (when (typep to 'tmp-location)
+	    (let ((r (gethash (location-symbol to) reads)))
+	      (if r
+		  (setf (gethash (location-symbol to) reads) (+ 1 r))
+		  (setf (gethash (location-symbol to) reads) 1))))
+	  (when (typep from 'tmp-location)
+	    (let ((w (gethash (location-symbol from) writes)))
+	      (if w
+		  (setf (gethash (location-symbol from) writes) (+ 1 w))
+		  (setf (gethash (location-symbol from) writes) 1)))))))
+    (let ((locs (find-redundant block blocks reads writes)))
+      (dolist (ir (ir-block-ir block))
+	(if (load-ir-p ir)
+	    (let* ((to (get-load-to ir))
+		   (from (get-load-from ir))
+		   (tmp-to (real-tmp-loc-p to reads writes block blocks))
+		   (tmp-from (real-tmp-loc-p from reads writes block blocks)))
+	      (cond ((not tmp-from)
+		     (print ir))
+		    ((not tmp-to)
+		     (print (list (first ir) to (get-match-location from locs))))))
+	    (print ir))))))
