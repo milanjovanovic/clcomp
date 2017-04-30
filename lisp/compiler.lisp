@@ -29,27 +29,37 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
+;;;
+;;; ir mnemonics :
+;;; LAMBDA-ENTRY
+;;; ARG-CHECK
+;;; RECEIVE-PARAM
+;;; PARAMS-COUNT
+;;; LOAD-PARAM
+;;; LOAD-RETURN
+;;; LOAD
+;;; IF
+;;; LABEL
+;;; GO
 
-(defun emit-ir-assembly (asm translator)
-  (push asm (translator-code translator)))
+(defun emit-ir-assembly (translator asm)
+  (setf (translator-code translator)
+   (nconc (translator-code translator) asm)))
 
 (defun translate-lambda-entry (translator)
-  (emit-ir-assembly
-   (list
+  (emit-ir-assembly translator
+   (list 
     (list :push :RBP)
-    (list :mov :RSP :RBP))
-   translator))
+    (list :mov :RSP :RBP))))
 
 (defun translate-params-count (translator ir)
   (let ((arguments-count (second ir)))
-    (emit-ir-assembly
+    (emit-ir-assembly translator
      (list
-      (list :mov *fun-number-of-arguments-reg* arguments-count))
-     translator)
+      (list :mov *fun-number-of-arguments-reg* arguments-count)))
     (when (> arguments-count (length *fun-arguments-regs*))
-      (emit-ir-assembly
-       (list (list :sub :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))
-       translator))))
+      (emit-ir-assembly translator
+       (list (list :sub :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
 
 (defun translate-receive-param (ir translator)
   ;; move arguments to scratch registers
@@ -74,9 +84,11 @@
   (let ((mnemonic (first ir)))
     (case mnemonic
       (lambda-entry (translate-lambda-entry translator))
+      (arg-check "FIXME")
       (params-count (translate-params-count ir translator))
       (receive-param (translate-receive-param ir translator))
       (load (translate-load ir translator))
+      (load-param "FIXME")
       (load-return (translate-load-return ir translator))
       (if (translate-if ir translator))
       (fo (translate-go ir translator))
