@@ -28,12 +28,11 @@
 (defun make-return-location ()
   (make-ret-location :location (make-temp-location-symbol)))
 
-
 (defstruct rip-relative-location location)
 (defstruct var-location location)
 (defstruct tmp-location location)
 (defstruct ret-location location)
-(defstruct param-location param-number)
+(defstruct param-location location param-number)
 (defstruct immediate-constant constant)
 
 (defun location-symbol (location)
@@ -158,7 +157,7 @@
   (add-ir component (list (list 'params-count (length arg-locations))))
   (let ((counter 1))
     (dolist (arg-loc arg-locations)
-      (add-ir component (list (list 'load-param (make-param-location :param-number counter) arg-loc)))
+      (add-ir component (list (list 'load-param (make-param-location :location (make-temp-location-symbol) :param-number counter) arg-loc)))
       (incf counter))))
 
 (defun get-ir-used-location (ir)
@@ -429,6 +428,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; horrible way to remove redundant temporary store/read operations
+;;; search for temp load/stores and remove them
 
 (defun get-load-to (ir)
   (second ir))
@@ -457,51 +457,77 @@
   (and (typep location 'tmp-location)
        (not (other-block-use-location block blocks location))
        (= 1
-	  (gethash (location-symbol location) reads)
-	  (gethash (location-symbol location) writes))))
+	  (or (gethash (location-symbol location) reads) -1)
+	  (or (gethash (location-symbol location) writes) -1))))
 
-(defun redundant-load-ir-p (ir reads writes block blocks)
-  (let ((to (get-load-to ir))
-	(from (get-load-from ir)))
-    (and (real-tmp-loc-p to reads writes block blocks)
-	 (real-tmp-loc-p from reads writes block blocks))))
+(defstruct load-pattern start current end last-temp)
 
+(defun find-pattern (patterns location)
+  (let (pattern)
+    (dolist (p patterns)
+      (when (and (load-pattern-current p)
+		 (eq (location-symbol location) (location-symbol (load-pattern-current p))))
+	(setf pattern p)))
+    pattern))
 
-(defun find-redundant (block blocks reads writes)
-  (let ((res nil)
-	(start nil)
-	(current nil))
+(defun find-pattern-by-start (patterns location)
+  (let (pattern)
+    (dolist (p patterns)
+      (when (and (load-pattern-start p)
+		 (eq (location-symbol location) (location-symbol (load-pattern-start p))))
+	(setf pattern p)))
+    pattern))
+
+(defun find-pattern-by-last-temp (patterns location)
+  (let (pattern)
+    (dolist (p patterns)
+      (when (and (load-pattern-last-temp p)
+		 (eq (location-symbol location) (location-symbol (load-pattern-last-temp p))))
+	(setf pattern p)))
+    pattern))
+
+(defun start-pattern (location)
+  (make-load-pattern :start location :current location :end nil))
+
+(defun add-pattern-location (to from res)
+  (if (null res)
+      (error "Can't add location connection, no existing pattenrs")
+      (let ((pattern (find-pattern res from)))
+	(if (null pattern)
+	    (error "Can't find right pattern")
+	    (setf (load-pattern-current pattern) to)))))
+
+(defun finish-pattern (to from res)
+  (if (null res)
+      (error "Can't finish location pattern, no existing pattenrs")
+      (let ((pattern (find-pattern res from)))
+	(if (null pattern)
+	    (error "Can't find right pattern")
+	    (progn
+	      (setf (load-pattern-current pattern) nil)
+	      (setf (load-pattern-end pattern) to)
+	      (setf (load-pattern-last-temp pattern) from))))))
+
+(defun find-redundant-load-patterns (block blocks reads writes)
+  (let ((res nil))
     (dolist (ir (ir-block-ir block))
       (when (load-ir-p ir)
 	(let* ((to (get-load-to ir))
 	       (from (get-load-from ir))
 	       (tmp-to (real-tmp-loc-p to reads writes block blocks))
 	       (tmp-from (real-tmp-loc-p from reads writes block blocks)))
-	  (if start
-	      (cond (tmp-from
-		     (if (eq (location-symbol from) current)
-			 (if tmp-to
-			     (setf current (location-symbol to))
-			     (progn
-			       (push (list start to) res)
-			       (setf start nil)
-			       (setf current nil)))
-			 (progn
-			   (setf start nil)
-			   (setf current nil)))))
-	      (cond ((and tmp-to (not tmp-from))
-		     (setf start (location-symbol to))
-		     (setf current start)))))))
+	  (cond ((and tmp-to tmp-from)
+		 (add-pattern-location to from res))
+		((and tmp-to (not tmp-from))
+		 (setf res (append res (list (start-pattern to)))))
+		((and (not tmp-to) tmp-from)
+		 (finish-pattern to from res))))))
     res))
 
-(defun get-match-location (location locs)
-  (or (second (assoc (location-symbol location) locs))
-      location))
-
-(defun remove-redundant-loads (block blocks)
+(defun get-locations-usage-count (ir-code)
   (let ((reads (make-hash-table))
 	(writes (make-hash-table)))
-    (dolist (ir (ir-block-ir block))
+    (dolist (ir ir-code)
       (when (load-ir-p ir)
 	(let ((to (get-load-to ir))
 	      (from (get-load-from ir)))
@@ -515,7 +541,23 @@
 	      (if w
 		  (setf (gethash (location-symbol from) writes) (+ 1 w))
 		  (setf (gethash (location-symbol from) writes) 1)))))))
-    (let ((locs (find-redundant block blocks reads writes)))
+    (list reads writes)))
+
+
+(defun get-forward-location (patterns location)
+  (let ((pattern (find-pattern-by-start patterns location)))
+    (if (null pattern)
+	(error "Missing pattern")
+	(let ((forward-location (load-pattern-end pattern)))
+	  (setf (load-pattern-end pattern) nil) ; this is needed so we can skip last move
+	  forward-location))))
+
+(defun remove-redundant-load-patterns (block blocks)
+  (let* ((usage-count (get-locations-usage-count (ir-block-ir block)))
+	 (reads (first usage-count))
+	 (writes (second usage-count)))
+    (let ((patterns (find-redundant-load-patterns block blocks reads writes))
+	  (new-code nil))
       (dolist (ir (ir-block-ir block))
 	(if (load-ir-p ir)
 	    (let* ((to (get-load-to ir))
@@ -523,10 +565,16 @@
 		   (tmp-to (real-tmp-loc-p to reads writes block blocks))
 		   (tmp-from (real-tmp-loc-p from reads writes block blocks)))
 	      (cond ((and (not tmp-to) (not tmp-from))
-		     (print ir))
+		     (push ir new-code))
 		    ((and tmp-to (not tmp-from))
-		     (print (list (first ir) (get-match-location to locs) from)))
+		     (push (list (first ir)
+				 (get-forward-location patterns to)
+				 from)
+			   new-code))
 		    ((and (not tmp-to) tmp-from)
-		     nil)
-		    (t nil)))
-	    (print ir))))))
+		     ;; FIXME, maybe we should insert here our first move location
+		     ;; so we don't screw up instruction order
+		     (unless (find-pattern-by-last-temp patterns from)
+		       (push ir new-code)))))
+	    (push ir new-code)))
+      (reverse new-code))))
