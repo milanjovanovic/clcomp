@@ -460,7 +460,7 @@
 	  (or (gethash (location-symbol location) reads) -1)
 	  (or (gethash (location-symbol location) writes) -1))))
 
-(defstruct load-pattern start current end last-temp)
+(defstruct load-pattern start start-from current end last-temp ir)
 
 (defun find-pattern (patterns location)
   (let (pattern)
@@ -486,8 +486,8 @@
 	(setf pattern p)))
     pattern))
 
-(defun start-pattern (location)
-  (make-load-pattern :start location :current location :end nil))
+(defun start-pattern (to from)
+  (make-load-pattern :start to :start-from from :current to :end nil))
 
 (defun add-pattern-location (to from res)
   (if (null res)
@@ -508,6 +508,14 @@
 	      (setf (load-pattern-end pattern) to)
 	      (setf (load-pattern-last-temp pattern) from))))))
 
+;;; reset non-finished patterns if we see write to non-temp location from where we start creating pattern
+(defun reset-broken-patterns (patterns location)
+  (dolist (pattern patterns)
+    (when (and (null (load-pattern-end pattern))
+	       (load-pattern-start-from pattern)
+	       (eq (location-symbol location)
+		   (location-symbol (load-pattern-start-from pattern)))))))
+
 (defun find-redundant-load-patterns (block blocks reads writes)
   (let ((res nil))
     (dolist (ir (ir-block-ir block))
@@ -519,9 +527,10 @@
 	  (cond ((and tmp-to tmp-from)
 		 (add-pattern-location to from res))
 		((and tmp-to (not tmp-from))
-		 (setf res (append res (list (start-pattern to)))))
+		 (setf res (append res (list (start-pattern to from)))))
 		((and (not tmp-to) tmp-from)
-		 (finish-pattern to from res))))))
+		 (finish-pattern to from res))
+		(t (reset-broken-patterns res to))))))
     res))
 
 (defun get-locations-usage-count (ir-code)
@@ -544,13 +553,22 @@
     (list reads writes)))
 
 
-(defun get-forward-location (patterns location)
+(defun save-replacement-ir (patterns location ir)
   (let ((pattern (find-pattern-by-start patterns location)))
     (if (null pattern)
 	(error "Missing pattern")
 	(let ((forward-location (load-pattern-end pattern)))
-	  (setf (load-pattern-end pattern) nil) ; this is needed so we can skip last move
-	  forward-location))))
+	  (setf (load-pattern-end pattern) nil)
+	  (setf (load-pattern-ir pattern)
+		(list (first ir) forward-location (third ir)))))))
+
+(defun get-replacement-ir (patterns location)
+  (let ((pattern (find-pattern-by-last-temp  patterns location)))
+    (if (null pattern)
+	(error "Can't find pattern !!")
+	(let ((ir (load-pattern-ir pattern)))
+	  (setf (load-pattern-last-temp pattern) nil)
+	  ir))))
 
 (defun remove-redundant-load-patterns (block blocks)
   (let* ((usage-count (get-locations-usage-count (ir-block-ir block)))
@@ -567,14 +585,9 @@
 	      (cond ((and (not tmp-to) (not tmp-from))
 		     (push ir new-code))
 		    ((and tmp-to (not tmp-from))
-		     (push (list (first ir)
-				 (get-forward-location patterns to)
-				 from)
-			   new-code))
+		     (save-replacement-ir patterns to ir))
 		    ((and (not tmp-to) tmp-from)
-		     ;; FIXME, maybe we should insert here our first move location
-		     ;; so we don't screw up instruction order
-		     (unless (find-pattern-by-last-temp patterns from)
-		       (push ir new-code)))))
+		     (push (or (get-replacement-ir patterns from) ir)
+			   new-code))))
 	    (push ir new-code)))
       (reverse new-code))))
