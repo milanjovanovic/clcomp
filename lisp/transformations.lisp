@@ -3,6 +3,12 @@
 (declaim (optimize (debug 3) (safety 3) (speed 0)))
 
 
+(defun create-block-tagbody-symbol (block-name)
+  block-name)
+
+(defun create-block-let-value-symbol (block-name)
+  block-name)
+
 (defun transform-lambda-form (lambda-form)
   (list 'lambda (second lambda-form)
 	(append (list 'progn) (mapcar #'%expand (nthcdr 2 lambda-form)))))
@@ -24,6 +30,23 @@
 	(list 'lambda
 	      (third defun-form)
 	      (append (list 'progn) (mapcar #'%expand (nthcdr 3 defun-form))))))
+
+(defun transform-block (form)
+  (let ((tagbody-symbol (create-block-tagbody-symbol (second form)))
+	(ret-value-symbol (create-block-let-value-symbol (second form))))
+    (list 'let (list ret-value-symbol)
+	  (list 'tagbody
+		(list 'setq 'foo
+		      (append (list 'progn) (mapcar #'%expand (nthcdr 2 form))))
+		tagbody-symbol)
+	  ret-value-symbol)))
+
+(defun transform-return-from (form)
+  (let ((tagbody-symbol (create-block-tagbody-symbol (second form)))
+	(ret-value-symbol (create-block-let-value-symbol (second form))))
+    (list 'progn
+	  (list 'setq ret-value-symbol (third form))
+	  (list 'go tagbody-symbol))))
 
 (defun transform-setf-form (setf-form)
   (let ((place (second setf-form))
@@ -47,16 +70,13 @@
 	  ((eq first 'defun) (transform-defun form))
 	  ((eq first 'lambda) (transform-lambda-form form))
 	  ((eq first 'let) (transform-let-form form))
-	  ((eq first 'setf) (transform-setf-form form))	  
+	  ((eq first 'setf) (transform-setf-form form))
+	  ((eq first 'block) (transform-block form))
+	  ((eq first 'return-from) (transform-return-from form))
 	  (t (append (list first) (mapcar #'%expand rest)))))))
 
 (defun expand (form)
   (%expand form))
-
-#+nil
-(defun expand (form)
-  (list 'lambda nil
-	(%expand form)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
