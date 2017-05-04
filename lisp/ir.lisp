@@ -35,11 +35,31 @@
 (defstruct param-location location param-number)
 (defstruct immediate-constant constant)
 
+(defun location-equal (loc1 loc2)
+  (and (eq (type-of loc1)
+	   (type-of loc2))
+       (let ((type (type-of loc1)))
+	 (case type
+	   (param-location (eq (param-location-param-number loc1)
+			       (param-location-param-number loc2)))
+	   (tmp-location (eq (tmp-location-location loc1)
+			     (tmp-location-location loc2)))
+	   (var-location (eq (var-location-location loc1)
+			     (var-location-location loc2)))
+	   (ret-location (eq (ret-location-location loc1)
+			     (ret-location-location loc2)))
+	   (rip-relative-location (eq (rip-relative-location-location loc1)
+				      (rip-relative-location-location loc2)))
+	   (immediate-constant (equalp (immediate-constant-constant loc1)
+				       (immediate-constant-constant loc2)))
+	   (otherwise (error "Unknown location type"))))))
+
 (defun location-symbol (location)
   (typecase location
     (tmp-location (tmp-location-location location))
     (var-location (var-location-location location))
     (ret-location (ret-location-location location))
+    (param-location (param-location-location location))
     (otherwise (error "Unknown location type"))))
 
 ;;; environments
@@ -78,13 +98,12 @@
       (when var-env-number
 	(return-from get-var-ir-symbol
 	  (make-var-location :location
-	   (intern (concatenate 'string (symbol-name (lexical-var-node-name var-node))
-				(concatenate 'string "-" (write-to-string var-env-number)))))))
-      ;; FIXME, unboud vars threat as special vars
-      ;;      (error (concatenate 'string "The variable " (symbol-name var-name) " is unbound"))
-      )))
+			     (intern (concatenate 'string (symbol-name (lexical-var-node-name var-node))
+						  (concatenate 'string "-" (write-to-string var-env-number)))))))))
+  ;; FIXME, unboud vars threat as special vars
+  (error (concatenate 'string "Missing lexical variable " (symbol-name (lexical-var-node-name var-node)))))
 
-;;; go tags environment
+  ;;; go tags environment
 (defparameter *tagbody-envs-counter* 0)
 
 (defun make-tagbody-env ()
@@ -302,8 +321,9 @@
     (otherwise (error "Unknown node type"))))
 
 ;;;;; MISSING
-;;; block
-;;; return / return-from
+;;; BLOCK
+;;; RETURN / RETURN-FROM
+;;; FIXME, implement RETURN and RETURN-FROM with TAGBODY and GO
 
 ;;; entry node need to be lambda
 (defun make-ir (lambda-node &optional component name)
@@ -513,8 +533,13 @@
   (dolist (pattern patterns)
     (when (and (null (load-pattern-end pattern))
 	       (load-pattern-start-from pattern)
+	       (location-equal location (load-pattern-start-from pattern))
+	       #+nil
 	       (eq (location-symbol location)
-		   (location-symbol (load-pattern-start-from pattern)))))))
+		   (location-symbol (load-pattern-start-from pattern))))
+      (setf (load-pattern-start pattern) nil)
+      (setf (load-pattern-start-from pattern) nil)
+      (setf (load-pattern-current pattern) nil))))
 
 (defun find-redundant-load-patterns (block blocks reads writes)
   (let ((res nil))

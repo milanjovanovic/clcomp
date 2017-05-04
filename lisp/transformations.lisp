@@ -4,9 +4,11 @@
 
 
 (defun create-block-tagbody-symbol (block-name)
+  ;; FIXME, generate uniq symbols
   block-name)
 
 (defun create-block-let-value-symbol (block-name)
+  ;; FIXME, generate uniq symbols
   block-name)
 
 (defun transform-lambda-form (lambda-form)
@@ -34,7 +36,7 @@
 (defun transform-block (form)
   (let ((tagbody-symbol (create-block-tagbody-symbol (second form)))
 	(ret-value-symbol (create-block-let-value-symbol (second form))))
-    (list 'let (list ret-value-symbol)
+    (list 'let (list (list ret-value-symbol nil))
 	  (list 'tagbody
 		(list 'setq 'foo
 		      (append (list 'progn) (mapcar #'%expand (nthcdr 2 form))))
