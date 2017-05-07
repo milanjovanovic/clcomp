@@ -605,7 +605,9 @@
 
 (defun encode-instruction (mnemonic operands)
   (if (= (length operands) 1)
-      (encode-one-operand-instruction mnemonic operands)
+      (if (eq mnemonic :byte)
+	  (list (first operands))
+	  (encode-one-operand-instruction mnemonic operands))
       (encode-two-operand-instruction mnemonic operands)))
 
 (defun @ (&rest rest)
@@ -615,7 +617,7 @@
   instruction)
 
 (defun assemble-instruction (instruction)
-  (encode-instruction (first instruction) (reparse-operands (rest instruction ))))
+  (encode-instruction (first instruction) (reparse-operands (rest instruction))))
 
 
 ;;; posible effective address format

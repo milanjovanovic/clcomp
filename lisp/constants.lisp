@@ -17,4 +17,3 @@
 
 (defparameter *nil* 536870914)
 (defparameter *t* 536870927)
-
