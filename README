@@ -1,0 +1,7 @@
+CLCOMP
+
+CLCOMP is wannabe self-hosting Lisp compiler.
+Objective is to bootstrap compiler with one of existing Common Lisp implementations.
+Since at the end I want to compile compiler with itself I'm trying not to use too much of Common Lisp for compiler code.
+For now there is assembler implementation, compiler is almost finished, GC is non existant and Runtime is mostly missing
+End goal is working REPL and compile-based EVAL.
