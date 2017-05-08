@@ -81,9 +81,11 @@
       (push (list :push reg) assembly))
     assembly))
 
-(defun allocate-stack-space (allocation)
-  (list
-   (list :sub :RSP (* *word-size* (allocation-stack allocation)))))
+(defun maybe-allocate-stack-space (translator allocation)
+  (when (> (allocation-stack allocation) 0)
+    (emit-ir-assembly translator
+		      (list
+		       (list :sub :RSP (* *word-size* (allocation-stack allocation)))))))
 
 (defun translate-lambda-entry (translator allocation)
   (emit-ir-assembly translator
@@ -91,7 +93,7 @@
 		     (list :push :RBP)
 		     (list :mov :RBP :RSP)))
   (emit-ir-assembly translator (calle-save-registers))
-  (emit-ir-assembly translator (allocate-stack-space allocation)))
+  (maybe-allocate-stack-space translator allocation))
 
 (defun translate-arg-check (ir translator)
   (let ((arg-count (second ir)))
@@ -139,9 +141,22 @@
 			(list
 			 (list :mov (storage-operand storage) *return-value-reg*))))))
 
-(defun translate-if (ir translator)
-  ;; FIXME
-  (list ir))
+(defun translate-if (ir translator allocation)
+  (let* ((location (second ir))
+	 (storage (get-allocation-storage location allocation))
+	 (storage-type (type-of storage))
+	 (test-storage storage))
+    (when (or
+	   (eq storage-type 'stack-storage)
+	   (eq storage-type 'memory-storage))
+      (emit-ir-assembly translator
+			(list
+			 (list :mov (make-reg-storage :register *tmp-reg*) storage)))
+      (setf test-storage (make-reg-storage :register *tmp-reg*)))
+    (emit-ir-assembly translator
+		      (list
+		       (list :cmp (storage-operand test-storage) *t*)
+		       (list :jump-fixup :je (fourth ir))))))
 
 (defun translate-go (ir translator)
   (emit-ir-assembly translator
@@ -175,20 +190,18 @@
       (receive-param (translate-receive-param (second ir) (third ir) translator allocation))
       (load (translate-load ir translator allocation))
       (load-param (translate-load-param ir translator allocation))
-      (load-call (translate-load-call ir translator allocation)) ;;; FIXME, need to set RCX to nunmer of arguments
-      (if (translate-if ir translator))
+      (load-call (translate-load-call ir translator allocation)) 
+      (if (translate-if ir translator allocation))
       (go (translate-go ir translator))
       (label (translate-label ir translator))
       (lambda-exit (translate-lambda-exit translator)))))
 
-(defun component-to-asm (ir-component allocation)
+(defun translate-component (ir-component allocation)
   (let ((translator (make-translator)))
     (dolist (blok (ir-component-code-blocks ir-component))
       (dolist (ir (ir-block-ir blok))
 	(to-asm ir translator allocation)))
     translator))
-
-
 
 ;;; linear scan register allocation
 
@@ -254,20 +267,17 @@
       (make-memory-storage :base :RBP :offset (* *word-size* (+ 2 (- param-number (length *fun-arguments-regs*) 1))))
       (make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*))))
 
-(defun get-param-storage (param-number arguments-count)
+(defun get-param-storage (param-number)
   (let ((arg-reg-count (length *fun-arguments-regs*)))
-    ;; params numbers starts from 1, we are loading last argument on RSP+0 and first to last stack location so it's easy to calle to get to arguments
     (if (> param-number arg-reg-count)
-	(make-memory-storage :base :RSP :offset (* *word-size* (- (- arguments-count arg-reg-count 1)
-								  (- param-number arg-reg-count 1))))
+	(make-memory-storage :base :RSP :offset (* *word-size* (- param-number arg-reg-count 1)))
 	(make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*)))))
 
 (defun get-allocation-storage (location allocation)
   (let ((location-type (type-of location)))
     (case location-type
-      (constant-storage (make-constant-storage :constant (immediate-constant-constant location)))
-      (param-location (get-param-storage (param-location-param-number location)
-					 (param-location-arguments-count location)))
+      (immediate-constant (make-constant-storage :constant (immediate-constant-constant location)))
+      (param-location (get-param-storage (param-location-param-number location)))
       (ret-location (or (gethash (location-symbol location) (allocation-map allocation))
 			(make-reg-storage :register *return-value-reg*)))
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-map allocation)))
@@ -318,7 +328,7 @@
 	   (setf (allocation-active allocation) (butlast (allocation-active allocation)))
 	   (add-live-interval allocation interval)))))
 
-(defun allocate-storage (intervals)
+(defun create-component-allocation (intervals)
   (let ((allocation (make-allocation :map (make-hash-table) :stack 0 :registers-available *preserved-regs*)))
     (dolist (interval (get-sorted-intervals intervals))
       (expire-old-intervals allocation (interval-start interval))
@@ -329,6 +339,11 @@
 
 
 (defstruct translator registers locations code)
+
+(defun component-to-asm (ir-component)
+  (let* ((intervals (create-ir-intervals ir-component))
+	 (allocation (create-component-allocation intervals)))
+    (translate-component ir-component allocation)))
 
 (defun try-constant-component-blocks-phase (constants)
   (dolist (constant constants)
@@ -349,15 +364,9 @@
     ir-component))
 
 
-#+nil
-(defun translate-ir ()
-  (let ((translator (make-translator :registers (make-hash-table)
-				     :locations (make-hash-table))))
-    (dolist (ir ir-code)
-      )))
-
 (defun clcomp-compile (exp)
   (let* ((ir-component (make-ir (create-node (expand exp)))))
     (component-blocks-phase ir-component)
     (let ((ir-code (ir-component-code ir-component)))
+      (declare (ignore ir-code))
       ir-component)))

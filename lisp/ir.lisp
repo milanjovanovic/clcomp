@@ -32,7 +32,7 @@
 (defstruct var-location location)
 (defstruct tmp-location location)
 (defstruct ret-location location)
-(defstruct param-location location param-number)
+(defstruct param-location location param-number arguments-count)
 (defstruct immediate-constant constant)
 
 (defun location-equal (loc1 loc2)
@@ -183,9 +183,10 @@
     (let ((counter 1))
       (dolist (arg-loc arg-locations)
 	(add-ir component (list (list 'load-param
-				      (make-param-location :location (make-temp-location-symbol) :param-number counter)
-				      arg-loc
-				      arguments-count)))
+				      (make-param-location :location (make-temp-location-symbol)
+							   :param-number counter
+							   :arguments-count arguments-count)
+				      arg-loc)))
 	(incf counter)))))
 
 (defun get-ir-used-location (ir)
