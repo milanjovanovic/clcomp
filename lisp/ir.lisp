@@ -159,18 +159,23 @@
   (add-ir component (list (list 'load-quoted to from))))
 
 (defun make-call-ir (component location fun)
-  (add-ir component (list (list 'load-return location 'call fun))))
+  (add-ir component (list (list 'load-call location 'call fun))))
 
 (defun make-return-ir (component location)
   (add-ir component (list (list 'load (make-return-location) location))))
+
+(defun make-lambda-exit-ir (component)
+  (add-ir component (list (list 'lambda-exit))))
 
 (defun make-lambda-entry-ir (component number-of-arguments)
   (add-ir component (list (list 'lambda-entry) (list 'arg-check number-of-arguments))))
 
 (defun make-lambda-arguments-ir (component arguments environments)
-  (dolist (arg arguments)
-    (add-var arg environments)
-    (add-ir component (list (list 'receive-param (get-var-ir-symbol arg environments))))))
+  (let ((index 1))
+    (dolist (arg arguments)
+      (add-var arg environments)
+      (add-ir component (list (list 'receive-param (get-var-ir-symbol arg environments) index)))
+      (incf index))))
 
 (defun make-fun-params-ir (component arg-locations)
   (add-ir component (list (list 'params-count (length arg-locations))))
@@ -185,7 +190,7 @@
 	   (list (second ir)))
 	  ((eq mnem 'load)
 	   (list (second ir) (third ir)))
-	  ((eq mnem 'load-return)
+	  ((eq mnem 'load-call)
 	   (list (second ir)))
 	  ((eq mnem 'param)
 	   (list (second ir)))
@@ -320,11 +325,6 @@
     (go-node (emit-go-ir component node environments))
     (otherwise (error "Unknown node type"))))
 
-;;;;; MISSING
-;;; BLOCK
-;;; RETURN / RETURN-FROM
-;;; FIXME, implement RETURN and RETURN-FROM with TAGBODY and GO
-
 ;;; entry node need to be lambda
 (defun make-ir (lambda-node &optional component name)
   (let ((component (or component (make-ir-component))))
@@ -336,6 +336,7 @@
       (make-lambda-entry-ir component (length arguments))
       (make-lambda-arguments-ir component arguments environments)
       (make-return-ir component (emit-node-ir component body environments))
+      (make-lambda-exit-ir component)
       (remove-env environments))
     (or name component)))
 
@@ -458,7 +459,8 @@
 
 (defun load-ir-p (ir)
   (or (eq (first ir) 'load)
-      (eq (first ir) 'load-param)))
+      (eq (first ir) 'load-param)
+      (eq (first ir) 'load-call)))
 
 (defun block-use-location (block location)
   (dolist (loc (ir-block-used-locations block))
