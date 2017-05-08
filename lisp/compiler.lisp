@@ -14,6 +14,7 @@
 
 
 (defparameter *debug* t)
+
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
 ;;;
@@ -29,6 +30,24 @@
 ;;; LABEL
 ;;; GO
 ;;; LAMBDA-EXIT
+
+
+;;;;  STACK
+;;;; CSRN - calle saved registers
+;;;; L1 - local variable
+;;;; ARGN - function arguments with no register
+;;;
+;;; ARG6  RBP+24
+;;; ARG5  RBP+16
+;;; RET   RBP+8
+;;; RBP   RBP
+;;; CSR1    RBP-8
+;;; CSR2    RBP-16
+;;; CSR3    RBP-24
+;;; L1   RBP-32
+;;; L2   RBP-40
+;;; L3   RBP-48
+;;; L4   RBP-56
 
 (defun emit-ir-assembly (translator asm)
   (when *debug*
@@ -80,7 +99,7 @@
     (emit-ir-assembly translator
 		      (list
 		       (list :cmp *fun-number-of-arguments-reg* (fixnumize-positive (second ir)))
-		       (list :jmp-fixum :jmp :wrong-arg-count-label)))))
+		       (list :jmp-fixup :jmp :wrong-arg-count-label)))))
 
 (defun translate-params-count (ir translator)
   (let ((arguments-count (second ir)))
@@ -110,6 +129,10 @@
 		    (list
 		     (list :mov *fun-address-reg* :fixup (fourth ir))
 		     (list :call (@ *fun-address-reg*))))
+  (let ((arguments-count (nth 4 ir)))
+    (when (> arguments-count (length *fun-arguments-regs*))
+      (emit-ir-assembly translator
+			(list (list :add :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*))))))))
   (let ((storage (get-allocation-storage (second ir) allocation)))
     (when storage
       (emit-ir-assembly translator
@@ -209,7 +232,7 @@
 	(incf index)))
     intervals))
 
-(defstruct allocation active map stack reg registers-available)
+(defstruct allocation active map stack registers-available)
 (defstruct reg-storage register)
 ;;; FIXME, no need for stack-storage, should be memory-storage with RBP as base
 (defstruct stack-storage offset)
@@ -220,28 +243,31 @@
   (case (type-of storage)
     (constant-storage (constant-storage-constant storage))
     (reg-storage (reg-storage-register storage))
-    (stack-storage (@ :RBP (- (* *word-size* (stack-storage-offset storage)))))
+    (stack-storage (@ :RBP (- (* *word-size* (+ (stack-storage-offset storage)
+						(length *preserved-regs*)
+						1)))))
     (memory-storage (@ (memory-storage-base storage) (memory-storage-offset storage)))))
 
 (defun make-receive-param-storage (param-number)
   (if (> param-number (length *fun-arguments-regs*))
-      ;; we already did push RBP to stack and with return addres that's 2 slots + all calle-saved registers
-      (make-memory-storage :base :RBP :offset (* *word-size* (+ 2
-								(length *preserved-regs*)
-								(- param-number (length *fun-arguments-regs*) 1))))
+      ;; we already did push RBP to stack and with return addres that's 2 slots
+      (make-memory-storage :base :RBP :offset (* *word-size* (+ 2 (- param-number (length *fun-arguments-regs*) 1))))
       (make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*))))
 
-(defun get-param-storage (param-number)
-  ;; params numbers starts from 1
-  (if (> param-number (length *fun-arguments-regs*))
-      (make-memory-storage :base :RSP :offset (- param-number (length *fun-arguments-regs*)))
-      (make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*))))
+(defun get-param-storage (param-number arguments-count)
+  (let ((arg-reg-count (length *fun-arguments-regs*)))
+    ;; params numbers starts from 1, we are loading last argument on RSP+0 and first to last stack location so it's easy to calle to get to arguments
+    (if (> param-number arg-reg-count)
+	(make-memory-storage :base :RSP :offset (* *word-size* (- (- arguments-count arg-reg-count 1)
+								  (- param-number arg-reg-count 1))))
+	(make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*)))))
 
 (defun get-allocation-storage (location allocation)
   (let ((location-type (type-of location)))
     (case location-type
       (constant-storage (make-constant-storage :constant (immediate-constant-constant location)))
-      (param-location (get-param-storage (param-location-param-number location)))
+      (param-location (get-param-storage (param-location-param-number location)
+					 (param-location-arguments-count location)))
       (ret-location (or (gethash (location-symbol location) (allocation-map allocation))
 			(make-reg-storage :register *return-value-reg*)))
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-map allocation)))
@@ -258,7 +284,8 @@
   (let (new-active)
     (dolist (interval (allocation-active allocation))
       (cond ((< (interval-end interval) start)
-	     (decf (allocation-reg allocation)))
+	     (let ((interval-storage (gethash (interval-symbol interval) (allocation-map allocation))))
+	       (push (reg-storage-register interval-storage) (allocation-registers-available allocation))))
 	    (t (push interval new-active))))
     (setf (allocation-active allocation)
 	  (sort new-active #'< :key (lambda (int) (interval-end int))))
@@ -267,12 +294,12 @@
 (defun add-live-interval (allocation interval)
   (let ((new-active (cons interval
 			  (allocation-active allocation)))
-	(int-sym (interval-symbol interval)))
+	(int-sym (interval-symbol interval))
+	(register (pop (allocation-registers-available allocation))))
     (setf (allocation-active allocation)
 	  (sort new-active #'< :key (lambda (int) (interval-end int))))
-    (setf (gethash int-sym (allocation-map allocation)) (make-reg-storage :register (nth (allocation-reg allocation)
-											 *preserved-regs*)))
-    (incf (allocation-reg allocation))))
+    (setf (gethash int-sym (allocation-map allocation)) (make-reg-storage :register register))
+    allocation))
 
 (defun spill-interval (allocation interval)
   (let* ((last-interval (car (last (allocation-active allocation))))
@@ -282,18 +309,20 @@
 		 (make-stack-storage :offset (allocation-stack allocation)))
 	   (incf (allocation-stack allocation)))
 	  (t
-	   (setf (gethash (interval-symbol last-interval) (allocation-map allocation))
-		 (make-stack-storage :offset (allocation-stack allocation)))
+	   (let ((last-interval-storage (gethash (interval-symbol last-interval)
+						 (allocation-map allocation))))
+	     (push (reg-storage-register last-interval-storage) (allocation-registers-available allocation))
+	     (setf (gethash (interval-symbol last-interval) (allocation-map allocation))
+		   (make-stack-storage :offset (allocation-stack allocation))))
 	   (incf (allocation-stack allocation))
-	   (let ((new-active (cons interval (butlast (allocation-active allocation)))))
-	     (setf (allocation-active allocation)
-		   (sort new-active #'< :key (lambda (int) (interval-end int)))))))))
+	   (setf (allocation-active allocation) (butlast (allocation-active allocation)))
+	   (add-live-interval allocation interval)))))
 
 (defun allocate-storage (intervals)
-  (let ((allocation (make-allocation :map (make-hash-table) :stack 0 :reg 0 :registers-available (length *preserved-regs*))))
+  (let ((allocation (make-allocation :map (make-hash-table) :stack 0 :registers-available *preserved-regs*)))
     (dolist (interval (get-sorted-intervals intervals))
       (expire-old-intervals allocation (interval-start interval))
-      (cond ((< (length (allocation-active allocation)) (allocation-registers-available allocation))
+      (cond ((>  (length (allocation-registers-available allocation)) 0)
 	     (add-live-interval allocation interval))
 	    (t (spill-interval allocation interval))))
     allocation))

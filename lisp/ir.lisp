@@ -158,8 +158,8 @@
 (defun make-quoted-ir (component to from)
   (add-ir component (list (list 'load-quoted to from))))
 
-(defun make-call-ir (component location fun)
-  (add-ir component (list (list 'load-call location 'call fun))))
+(defun make-call-ir (component location fun arguments-count)
+  (add-ir component (list (list 'load-call location 'call fun arguments-count))))
 
 (defun make-return-ir (component location)
   (add-ir component (list (list 'load (make-return-location) location))))
@@ -178,11 +178,15 @@
       (incf index))))
 
 (defun make-fun-params-ir (component arg-locations)
-  (add-ir component (list (list 'params-count (length arg-locations))))
-  (let ((counter 1))
-    (dolist (arg-loc arg-locations)
-      (add-ir component (list (list 'load-param (make-param-location :location (make-temp-location-symbol) :param-number counter) arg-loc)))
-      (incf counter))))
+  (let ((arguments-count (length arg-locations)))
+    (add-ir component (list (list 'params-count arguments-count)))
+    (let ((counter 1))
+      (dolist (arg-loc arg-locations)
+	(add-ir component (list (list 'load-param
+				      (make-param-location :location (make-temp-location-symbol) :param-number counter)
+				      arg-loc
+				      arguments-count)))
+	(incf counter)))))
 
 (defun get-ir-used-location (ir)
   (let ((mnem (first ir)))
@@ -270,7 +274,7 @@
       (dolist (argument arguments)
 	(push (emit-node-ir component argument environments) arg-locations))
       (make-fun-params-ir component (reverse arg-locations)))
-    (make-call-ir component location fun)
+    (make-call-ir component location fun (length arguments))
     location))
 
 (defun emit-setq-ir (component node environments)
