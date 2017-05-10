@@ -16,14 +16,14 @@
 
 (defun make-temp-location-symbol ()
   (incf *temp-counter*)
-  (intern (concatenate 'string "TEMP-" (write-to-string *temp-counter*))))
+  (make-symbol (concatenate 'string "TEMP-" (write-to-string *temp-counter*))))
 
 (defun make-temp-location ()
   (make-tmp-location :location (make-temp-location-symbol)))
 
 (defun make-label ()
   (incf *label-counter*)
-  (intern (concatenate 'string "LABEL-" (write-to-string *label-counter*))))
+  (make-symbol (concatenate 'string "LABEL-" (write-to-string *label-counter*))))
 
 (defun make-return-location ()
   (make-ret-location :location (make-temp-location-symbol)))
@@ -98,7 +98,7 @@
       (when var-env-number
 	(return-from get-var-ir-symbol
 	  (make-var-location :location
-			     (intern (concatenate 'string (symbol-name (lexical-var-node-name var-node))
+			     (make-symbol (concatenate 'string (symbol-name (lexical-var-node-name var-node))
 						  (concatenate 'string "-" (write-to-string var-env-number)))))))))
   ;; FIXME, unboud vars threat as special vars
   (error (concatenate 'string "Missing lexical variable " (symbol-name (lexical-var-node-name var-node)))))
@@ -130,7 +130,7 @@
 	   (var-env-number (gethash (label-node-label label-node) env-map)))
       (when var-env-number
 	(return-from  get-label-ir-symbol
-	  (intern (concatenate 'string (symbol-name (label-node-label label-node))
+	  (make-symbol (concatenate 'string (symbol-name (label-node-label label-node))
 			       (concatenate 'string "-" (write-to-string var-env-number))))))))
   (error (concatenate 'string "Go tag " (symbol-name (label-node-label label-node)) " does not exist ")))
 
