@@ -3,13 +3,22 @@
 (declaim (optimize (debug 3) (safety 3) (speed 0)))
 
 
+(defparameter *expand-symbols* nil)
+
+(defun get-symbol-from-cache (base-symbol new-name)
+  (let ((sym (gethash (concatenate 'string (symbol-name base-symbol) new-name) *expand-symbols*)))
+    (if sym
+	sym
+	(progn
+	  (let ((sym (gensym new-name)))
+	    (setf (gethash (concatenate 'string (symbol-name base-symbol) new-name) *expand-symbols*) sym))
+	  sym))))
+
 (defun create-block-tagbody-symbol (block-name)
-  ;; FIXME, generate uniq symbols
-  block-name)
+  (get-symbol-from-cache block-name "BLOCK-TAGBODY-"))
 
 (defun create-block-let-value-symbol (block-name)
-  ;; FIXME, generate uniq symbols
-  block-name)
+  (get-symbol-from-cache block-name "BLOCK-LET-VAR-"))
 
 (defun transform-lambda-form (lambda-form)
   (list 'lambda (second lambda-form)
@@ -78,7 +87,8 @@
 	  (t (append (list first) (mapcar #'%expand rest)))))))
 
 (defun expand (form)
-  (%expand form))
+  (let ((*expand-symbols* (make-hash-table :test 'equalp)))
+    (%expand form)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -132,10 +142,14 @@
   (make-call-node :function (first form) :arguments (mapcar #'create-node (rest form))))
 
 (defun create-constant-node (form)
-  (if (or (characterp form)
-	  (integerp form))
-      (make-immediate-constant-node :value form)
-      (make-heap-constant-node :form form)))
+  (cond ((eq form nil)
+	 (make-immediate-constant-node :value *nil*))
+	((eq form t)
+	 (make-immediate-constant-node :value *t*))
+	((or (characterp form)
+	     (integerp form))
+	 (make-immediate-constant-node :value form))
+	(t (make-heap-constant-node :form form))))
 
 (defun create-tagbody-node (forms)
   (make-tagbody-node :forms (mapcar (lambda (exp)
