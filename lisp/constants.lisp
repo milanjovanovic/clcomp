@@ -17,3 +17,15 @@
 
 (defparameter *nil* 536870914)
 (defparameter *t* 536870927)
+
+(defparameter *most-positive-fixnum* (- (expt 2 (- (* *word-size* 8)
+						   (+ 1 *tag-size*))) 1))
+
+(defparameter *most-negative-fixnum* (- (expt 2 (- (* *word-size* 8)
+						   (+ 1 *tag-size*)))))
+
+(defun fixnumize (num)
+  (if (and (> num *most-negative-fixnum*)
+	   (< num *most-positive-fixnum* ))
+      (ash num *tag-size*)
+      (error "Number is to big to be fixnum !!!")))

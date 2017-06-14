@@ -1,5 +1,12 @@
 (in-package #:clcomp)
 
+(defun print-bits (n size)
+  (format t "~B" (ldb (byte size 0) n)))
+
+
+(defun byte-hex (a)
+  (format nil "~2,'0x" a))
+
 (defun print-byte (n)
   (format t "#b~8,'0b" n)
   (format t "~%#x~2,'0x" n)
@@ -38,24 +45,16 @@
       res)))
 
 (defun make-signed-byte (number)
-  (if (minusp number)
-      (- (- (expt 2 7) 1) (- number))
-      number))
+  (ldb (byte 8 0) number))
 
 (defun make-signed-dword (number)
-  (if (minusp number)
-      (- (- (expt 2 31) 1) (- number))
-      number))
+  (ldb (byte 32 0) number))
 
 (defun make-signed-qword (number)
-  (if (minusp number)
-      (- (- (expt 2 63) 1) (- number))
-      number))
+  (ldb (byte 64 0) number))
 
 (defun make-signed-immediate (number template)
-  (if (minusp number)
-      (- (- (expt 2 (immediate-bits template)) 1) (- number))
-      number))
+  (ldb (byte (immediate-bits template) 0) number))
 
 (defun little-endian-64bit (num)
   (let ((code nil))
@@ -69,6 +68,9 @@
       (when (not (equal l what))
 	(push l res)))
     (reverse res)))
+
+(defun two-complement (number bits)
+  (ldb (byte bits 0) number))
 
 (defun hex-opcodes (instructions)
   (mapcar (lambda (x) (format nil "#x~2,'0x" x))
@@ -98,7 +100,6 @@
       (when byte (push byte bytes)))
     (reverse (mapcar (lambda (b) (format nil "#x~2,'0x" b)) bytes))))
 
-
 (defun make-byte-object ()
   (make-array 8 :initial-element nil))
 
@@ -109,4 +110,3 @@
   (dotimes (i size)
     (print (list (+ i start) (- size i)))
     (setf (aref byte-object (+ i start)) (logbitp (- size i 1) what))))
-

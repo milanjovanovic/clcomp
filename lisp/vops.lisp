@@ -57,17 +57,13 @@
     (set-jump-offsets (reverse partly-encoded) :normal)
     (assembly-jumps partly-encoded)))
 
-;; fixme, what about negative numbers ??
-(defun make-fixnum (num)
-  (ash num 3))
-
 (defun vop-regs-listify (dest no-more-arguments-label)
   ;; dest should be list tagged pointer
   (dolist (arg-reg *fun-arguments-regs*)
     ;; set CAR
     (inst :mov (@ dest nil nil (- *list-tag*)) arg-reg)
     ;; no more args ?
-    (inst :sub :RCX (make-fixnum 1))
+    (inst :sub :RCX (fixnumize 1))
     (inst :cmp :RCX 0)
     (inst :jump-fixup :je no-more-arguments-label)
     ;; set CDR
@@ -81,7 +77,7 @@
   (inst :mov temp-reg2 (@ *base-pointer-reg* temp-reg1 *word-size* nil))
   (inst :mov (@ dest nil nil (- *list-tag*)) temp-reg2)
   ;; no more args ?
-  (inst :sub :RCX (make-fixnum 1))
+  (inst :sub :RCX (fixnumize 1))
   (inst :cmp :RCX 0)
   (inst :jump-fixup :je no-more-arguments-label)
   ;; move to next cons
@@ -143,7 +139,3 @@
   (inst :mov res (@ res nil nil *word-size*))
   (inst :label :not-cons)
   (inst :mov res *nil*))
-
-
-
-

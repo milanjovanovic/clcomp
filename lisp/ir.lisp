@@ -300,7 +300,7 @@
       (t (emit-node-ir component tnode environments))))
   (remove-tagbody-env environments)
   ;; tagbody returns nil
-  nil)
+  (make-immediate-constant :constant *nil*))
 
 (defun emit-go-ir (component node environments)
   (make-go-ir component (get-label-ir-symbol (go-node-label-node node) environments))

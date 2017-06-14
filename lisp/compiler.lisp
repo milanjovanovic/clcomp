@@ -100,14 +100,14 @@
     (declare (ignore arg-count))
     (emit-ir-assembly translator
 		      (list
-		       (list :cmp *fun-number-of-arguments-reg* (fixnumize-positive (second ir)))
+		       (list :cmp *fun-number-of-arguments-reg* (fixnumize (second ir)))
 		       (list :jmp-fixup :jmp :wrong-arg-count-label)))))
 
 (defun translate-params-count (ir translator)
   (let ((arguments-count (second ir)))
     (emit-ir-assembly translator
 		      (list
-		       (list :mov *fun-number-of-arguments-reg* (fixnumize-positive arguments-count))))
+		       (list :mov *fun-number-of-arguments-reg* (fixnumize arguments-count))))
     (when (> arguments-count (length *fun-arguments-regs*))
       (emit-ir-assembly translator
 			(list (list :sub :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
