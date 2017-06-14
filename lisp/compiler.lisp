@@ -136,7 +136,9 @@
       (emit-ir-assembly translator
 			(list (list :add :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*))))))))
   (let ((storage (get-allocation-storage (second ir) allocation)))
-    (when storage
+    (when (and storage
+	       (when (typep storage 'reg-storage)
+		 (not (eq (reg-storage-register storage) *return-value-reg*))))
       (emit-ir-assembly translator
 			(list
 			 (list :mov (storage-operand storage) *return-value-reg*))))))

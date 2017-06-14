@@ -83,6 +83,9 @@
 
    ;; CALL
 
+   ;; MICS
+   (list (make-instruction :ret) '(#xc3))
+
    ))
 
 (defun run-instruction-tests ()

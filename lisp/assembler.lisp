@@ -1,6 +1,6 @@
 (in-package #:clcomp)
 
-;;;(declaim (optimize (speed 0) (debug 3)))
+(declaim (optimize (speed 0) (debug 3)))
 
 ;;; BASIC ARCH DEFINITIONS
 
@@ -203,7 +203,7 @@
 ;;; end of basic definitions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defparameter *instructions* (make-hash-table))
+(defvar *instructions* (make-hash-table))
 
 (defun get-mnemonic-templates (mnemonic)
   (gethash mnemonic *instructions*))
@@ -367,8 +367,10 @@
   (let ((mnemonic-templates (get-mnemonic-templates mnemonic)))
     (unless mnemonic-templates
       (error (format nil "Unknown instruction ~A" mnemonic)))
-    (or (match-mnemonic-operands mnemonic-templates operands)
-	(error (format nil "Unknown instruction ~A with arguments ~A" mnemonic operands)))))
+    (if (zerop (length operands))
+	(first mnemonic-templates)
+     (or (match-mnemonic-operands mnemonic-templates operands)
+	 (error (format nil "Unknown instruction ~A with arguments ~A" mnemonic operands))))))
 
 (defun get-modrm-operand-positions (template-source-operand template-dest-operand)
   (let* ((source-is-address (tmpl-op-address? template-source-operand))
@@ -556,6 +558,10 @@
       (filter (append (list template-prefixes rex opcode modrm sib) (reverse displacement) (reverse immediate))
 	      nil))))
 
+(defun encode-no-operand-instruction (mnemonic operands)
+  (let ((template (find-instruction-template mnemonic operands)))
+    (list (inst-template-opcode template))))
+
 (defun reformat-3size-addr (addr)
   (let ((first (first addr))
 	(second (second addr))
@@ -597,18 +603,26 @@
       addr))
 
 (defun reparse-operands (operands)
-  (let ((op1 (first operands))
-	(op2 (second operands)))
-    (if op2
-	(list (reformat-operand op1) (reformat-operand op2))
-	(list (reformat-operand op1)))))
+  (let ((op-count (length operands)))
+    (cond ((= op-count 2)
+	   (list (reformat-operand (first operands)) (reformat-operand (second operands))))
+	  ((= op-count 1)
+	   (list (reformat-operand (first operands))))
+	  ((= op-count 0)
+	   operands)
+	  (t (error "Wrong number of operands")))))
 
 (defun encode-instruction (mnemonic operands)
-  (if (= (length operands) 1)
-      (if (eq mnemonic :byte)
-	  (list (first operands))
-	  (encode-one-operand-instruction mnemonic operands))
-      (encode-two-operand-instruction mnemonic operands)))
+  (let ((op-count (length operands)))
+    (cond ((= op-count 2)
+	   (encode-two-operand-instruction mnemonic operands))
+	  ((= op-count 1)
+	   (if (eq mnemonic :byte)
+	       (list (first operands))
+	       (encode-one-operand-instruction mnemonic operands)))
+	  ((= op-count 0)
+	   (encode-no-operand-instruction mnemonic operands))
+	  (t (error "Wrong number of operands")))))
 
 (defun @ (&rest rest)
     rest)
