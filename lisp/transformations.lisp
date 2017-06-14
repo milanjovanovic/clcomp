@@ -6,12 +6,12 @@
 (defparameter *expand-symbols* nil)
 
 (defun get-symbol-from-cache (base-symbol new-name)
-  (let ((sym (gethash (concatenate 'string (symbol-name base-symbol) new-name) *expand-symbols*)))
+  (let* ((hash-key (concatenate 'string (symbol-name base-symbol) new-name))
+	 (sym (gethash hash-key *expand-symbols*)))
     (if sym
 	sym
-	(progn
-	  (let ((sym (gensym new-name)))
-	    (setf (gethash (concatenate 'string (symbol-name base-symbol) new-name) *expand-symbols*) sym))
+	(let ((sym (gensym new-name)))
+	  (setf (gethash hash-key *expand-symbols*) sym)
 	  sym))))
 
 (defun create-block-tagbody-symbol (block-name)
@@ -47,7 +47,7 @@
 	(ret-value-symbol (create-block-let-value-symbol (second form))))
     (list 'let (list (list ret-value-symbol nil))
 	  (list 'tagbody
-		(list 'setq 'foo
+		(list 'setq ret-value-symbol
 		      (append (list 'progn) (mapcar #'%expand (nthcdr 2 form))))
 		tagbody-symbol)
 	  ret-value-symbol)))

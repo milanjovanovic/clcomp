@@ -76,6 +76,7 @@
   (mapcar (lambda (x) (format nil "#x~2,'0x" x))
 	  instructions))
 
+;;; we are checking all immediates as there are all signed so we can't assemble big unsigned integer as it is negative number 
 (defun signed-number-type (number)
   (cond ((and (>= number *byte-min*)
 	      (<=  number *byte-max*))
@@ -89,7 +90,7 @@
 	((and (>= number *qword-min*)
 	      (<= number *qword-max*))
 	 'qword)
-	(t 'too-large)))
+	(t (error  "Number is to large"))))
 
 (defun opcode-d-bit (opcode)
   (logbitp 1 opcode))
