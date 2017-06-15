@@ -2,6 +2,8 @@
 
 (declaim (optimize (speed 0) (debug 3) (safety 3)))
 
+(defparameter *base-pointer-reg* :RBP)
+(defparameter *stack-pointer-reg* :RSP)
 (defparameter *fun-address-reg* :RAX)
 (defparameter *return-value-reg* :RBX)
 (defparameter *fun-number-of-arguments-reg* :RCX)
@@ -13,7 +15,7 @@
 (defparameter *preserved-regs* '(:R12 :R13 :R14))
 
 
-(defparameter *debug* t)
+(defparameter *debug* nil)
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
@@ -49,6 +51,19 @@
 ;;; L3   RBP-48
 ;;; L4   RBP-56
 
+(defparameter *dummy-rip-value* (list #x90 #x90 #x90 #x90 #x90 #x90 #x90 #x90))
+
+;;; FIXME, is this right sequence ??
+(defparameter *error-trap* '((:byte #x0F) (:byte #x0B)))
+
+(defun make-nops (count)
+  (let (nops)
+    (dotimes (i count)
+      (push (list :byte #x90) nops))
+    nops))
+
+(defstruct translator registers locations code)
+
 (defun emit-ir-assembly (translator asm)
   (when *debug*
     (dolist (a asm)
@@ -71,9 +86,21 @@
 	   (list
 	    (list :mov (storage-operand storage1) (storage-operand storage2)))))))
 
+(defun asm-storage-move-from-rip-relative (storage1 rip-location)
+  (let ((s1-type (type-of storage1)))
+    (if (or (eq s1-type 'stack-storage)
+	    (eq s1-type 'memory-storage))
+	(list
+	 (list :rip-relative-fixup :mov *tmp-reg* (list 'subcomp (rip-relative-location-location rip-location)))
+	 (list :mov (storage-operand storage1) *tmp-reg*))
+	(list
+	 (list :rip-relative-fixup :mov (storage-operand storage1) (list 'subcomp (rip-relative-location-location rip-location)))))))
+
 (defun asm-move (loc1 loc2 allocation)
-  (asm-storage-move (get-allocation-storage loc1 allocation)
-		    (get-allocation-storage loc2 allocation)))
+  (if (eq 'rip-relative-location (type-of loc2))
+      (asm-storage-move-from-rip-relative (get-allocation-storage loc1 allocation) loc2)
+      (asm-storage-move (get-allocation-storage loc1 allocation)
+			(get-allocation-storage loc2 allocation))))
 
 (defun calle-save-registers ()
   (let (assembly)
@@ -81,17 +108,24 @@
       (push (list :push reg) assembly))
     assembly))
 
+(defun calle-restore-registers ()
+  (let (assembly)
+    (dolist (reg (reverse *preserved-regs*))
+      (push (list :pop reg) assembly))
+    assembly))
+
 (defun maybe-allocate-stack-space (translator allocation)
   (when (> (allocation-stack allocation) 0)
     (emit-ir-assembly translator
 		      (list
-		       (list :sub :RSP (* *word-size* (allocation-stack allocation)))))))
+		       (list :sub *stack-pointer-reg*
+			     (* *word-size* (allocation-stack allocation)))))))
 
 (defun translate-lambda-entry (translator allocation)
   (emit-ir-assembly translator
 		    (list
-		     (list :push :RBP)
-		     (list :mov :RBP :RSP)))
+		     (list :push *base-pointer-reg*)
+		     (list :mov *base-pointer-reg* *stack-pointer-reg*)))
   (emit-ir-assembly translator (calle-save-registers))
   (maybe-allocate-stack-space translator allocation))
 
@@ -101,7 +135,7 @@
     (emit-ir-assembly translator
 		      (list
 		       (list :cmp *fun-number-of-arguments-reg* (fixnumize (second ir)))
-		       (list :jmp-fixup :jmp :wrong-arg-count-label)))))
+		       (list :jump-fixup :jne :wrong-arg-count-label)))))
 
 (defun translate-params-count (ir translator)
   (let ((arguments-count (second ir)))
@@ -110,7 +144,8 @@
 		       (list :mov *fun-number-of-arguments-reg* (fixnumize arguments-count))))
     (when (> arguments-count (length *fun-arguments-regs*))
       (emit-ir-assembly translator
-			(list (list :sub :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
+			(list (list :sub *stack-pointer-reg*
+				    (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
 
 (defun translate-receive-param (param-location param-index translator allocation)
   (let ((storage (get-allocation-storage param-location allocation)))
@@ -129,12 +164,13 @@
 (defun translate-load-call (ir translator allocation)
   (emit-ir-assembly translator
 		    (list
-		     (list :mov *fun-address-reg* :fixup (fourth ir))
+		     (list :rip-relative-fixup :mov *fun-address-reg* (list 'function-address (fourth ir)))
 		     (list :call (@ *fun-address-reg*))))
   (let ((arguments-count (nth 4 ir)))
     (when (> arguments-count (length *fun-arguments-regs*))
       (emit-ir-assembly translator
-			(list (list :add :RSP (* *word-size* (- arguments-count (length *fun-arguments-regs*))))))))
+			(list (list :add *stack-pointer-reg*
+				    (* *word-size* (- arguments-count (length *fun-arguments-regs*))))))))
   (let ((storage (get-allocation-storage (second ir) allocation)))
     (when (and storage
 	       (when (typep storage 'reg-storage)
@@ -163,7 +199,7 @@
 (defun translate-go (ir translator)
   (emit-ir-assembly translator
 		    (list
-		     (list :jmp-fixup :jmp (second ir)))))
+		     (list :jump-fixup :jmp (second ir)))))
 
 (defun translate-label (ir translator)
   (emit-ir-assembly translator
@@ -171,11 +207,15 @@
 		     (list :label (second ir)))))
 
 (defun translate-lambda-exit (translator)
+  (emit-ir-assembly translator (list (list :clc)))
+  (emit-ir-assembly translator (calle-restore-registers))
   (emit-ir-assembly translator
 		    (list
+		     (list :pop *base-pointer-reg*)
 		     (list :ret)
-		     (list :label :wrong-arg-count-label)
-		     (list :byte "TRAP"))))
+		     (list :label :wrong-arg-count-label)))
+  (emit-ir-assembly translator
+		    *error-trap*))
 
 (defun to-asm (ir translator allocation)
   (let ((mnemonic (first ir)))
@@ -258,7 +298,7 @@
   (case (type-of storage)
     (constant-storage (constant-storage-constant storage))
     (reg-storage (reg-storage-register storage))
-    (stack-storage (@ :RBP (- (* *word-size* (+ (stack-storage-offset storage)
+    (stack-storage (@ *base-pointer-reg* (- (* *word-size* (+ (stack-storage-offset storage)
 						(length *preserved-regs*)
 						1)))))
     (memory-storage (@ (memory-storage-base storage) (memory-storage-offset storage)))))
@@ -266,13 +306,13 @@
 (defun make-receive-param-storage (param-number)
   (if (> param-number (length *fun-arguments-regs*))
       ;; we already did push RBP to stack and with return addres that's 2 slots
-      (make-memory-storage :base :RBP :offset (* *word-size* (+ 2 (- param-number (length *fun-arguments-regs*) 1))))
+      (make-memory-storage :base *base-pointer-reg* :offset (* *word-size* (+ 2 (- param-number (length *fun-arguments-regs*) 1))))
       (make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*))))
 
 (defun get-param-storage (param-number)
   (let ((arg-reg-count (length *fun-arguments-regs*)))
     (if (> param-number arg-reg-count)
-	(make-memory-storage :base :RSP :offset (* *word-size* (- param-number arg-reg-count 1)))
+	(make-memory-storage :base *stack-pointer-reg* :offset (* *word-size* (- param-number arg-reg-count 1)))
 	(make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*)))))
 
 (defun get-allocation-storage (location allocation)
@@ -283,6 +323,7 @@
       (ret-location (or (gethash (location-symbol location) (allocation-map allocation))
 			(make-reg-storage :register *return-value-reg*)))
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-map allocation)))
+      (rip-relative-location (make-memory-storage))
       (otherwise (error "Unknown location type")))))
 
 (defun interval-symbol (interval)
@@ -340,17 +381,24 @@
     allocation))
 
 
-(defstruct translator registers locations code)
+(defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets) 
+(defstruct compilation-unit compile-component start fixups)
 
 (defun component-to-asm (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
-	 (allocation (create-component-allocation intervals)))
-    (translate-component ir-component allocation)))
+	 (allocation (create-component-allocation intervals)))    
+    (make-compile-component :code (translator-code (translate-component ir-component allocation))
+			    :subcomps (mapcar (lambda (subcomp)
+						(cons (sub-component-name subcomp)
+						      (component-to-asm (sub-component-component subcomp))))
+					      (ir-component-sub-comps ir-component))
+			    :rips (ir-component-rips ir-component))))
 
-(defun try-constant-component-blocks-phase (constants)
-  (dolist (constant constants)
-    (when (eq (type-of (cdr constant)) 'ir-component)
-      (component-blocks-phase (cdr constant)))))
+(defun try-component-sub-components-blocks-phase (sub-components)
+  (dolist (s-component sub-components)
+    (let ((component (sub-component-component s-component)))
+      (when (eq (type-of component) 'ir-component)
+	(component-blocks-phase component)))))
 
 (defun component-blocks-phase (ir-component)
   (let ((blocks (make-blocks (ir-component-code ir-component))))
@@ -361,7 +409,7 @@
 	(setf (ir-block-ir blok) (remove-redundant-load-patterns blok all-blocks)))
       (dolist (blok all-blocks)
 	(setf (ir-block-used-locations blok) nil)))
-    (try-constant-component-blocks-phase (ir-component-constants ir-component))
+    (try-component-sub-components-blocks-phase (ir-component-sub-comps ir-component))
     (setf (ir-component-code ir-component) nil)
     ir-component))
 
@@ -372,3 +420,89 @@
     (let ((ir-code (ir-component-code ir-component)))
       (declare (ignore ir-code))
       ir-component)))
+
+
+;;; component assemble process
+
+;;; adjust every compile-component to *allocation-size* borders 
+(defun set-and-maybe-adjust-code-size (component)
+  (let* ((prefix-code-size (code-size (compile-component-prefix-code component)))
+	 (code-size (code-size (compile-component-code component)))
+	 (size (+ prefix-code-size code-size))
+	 (mod (mod size *allocation-size*)))
+    (if (> mod 0)
+	(progn
+	  (setf (compile-component-code component)
+		(append (compile-component-code component)
+			(assembly-pass-1 (make-nops (- *allocation-size* mod)))))
+	  (setf (compile-component-code-size component) (+ size (- *allocation-size* mod))))
+	(setf (compile-component-code-size component) size))))
+
+(defun make-and-assemble-compilation-unit (ir-component)
+  (make-compilation-unit :compile-component (component-to-asm ir-component)))
+
+(defun assemble-component (component)
+  (let ((main-code (assembly-pass-1 (compile-component-code component)))
+	(subcomps (compile-component-subcomps component))
+	(rips (compile-component-rips component)))
+    (let ((pre-code nil)
+	  (rip-offsets nil)
+	  (start-offset (+ (length subcomps) (length rips))))
+      (when (> start-offset 0)
+	(push (assemble-instruction (list :jmp (* *word-size* start-offset))) pre-code)
+	(when (> (length subcomps) 0)
+	  (dolist (subcomp subcomps)
+	    (push *dummy-rip-value* pre-code)
+	    (push (list (rip-relative-location-location (car subcomp)) start-offset) rip-offsets)
+	    (decf start-offset)))
+	;; non subcomponent rips
+	(when (> (length rips))
+	  (dolist (rip-relative rips)
+	    (push *dummy-rip-value* pre-code)
+	    (push (list (fun-rip-relative-name rip-relative) start-offset) rip-offsets)
+	    (decf start-offset))))
+      (setf (compile-component-code component)
+	    main-code)
+      (setf (compile-component-prefix-code component)
+	    (reverse pre-code))
+      (setf (compile-component-rip-offsets component)
+	    rip-offsets)
+      (resolve-component-rips component))))
+
+(defun get-rip-offset (component rip-name)
+  (second (assoc rip-name (compile-component-rip-offsets component))))
+
+(defun resolve-component-rips (component)
+  (let ((rip-offsets (compile-component-rip-offsets component)))
+    (when rip-offsets
+      (let ((code nil)
+	    (current-size 0))
+	(dolist (inst (compile-component-code component))
+	  (incf current-size (instruction-size inst))
+	  (cond ((eq (first inst) :rip-relative-fixup)
+		 (let* ((mnemonic (second inst))
+			(to (third inst))
+			(rip-offset-name (second (fourth inst)))
+			(rip (list *instruction-pointer-register* nil nil (- (+ current-size
+										(* *word-size* (get-rip-offset component rip-offset-name))))))
+			(instruction (list mnemonic to rip)))
+		   (push (assemble-instruction instruction) code)
+		   (when *debug*
+		     (print (list 'rip-instruction inst instruction (assemble-instruction instruction))))))
+		(t (push inst code))))
+	(setf (compile-component-code component) (reverse code))))))
+
+(defun link-compilation-component (compile-component start)
+  (let ((current start))
+    (dolist (rip-pair (compile-component-subcomps compile-component))
+      (setf current
+	    (+ current
+	       (link-compilation-component (cdr rip-pair) current))))
+    (assemble-component compile-component)
+    (setf (compile-component-start compile-component) current)
+    (+ current (set-and-maybe-adjust-code-size compile-component))))
+
+(defun assemble-and-link-compilation-unit (compilation-unit start)
+  (let ((start-component (compilation-unit-compile-component compilation-unit)))
+    (link-compilation-component start-component start))
+  'done)

@@ -162,3 +162,6 @@
 
 (define-inst-template :ret () ()
 		      nil nil #xc3 nil)
+
+(define-inst-template :clc () ()
+		      nil nil #xf8 nil)

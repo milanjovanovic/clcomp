@@ -4,7 +4,7 @@
 (defparameter *temp-counter* 0)
 (defparameter *label-counter* 0)
 
-(defstruct ir-component code code-blocks constants fixups)
+(defstruct ir-component code code-blocks sub-comps rips)
 
 (defparameter *specials* nil)
 
@@ -138,6 +138,10 @@
 ;;; IR code generators
 ;;; FIXME, use structures
 
+
+(defstruct fun-rip-relative name)
+(defstruct sub-component name component)
+
 (defun add-ir (component ir)
   (setf (ir-component-code component)
 	(append (ir-component-code component) ir)))
@@ -159,6 +163,7 @@
   (add-ir component (list (list 'load-quoted to from))))
 
 (defun make-call-ir (component location fun arguments-count)
+  (push (make-fun-rip-relative :name fun) (ir-component-rips component))
   (add-ir component (list (list 'load-call location 'call fun arguments-count))))
 
 (defun make-return-ir (component location)
@@ -310,7 +315,8 @@
 (defun emit-lambda-ir (component node)
   (let ((lambda-comp (make-ir-component))
 	(temp-loc (make-rip-relative-location :location (make-temp-location-symbol))))
-    (push (cons temp-loc lambda-comp) (ir-component-constants component))
+    (push (make-sub-component :name temp-loc :component lambda-comp)
+	  (ir-component-sub-comps component))
     (make-ir node lambda-comp temp-loc)))
 
 (defun emit-node-ir (component node environments)
