@@ -76,16 +76,18 @@
    (list (make-instruction :push (@ :R8 :R13)) '(#x43 #xff #x34 #x28))
    (list (make-instruction :push (@ :R8 :R13 8 -10)) '(#x43 #xff #x74 #xe8 #xf6))
    (list (make-instruction :push (@ :RSP :RBP nil -10)) '(#xff #x74 #x2c #xf6))
-
+   
    ;; POP
 
-
-
    ;; CALL
-
+   (list (make-instruction :call (@ :RAX)) '(#xff #x10))
+   (list (make-instruction :call (@ :R11)) '(#x41 #xFF #x13 ))
+   (list (make-instruction :call (@ :R12)) '(#x41 #xFF #x14 #x24))
+   (list (make-instruction :call (@ :RAX :R12 4 10)) '(#x42 #xFF #x54 #xA0 #x0A))
+   (list (make-instruction :call (@ :R13 nil nil -15)) '(#x41 #xFF #x55 #xF1))
+   
    ;; MICS
    (list (make-instruction :ret) '(#xc3))
-
    ))
 
 (defun run-instruction-tests ()

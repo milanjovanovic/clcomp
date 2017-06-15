@@ -137,7 +137,7 @@
 		      nil nil #x8F #x00)
 
 ;;; CALL
-(define-inst-template :call (:reg64) ()
+(define-inst-template :call ((:reg64 :addr)) ()
 		      nil nil #xff #x10)
 
 ;; JMP
