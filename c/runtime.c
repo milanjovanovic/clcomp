@@ -20,6 +20,8 @@
 #define LISP_HEAP_SIZE (100 * 1024 * 1024)
 
 lispobj init_lisp(uintptr_t stack, uintptr_t heap);
+lispobj run_lisp_test(uintptr_t stack, uintptr_t heap, uintptr_t code_address);
+
 
 uintptr_t allocation_start = LISP_HEAP_START - STACK_SIZE;
 uintptr_t stack_start = LISP_HEAP_START - WORD_SIZE;
@@ -32,7 +34,6 @@ size_t memory_size = LISP_HEAP_SIZE + STACK_SIZE;
 
 void *static_start;
 lispobj *heap_header;
-
 
 int is_pointer(lispobj obj) {
   return (obj & MASK) == POINTER_TAG ? 1 : 0;
@@ -132,7 +133,7 @@ void print_lisp(lispobj obj) {
 
 
 void *allocate_static_memory() {
-  return = mmap((void *) static_memory_start,
+  return mmap((void *) static_memory_start,
 	      STATIC_SPACE_SIZE,
 	      PROT_READ | PROT_WRITE | PROT_EXEC,
 	      MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
@@ -146,13 +147,15 @@ void *allocate_heap() {
 }
 
 
-void load_code(void *code, int size) {
-  
+void load_code(char *code, int size) {
+
   void *current_heap = (void *) *heap_header;
   memcpy(current_heap, code, size);
-  
-  int word_aligned_size = ((size / WORD_SIZE) + (size % WORD_SIZE > 0 ? 1 : 0));
-  word_aligned_size *= WORD_SIZE;
+
+  int word_aligned_size = size;
+  // we are already aligning code
+  //  int word_aligned_size = ((size / WORD_SIZE) + (size % WORD_SIZE > 0 ? 1 : 0));
+  // word_aligned_size *= WORD_SIZE;
   
   // save new start to heap_header
   *heap_header = (uintptr_t)( current_heap + word_aligned_size);
@@ -172,6 +175,7 @@ void init_runtime() {
   current_heap += STACK_SIZE;
 
   printf("HEAP START: %p\n", current_heap);
+  //  printf("STACK START: %p\n", stack_start);
   printf("STATIC MEMORY: %p\n", static_memory);
 
   //set NIL car and cdr to start of static memory
@@ -184,17 +188,65 @@ void init_runtime() {
   // save stack memory pointer
   static_start = (void *) lp;
 
-  // save address as heap_header pointer
   heap_header = (lispobj *) current_heap;
-  *heap_header = (uintptr_t) (heap_header + 2); // moving heap start
-  *(heap_header + 1) = heap_end; // heap end
 
-  print_lisp(init_lisp(stack_start, (uintptr_t) heap_header));
- 
+  // increase heap for header size
+  *heap_header = (lispobj) (heap_header + 2);
+  *(heap_header+1) = (lispobj) heap_end;
 
-  destroy_runtime();
+  printf("HEAP_HEADER_START: %p\n", (void *) (*heap_header));
+  printf("HEAP_HEADER_END: %p\n", (void *) (*(heap_header+1)));
+  
+  // print_lisp(init_lisp(stack_start, (uintptr_t) heap_header));
 }
 
-int main() {
+void load_core() {
+}
+
+struct lisp_code load_test_code(char *file) {
+  
+  struct lisp_code lcode;
+  struct stat info;
+  
+  stat(file, &info);
+  char *code = malloc(info.st_size * sizeof(char));
+  
+  printf("Code File Size: %lld\n", info.st_size);
+  
+  FILE *fp = fopen(file, "rb");
+  fread(code, info.st_size, 1, fp);
+  fclose(fp);
+
+  lcode.code = code;
+  lcode.code_size = info.st_size;
+  
+  return lcode;
+}
+
+void run_test(char *test_file) {
+  
+  struct lisp_code lcode = load_test_code(test_file);
+  uintptr_t code_address = (uintptr_t) *heap_header;
+  
+  load_code(lcode.code, lcode.code_size);
+  free(lcode.code);
+  
+  print_lisp(run_lisp_test(stack_start, (uintptr_t) heap_header, code_address));
+  
+}
+
+int main(int argc, char *argv[]) {
+  
   init_runtime();
+  
+  load_core();
+
+  if (argc > 1) {
+    run_test(argv[1]);
+  }
+
+  printf("HEAP_HEADER_START: %p\n", (void *) (*heap_header));
+
+  destroy_runtime();
+  
 }
