@@ -63,19 +63,13 @@
     (otherwise (error "Unknown location type"))))
 
 ;;; environments
-
-(defparameter *env-counter* 0)
-
-(defun reset-env-counter ()
-  (setf *env-counter* 0 ))
+;;; lexical vars environments
 
 (defun make-env-holder ()
   (list 'envs nil nil))
 
 (defun make-env ()
-  (prog1
-      (list *env-counter* (make-hash-table) )
-    (incf *env-counter*)))
+  (make-hash-table))
 
 (defun add-env (env env-holder)
   (push env (second env-holder))
@@ -85,31 +79,22 @@
   (pop (second all-env)))
 
 (defun add-var (var-node environments)
-  (let* ((env (first (second environments)))
-	 (env-number (first env))
-	 (env-map (second env)))
-    (setf (gethash (lexical-var-node-name var-node) env-map) env-number)))
-
+  (let* ((lexical-var-name (lexical-var-node-name var-node))
+	 (new-lex-var-symbol (make-symbol (symbol-name lexical-var-name)))
+	 (env-hash (first (second environments))))
+    (setf (gethash lexical-var-name env-hash) (make-var-location :location new-lex-var-symbol))))
 
 (defun get-var-ir-symbol (var-node env-holder)
-  (dolist (env (second env-holder))
-    (let* ((env-map (second env))
-	   (var-env-number (gethash (lexical-var-node-name var-node) env-map)))
-      (when var-env-number
-	(return-from get-var-ir-symbol
-	  (make-var-location :location
-			     (make-symbol (concatenate 'string (symbol-name (lexical-var-node-name var-node))
-						  (concatenate 'string "-" (write-to-string var-env-number)))))))))
+  (dolist (env-map (second env-holder))
+    (let ((var-sym (gethash (lexical-var-node-name var-node) env-map)))
+      (when var-sym
+	(return-from get-var-ir-symbol var-sym))))
   ;; FIXME, unboud vars threat as special vars
   (error (concatenate 'string "Missing lexical variable " (symbol-name (lexical-var-node-name var-node)))))
 
   ;;; go tags environment
-(defparameter *tagbody-envs-counter* 0)
-
 (defun make-tagbody-env ()
-  (prog1
-      (list *tagbody-envs-counter* (make-hash-table))
-    (incf *tagbody-envs-counter*)))
+  (make-hash-table))
 
 (defun add-tagbody-env (tagb-env environments)
   (push tagb-env (third environments))
@@ -119,19 +104,16 @@
   (pop (third environments)))
 
 (defun add-go-label (label-node environments)
-  (let* ((first-env (first (third environments)))
-	 (env-number (first first-env))
-	 (tags-hash (second first-env)))
-    (setf (gethash (label-node-label label-node) tags-hash) env-number)))
+  (let* ((label (label-node-label label-node))
+	 (env-hash (first (third environments)))
+	 (new-label-symbol (make-symbol (symbol-name label))))
+    (setf (gethash label env-hash) new-label-symbol)))
 
 (defun get-label-ir-symbol (label-node environments)
-  (dolist (env (third environments))
-    (let* ((env-map (second env))
-	   (var-env-number (gethash (label-node-label label-node) env-map)))
-      (when var-env-number
-	(return-from  get-label-ir-symbol
-	  (make-symbol (concatenate 'string (symbol-name (label-node-label label-node))
-			       (concatenate 'string "-" (write-to-string var-env-number))))))))
+  (dolist (env-hash (third environments))
+    (let ((label-sym (gethash (label-node-label label-node) env-hash)))
+      (when label-sym
+	(return-from  get-label-ir-symbol label-sym))))
   (error (concatenate 'string "Go tag " (symbol-name (label-node-label label-node)) " does not exist ")))
 
 

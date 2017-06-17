@@ -1,4 +1,5 @@
 (in-package :clcomp)
+(declaim (optimize (speed 0) (safety 3) (debug 3)))
 
 (defparameter *segment-instructions* nil)
 (defun inst (&rest rest)

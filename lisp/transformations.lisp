@@ -46,11 +46,12 @@
   (let ((tagbody-symbol (create-block-tagbody-symbol (second form)))
 	(ret-value-symbol (create-block-let-value-symbol (second form))))
     (list 'let (list (list ret-value-symbol nil))
-	  (list 'tagbody
-		(list 'setq ret-value-symbol
-		      (append (list 'progn) (mapcar #'%expand (nthcdr 2 form))))
-		tagbody-symbol)
-	  ret-value-symbol)))
+	  (list 'progn
+		(list 'tagbody
+		      (list 'setq ret-value-symbol
+			    (append (list 'progn) (mapcar #'%expand (nthcdr 2 form))))
+		      tagbody-symbol)
+		ret-value-symbol))))
 
 (defun transform-return-from (form)
   (let ((tagbody-symbol (create-block-tagbody-symbol (second form)))
@@ -146,8 +147,9 @@
 	 (make-immediate-constant-node :value *nil*))
 	((eq form t)
 	 (make-immediate-constant-node :value *t*))
-	((or (characterp form)
-	     (integerp form))
+	((integerp form)
+	 (make-immediate-constant-node :value (fixnumize form)))
+	((characterp form)
 	 (make-immediate-constant-node :value form))
 	(t (make-heap-constant-node :form form))))
 

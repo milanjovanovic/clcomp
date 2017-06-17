@@ -382,7 +382,7 @@
 
 
 (defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets) 
-(defstruct compilation-unit compile-component start fixups)
+(defstruct compilation-unit compile-component start fixups code)
 
 (defun component-to-asm (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
@@ -417,9 +417,8 @@
 (defun clcomp-compile (exp)
   (let* ((ir-component (make-ir (create-node (expand exp)))))
     (component-blocks-phase ir-component)
-    (let ((ir-code (ir-component-code ir-component)))
-      (declare (ignore ir-code))
-      ir-component)))
+    (assemble-and-link-compilation-unit
+     (make-and-translate-compilation-unit ir-component) 0)))
 
 
 ;;; component assemble process
@@ -438,7 +437,7 @@
 	  (setf (compile-component-code-size component) (+ size (- *allocation-size* mod))))
 	(setf (compile-component-code-size component) size))))
 
-(defun make-and-assemble-compilation-unit (ir-component)
+(defun make-and-translate-compilation-unit (ir-component)
   (make-compilation-unit :compile-component (component-to-asm ir-component)))
 
 (defun assemble-component (component)
@@ -494,15 +493,31 @@
 
 (defun link-compilation-component (compile-component start)
   (let ((current start))
-    (dolist (rip-pair (compile-component-subcomps compile-component))
+    (dolist (subcomp-pair (compile-component-subcomps compile-component))
       (setf current
 	    (+ current
-	       (link-compilation-component (cdr rip-pair) current))))
+	       (link-compilation-component (cdr subcomp-pair) current))))
     (assemble-component compile-component)
     (setf (compile-component-start compile-component) current)
     (+ current (set-and-maybe-adjust-code-size compile-component))))
 
+(defun get-complete-component-code (component)
+  (append (compile-component-prefix-code component)
+	  (compile-component-code component)))
+
+
+(defun get-all-components-byte-code (start-component)
+  (let ((code))
+    (dolist (subcomp-pair (compile-component-subcomps start-component))
+      (setf code
+	    (get-all-components-byte-code (cdr subcomp-pair))))
+    (append code (get-complete-component-code start-component))))
+
 (defun assemble-and-link-compilation-unit (compilation-unit start)
   (let ((start-component (compilation-unit-compile-component compilation-unit)))
-    (link-compilation-component start-component start))
-  'done)
+    (link-compilation-component start-component start)
+    (setf (compilation-unit-code compilation-unit)
+	  (get-all-components-byte-code start-component))
+    compilation-unit))
+
+

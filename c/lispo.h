@@ -49,6 +49,10 @@ struct symbol {
   lispobj value;
 };
 
+struct lisp_code {
+  char *code;
+  long code_size;
+};
  
 struct cons *allocate_cons(void **heap, lispobj car, lispobj cdr);
 lispobj tag_cons(struct cons *cons);

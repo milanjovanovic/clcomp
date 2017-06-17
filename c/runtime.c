@@ -85,6 +85,8 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
 
 void print_lisp(lispobj obj) {
 
+  printf("\nGOT FROM LISP: ");
+
   if(obj == LISP_NIL) {
     
     printf("NIL");
@@ -129,6 +131,7 @@ void print_lisp(lispobj obj) {
       break;
     }
   }
+  printf("\n");
 }
 
 
@@ -244,8 +247,6 @@ int main(int argc, char *argv[]) {
   if (argc > 1) {
     run_test(argv[1]);
   }
-
-  printf("HEAP_HEADER_START: %p\n", (void *) (*heap_header));
 
   destroy_runtime();
   
