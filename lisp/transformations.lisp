@@ -85,6 +85,8 @@
 	  ((eq first 'setf) (transform-setf-form form))
 	  ((eq first 'block) (transform-block form))
 	  ((eq first 'return-from) (transform-return-from form))
+	  ((eq first 'return) (transform-return-from
+			       (append (list 'return-from 'nil) (cdr form))))
 	  (t (append (list first) (mapcar #'%expand rest)))))))
 
 (defun expand (form)
