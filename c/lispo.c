@@ -78,11 +78,11 @@ int64_t untag_fixnum(lispobj obj) {
    // don't just shift, check for sign bit first
   uint64_t mask = 0x8000000000000000UL;
   uint64_t negative = mask & obj;
-  
+
   int64_t c = obj >> TAG_SIZE;
   
   if(negative) {
-    c |= mask;
+    c |= 0xF000000000000000UL;
   }
   
   return c;
