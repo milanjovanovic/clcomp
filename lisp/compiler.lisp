@@ -381,16 +381,16 @@
     allocation))
 
 
-(defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets) 
+(defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets byte-code) 
 (defstruct compilation-unit compile-component start fixups code)
 
-(defun component-to-asm (ir-component)
+(defun compile-component-pass-1 (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
 	 (allocation (create-component-allocation intervals)))    
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
-						      (component-to-asm (sub-component-component subcomp))))
+						      (compile-component-pass-1 (sub-component-component subcomp))))
 					      (ir-component-sub-comps ir-component))
 			    :rips (ir-component-rips ir-component))))
 
@@ -414,34 +414,27 @@
     ir-component))
 
 
-(defun clcomp-compile (exp)
-  (let* ((ir-component (make-ir (create-node (expand exp)))))
-    (component-blocks-phase ir-component)
-    (assemble-and-link-compilation-unit
-     (make-and-translate-compilation-unit ir-component) 0)))
-
-
 ;;; component assemble process
 
 ;;; adjust every compile-component to *allocation-size* borders 
 (defun set-and-maybe-adjust-code-size (component)
   (let* ((prefix-code-size (code-size (compile-component-prefix-code component)))
-	 (code-size (code-size (compile-component-code component)))
+	 (code-size (code-size (compile-component-byte-code component)))
 	 (size (+ prefix-code-size code-size))
 	 (mod (mod size *allocation-size*)))
     (if (> mod 0)
 	(progn
-	  (setf (compile-component-code component)
-		(append (compile-component-code component)
+	  (setf (compile-component-byte-code component)
+		(append (compile-component-byte-code component)
 			(assembly-pass-1 (make-nops (- *allocation-size* mod)))))
 	  (setf (compile-component-code-size component) (+ size (- *allocation-size* mod))))
 	(setf (compile-component-code-size component) size))))
 
-(defun make-and-translate-compilation-unit (ir-component)
-  (make-compilation-unit :compile-component (component-to-asm ir-component)))
+(defun make-compile-unit-and-compile-pass-1 (ir-component)
+  (make-compilation-unit :compile-component (compile-component-pass-1 ir-component)))
 
 (defun assemble-component (component)
-  (let ((main-code (assembly-pass-1 (compile-component-code component)))
+  (let ((main-code (assembly-pass-1 (resolve-assembly-jumps (compile-component-code component))))
 	(subcomps (compile-component-subcomps component))
 	(rips (compile-component-rips component)))
     (let ((pre-code nil)
@@ -460,7 +453,7 @@
 	    (push *dummy-rip-value* pre-code)
 	    (push (list (fun-rip-relative-name rip-relative) start-offset) rip-offsets)
 	    (decf start-offset))))
-      (setf (compile-component-code component)
+      (setf (compile-component-byte-code component)
 	    main-code)
       (setf (compile-component-prefix-code component)
 	    (reverse pre-code))
@@ -476,7 +469,7 @@
     (when rip-offsets
       (let ((code nil)
 	    (current-size 0))
-	(dolist (inst (compile-component-code component))
+	(dolist (inst (compile-component-byte-code component))
 	  (incf current-size (instruction-size inst))
 	  (cond ((eq (first inst) :rip-relative-fixup)
 		 (let* ((mnemonic (second inst))
@@ -489,7 +482,7 @@
 		   (when *debug*
 		     (print (list 'rip-instruction inst instruction (assemble-instruction instruction))))))
 		(t (push inst code))))
-	(setf (compile-component-code component) (reverse code))))))
+	(setf (compile-component-byte-code component) (reverse code))))))
 
 (defun link-compilation-component (compile-component start)
   (let ((current start))
@@ -503,8 +496,7 @@
 
 (defun get-complete-component-code (component)
   (append (compile-component-prefix-code component)
-	  (compile-component-code component)))
-
+	  (compile-component-byte-code component)))
 
 (defun get-all-components-byte-code (start-component)
   (let ((code))
@@ -520,4 +512,8 @@
 	  (get-all-components-byte-code start-component))
     compilation-unit))
 
-
+(defun clcomp-compile (exp)
+  (let* ((ir-component (make-ir (create-node (expand exp)))))
+    (component-blocks-phase ir-component)
+    (let ((compile-unit (make-compile-unit-and-compile-pass-1 ir-component)))
+      (assemble-and-link-compilation-unit compile-unit 0))))

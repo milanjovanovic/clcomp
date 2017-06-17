@@ -26,7 +26,6 @@
 
 (defun clcomp-eval (exp)
   (reset-temp-location-counter)
-  (reset-env-counter)
   (%clcomp-eval exp))
 
 ;;; for now there is no support for closures

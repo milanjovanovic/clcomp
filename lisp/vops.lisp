@@ -2,84 +2,9 @@
 (declaim (optimize (speed 0) (safety 3) (debug 3)))
 
 (defparameter *segment-instructions* nil)
+
 (defun inst (&rest rest)
   (push rest *segment-instructions*))
-
-(defun dump-hex-code (assembled)
-  (apply #'concatenate 'string (mapcar #'byte-hex (reduce #'append assembled))))
-
-(defun asm-1 (instruction)
-  (if (or (eq (first instruction) :label)
-	  (eq (first instruction) :jump-fixup)
-	  (eq (first instruction) :rip-relative-fixup))
-      instruction
-      (encode-instruction (first instruction) (reparse-operands (rest instruction)))))
-
-;;; FIXME, remove HASH-MAP usage
-(defun add-offset (hash offset)
-  (maphash (lambda (k v)
-	     (setf (gethash k hash) (+ v offset)))
-	   hash))
-
-;;; to simplify things we are encoding our jump as near jumps so they are always 6 bytes long
-(defun set-jump-offsets (instructions direction)
-  (let ((labels-offsets (make-hash-table)))
-    (dolist (inst instructions)
-      (cond ((eq (first inst) :label)
-	     (setf (gethash (second inst) labels-offsets) 0))
-	    ((eq (first inst) :jump-fixup)
-	     (let ((label-offset (gethash (third inst) labels-offsets)))
-	       (when label-offset
-		 (setf (first inst) :jump)
-		 (setf (third inst) (if (eq direction :normal)
-					(- label-offset)
-					label-offset)))
-	       (add-offset labels-offsets (jump-instruction-size inst))))
-	    ((eq (first inst) :jump)
-	     (add-offset labels-offsets (jump-instruction-size inst)))
-	    (t (add-offset labels-offsets (instruction-size inst)))))))
-
-(defun jump-instruction-size (instruction)
-  (let ((mnemonic (second instruction)))
-    (cond ((eq mnemonic :jmp) 5)
-	  (t 6))))
-
-(defun instruction-size (instruction)
-  (let ((f (first instruction)))
-    (cond ((typep f 'integer)
-	   (length instruction))
-	  ((eq f :jump-fixup)
-	   (jump-instruction-size instruction))
-	  ((eq f :rip-relative-fixup)
-	   7)
-	  ((eq f :label)
-	   0)
-	  ((eq f :RIP-RELATIVE-FIXUP-LOCATION)
-	   *word-size*)
-	  (t (error "Unknown instruction")))))
-
-(defun code-size (instructions)
-  (let ((size 0))
-    (dolist (inst instructions)
-      (setf size
-	    (+ size (instruction-size inst))))
-    size))
-
-(defun assembly-jumps (code)
-  (let (assembled)
-    (dolist (inst code)
-      (let ((f (first inst)))
-	(cond ((eq f :jump)
-	       (push (encode-instruction (second inst) (list (third inst))) assembled))
-	      ((eq f :label))
-	      (t (push inst assembled )))))
-    assembled))
-
-(defun assembly-pass-1 (instructions)
-  (let ((partly-encoded (mapcar #'asm-1 (reverse instructions))))
-    (set-jump-offsets partly-encoded :reverse)
-    (set-jump-offsets (reverse partly-encoded) :normal)
-    (assembly-jumps partly-encoded)))
 
 (defun vop-regs-listify (dest no-more-arguments-label)
   ;; dest should be list tagged pointer
