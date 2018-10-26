@@ -88,3 +88,57 @@
   (inst :mov res (@ res nil nil *word-size*))
   (inst :label :not-cons)
   (inst :mov res *nil*))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defparameter *known-vops* (make-hash-table))
+
+(defstruct vop name arguments res fun)
+
+(defun get-vop (name)
+  (gethash name *known-vops*))
+
+(defun get-args-count (vop)
+  (length (vop-arguments vop)))
+
+(defun get-args-types (vop)
+  (mapcar 'second (vop-arguments vop)))
+
+(defun get-res-type (vop)
+  (second (vop-res vop)))
+
+(defmacro define-vop (name res (&rest arguments) &body body)
+  `(setf (gethash ',name *known-vops*)
+	 (make-vop :name ',name
+		   :res ',res
+		   :arguments ',arguments
+		   :fun (lambda ,(cons (first res) (mapcar 'car arguments))
+			  (progn
+			    ,@body)))))
+
+(define-vop cons (res :storage) ((arg1 :register) (arg2 :register))
+  (inst :mov res (@ *heap-header-reg*))
+  (inst :lea res (@ res nil nil (* 2 *word-size*)))
+  (inst :mov (@ *heap-header-reg*) res)
+  (inst :lea res (@ res nil nil (- (* 2 *word-size*))))
+  (inst :mov (@ res) arg1)
+  (inst :mov (@ res nil nil 8) arg2)
+  (inst :add res *list-tag*))
+
+(define-vop car (res :storage) ((arg1 :register))
+  (inst :lea res (@ arg1 nil nil (- *list-tag*)))
+  (inst :test res *mask*)
+  (inst :jump-fixup :jnbe :not-cons)
+  (inst :mov res (@ res))
+  (inst :label :not-cons)
+  (inst :mov res *nil*))
+
+(define-vop cdr (res :storage) ((arg1 :register))
+  (inst :lea res (@ arg1 nil nil (- *list-tag*)))
+  (inst :test res *mask*)
+  (inst :jump-fixup :jnbe :not-cons)
+  (inst :mov res (@ res nil nil *word-size*))
+  (inst :label :not-cons)
+  (inst :mov res *nil*))

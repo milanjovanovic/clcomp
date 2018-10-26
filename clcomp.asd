@@ -17,4 +17,5 @@
 	       (:file "lisp/irutils")
 	       (:file "lisp/assembling")
 	       (:file "lisp/compiler")
-	       (:file "lisp/eval")))
+	       (:file "lisp/eval")
+	       (:file "lisp/mix")))

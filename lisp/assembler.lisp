@@ -177,7 +177,8 @@
       (cond ((= scale 1) #b00)
 	    ((= scale 2) #b01)
 	    ((= scale 4) #b10)
-	    ((= scale 8) #b11))))
+	    ((= scale 8) #b11)
+	    (t (error (format nil "Unknown scale ~a" scale))))))
 
 (defun sib (base index scale)
   ;; SIB is one byte

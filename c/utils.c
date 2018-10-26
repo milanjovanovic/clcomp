@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 
 char *get_part(char *str, char delim, int index) {
@@ -33,4 +34,23 @@ void read_nm(char *file) {
   }
    free(line);
    fclose(nm);
+}
+
+int64_t read_long(FILE *fp) {
+  
+  int64_t address = 0;
+  char buffer[8];
+  fread(buffer, 1, 8, fp);
+
+  address |= (int64_t) buffer[0] << 56;
+  address |= (int64_t) buffer[1] << 48;
+  address |= (int64_t) buffer[2] << 40;
+  address |= (int64_t) buffer[3] << 32;
+  address |= (int64_t) buffer[4] << 24;
+  address |= (int64_t) buffer[5] << 16;
+  address |= (int64_t) buffer[6] << 8;
+  address |= (int64_t) buffer[7];
+
+  return address;
+  
 }

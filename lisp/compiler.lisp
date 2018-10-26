@@ -23,7 +23,7 @@
 ;;; ir mnemonics :
 ;;; LAMBDA-ENTRY
 ;;; ARG-CHECK
-;;; RECEIVE-PARAM
+;;; RECEIVE-PARAMcsr
 ;;; PARAMS-COUNT
 ;;; LOAD-PARAM
 ;;; LOAD-CALL
@@ -298,10 +298,10 @@
   (case (type-of storage)
     (constant-storage (constant-storage-constant storage))
     (reg-storage (reg-storage-register storage))
-    (stack-storage (@ *base-pointer-reg* (- (* *word-size* (+ (stack-storage-offset storage)
-						(length *preserved-regs*)
-						1)))))
-    (memory-storage (@ (memory-storage-base storage) (memory-storage-offset storage)))))
+    (stack-storage (@ *base-pointer-reg* nil nil (- (* *word-size* (+ (stack-storage-offset storage)
+								      (length *preserved-regs*)
+								      1)))))
+    (memory-storage (@ (memory-storage-base storage) nil nil (memory-storage-offset storage)))))
 
 (defun make-receive-param-storage (param-number)
   (if (> param-number (length *fun-arguments-regs*))
@@ -375,18 +375,34 @@
   (let ((allocation (make-allocation :map (make-hash-table) :stack 0 :registers-available *preserved-regs*)))
     (dolist (interval (get-sorted-intervals intervals))
       (expire-old-intervals allocation (interval-start interval))
-      (cond ((>  (length (allocation-registers-available allocation)) 0)
+      (cond ((> (length (allocation-registers-available allocation)) 0)
 	     (add-live-interval allocation interval))
 	    (t (spill-interval allocation interval))))
     allocation))
 
 
+(defstruct rip-location rip byte-offset)
 (defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets byte-code) 
 (defstruct compilation-unit compile-component start fixups code)
 
+(defun get-compilation-unit-code-buffer (compilation-unit)
+  (let* ((code (compilation-unit-code compilation-unit))
+	 (code-size (reduce (lambda (size inst)
+			      (incf size (length inst)))
+			    code :initial-value 0))
+	 (buffer (make-array code-size :element-type '(unsigned-byte 8))))
+    (let ((index 0))
+      (dolist (inst code)
+	(dolist (b inst)
+	  (setf (aref buffer index) b)
+	  (incf index)))
+      buffer)))
+
 (defun compile-component-pass-1 (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
-	 (allocation (create-component-allocation intervals)))    
+	 (allocation (create-component-allocation intervals)))
+    (maphash (lambda (k v)
+	       (print (list k v))) (intervals-map intervals))
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
@@ -433,10 +449,17 @@
 (defun make-compile-unit-and-compile-pass-1 (ir-component)
   (make-compilation-unit :compile-component (compile-component-pass-1 ir-component)))
 
+;; FIXME
+;; remove zero jumps, remove
+;; remove redudand loads -> (mov rbx, rcx; mov rcx, rbx)
+;; find consecutive store to same location, leave only last -> (mov rax, 10 ; mov rax 20)
+(defun peephole (assembly)
+  assembly)
+
 (defun assemble-component (component)
-  (let ((main-code (assembly-pass-1 (resolve-assembly-jumps (compile-component-code component))))
+  (let ((main-code (assembly-pass-1 (peephole (resolve-assembly-jumps (compile-component-code component)))))
 	(subcomps (compile-component-subcomps component))
-	(rips (compile-component-rips component)))
+ 	(rips (compile-component-rips component)))
     (let ((pre-code nil)
 	  (rip-offsets nil)
 	  (start-offset (+ (length subcomps) (length rips))))
@@ -505,11 +528,30 @@
 	    (get-all-components-byte-code (cdr subcomp-pair))))
     (append code (get-complete-component-code start-component))))
 
+(defun get-all-components-rips (start-component)
+  (let ((rips))
+    (dolist (subcomp-pair (compile-component-subcomps start-component))
+      (setf rips
+	    (get-all-components-rips (cdr subcomp-pair))))
+    (let ((this-rips nil)
+	  (comp-rips (compile-component-rips start-component)))
+      (dolist (rip comp-rips)
+	(let ((rip-offset (get-rip-offset start-component (fun-rip-relative-name rip))))
+	  (push 
+	   (make-rip-location :rip rip
+			      :byte-offset (+ (compile-component-start start-component)
+					    (length (first (compile-component-prefix-code start-component)))
+					    (* *word-size* (- rip-offset 1))))
+	   this-rips)))
+      (append this-rips rips))))
+
 (defun assemble-and-link-compilation-unit (compilation-unit start)
   (let ((start-component (compilation-unit-compile-component compilation-unit)))
     (link-compilation-component start-component start)
     (setf (compilation-unit-code compilation-unit)
 	  (get-all-components-byte-code start-component))
+    (setf (compilation-unit-fixups compilation-unit)
+	  (get-all-components-rips start-component))
     compilation-unit))
 
 (defun clcomp-compile (exp)

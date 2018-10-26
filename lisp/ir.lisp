@@ -254,6 +254,20 @@
       (make-label-ir component exit-label)
       location)))
 
+(defun emit-vop-ir (component node environments)
+  (add-ir component (list (list 'vop-call location (get-vop fun)))))
+
+(defun emit-call-or-vop (component node environments)
+  (let ((fun (call-node-function node)))
+    (if (get-vop fun)
+	(let* ((vop (get-vop fun))
+	       (node-args-count (length (call-node-arguments node)))
+	       (vop-args-count (length (vop-arguments vop))))
+	  (if (= node-args-count vop-args-count)
+	      (emit-vop-ir component node environments)
+	      (emit-call-ir component node environments)))
+	(emit-call-ir component node environments))))
+
 (defun emit-call-ir (component node environments)
   (let ((fun (call-node-function node))
 	(arguments (call-node-arguments node))

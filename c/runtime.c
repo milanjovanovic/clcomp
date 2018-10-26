@@ -22,6 +22,8 @@
 lispobj init_lisp(uintptr_t stack, uintptr_t heap);
 lispobj run_lisp_test(uintptr_t stack, uintptr_t heap, uintptr_t code_address);
 
+int64_t read_long(FILE *fp);
+
 
 uintptr_t allocation_start = LISP_HEAP_START - STACK_SIZE;
 uintptr_t stack_start = LISP_HEAP_START - WORD_SIZE;
@@ -212,17 +214,21 @@ struct lisp_code load_test_code(char *file) {
   struct stat info;
   
   stat(file, &info);
-  char *code = malloc(info.st_size * sizeof(char));
+  
+  char *code = malloc((info.st_size - sizeof(int64_t)) * sizeof(char));
   
   printf("Code File Size: %lld\n", info.st_size);
   
   FILE *fp = fopen(file, "rb");
-  fread(code, info.st_size, 1, fp);
+  int64_t start_address = read_long(fp);
+  fread(code, info.st_size - sizeof(int64_t), 1, fp);
   fclose(fp);
 
+  lcode.start_address = start_address;
   lcode.code = code;
-  lcode.code_size = info.st_size;
-  
+  lcode.code_size = info.st_size - sizeof(int64_t);
+
+  printf("Start address: %lli\n", lcode.start_address);
   return lcode;
 }
 
@@ -234,8 +240,7 @@ void run_test(char *test_file) {
   load_code(lcode.code, lcode.code_size);
   free(lcode.code);
   
-  print_lisp(run_lisp_test(stack_start, (uintptr_t) heap_header, code_address));
-  
+  print_lisp(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
 }
 
 int main(int argc, char *argv[]) {

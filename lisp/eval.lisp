@@ -1,12 +1,15 @@
 (in-package #:clcomp)
+(declaim (optimize (speed 0) (debug 3)))
 
 (defun %eval-lambda (exp)
-  (clcomp-compile exp))
+  (runtime-load-code
+   (get-compilation-unit-code-buffer
+    (clcomp-compile exp))))
 
 (defun %eval-defun (exp)
   (let ((exp (expand exp)))
-    (list 'setf 'symbol-function (second exp)
-	  (%eval-lambda (third exp)))))
+    (let ((address (%eval-lambda (third exp))))
+      (save-function-address (second exp) address))))
 
 (defun %eval-in-lambda (exp)
   (list 'funcall

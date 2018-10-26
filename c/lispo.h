@@ -1,5 +1,8 @@
+// NIL car/cdr should be set to the same NIL value
 #define LISP_NIL ((lispobj) 0x20000002)
 // FIXME, T values has bad tag
+// FIXME, it's not bad, it is good, T should have pointer low tag, but widetag is symbol
+// FIXME, NIL doesn't have poenter low tag
 #define LISP_T ((lispobj) 0x2000000F)  
 
 #define WORD_SIZE 8
@@ -11,7 +14,7 @@ typedef uintptr_t lispobj;
 #define CLEAR_TAG_MASK 0xfffffffffffffff8
 
 #define FIXNUM_TAG 0x0 // #b000
-#define LIST_TAG 0x2 // #b010
+#define LIST_TAG 0x2 // #/* b010 */
 #define FUNCTION_TAG 0x3 // #b011
 #define CHAR_TAG 0x4 // #b100
 #define POINTER_TAG 0x7 // #b111
@@ -50,6 +53,7 @@ struct symbol {
 };
 
 struct lisp_code {
+  int64_t start_address;
   char *code;
   long code_size;
 };
