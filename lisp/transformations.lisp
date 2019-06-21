@@ -37,10 +37,9 @@
 	(append (list 'progn) (mapcar #'%expand (nthcdr 2 let-form)))))
 
 (defun transform-defun (defun-form)
-  (list '%defun (second defun-form)
-	(list 'lambda
-	      (third defun-form)
-	      (append (list 'progn) (mapcar #'%expand (nthcdr 3 defun-form))))))
+  (list 'progn (list 'eval-when '(:compile) (list '%rt-defun (second defun-form)))
+	(list '%defun (second defun-form)
+	      (%expand (list 'lambda (third defun-form) (fourth defun-form))))))
 
 (defun transform-block (form)
   (let ((tagbody-symbol (create-block-tagbody-symbol (second form)))

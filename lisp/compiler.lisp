@@ -275,6 +275,7 @@
 	(index 1))
     (dolist (blok (ir-component-code-blocks ir-component))
       (dolist (ir (ir-block-ir blok))
+	(print ir)
 	(let ((mnemonic (first ir)))
 	  (case mnemonic
 	    (receive-param (add-from-interval intervals (second ir) 1))
@@ -401,8 +402,6 @@
 (defun compile-component-pass-1 (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
 	 (allocation (create-component-allocation intervals)))
-    (maphash (lambda (k v)
-	       (print (list k v))) (intervals-map intervals))
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
@@ -559,3 +558,38 @@
     (component-blocks-phase ir-component)
     (let ((compile-unit (make-compile-unit-and-compile-pass-1 ir-component)))
       (assemble-and-link-compilation-unit compile-unit 0))))
+
+
+(defparameter *top-level-handlers* '(defun top-handle-defun
+				     progn top-handle-progn
+				     defmacro top-handle-defmacro
+				     defparameter top-handle-defparameter))
+
+(defun get-top-level-handler (what)
+  (getf *top-level-handlers* what))
+
+(defun process-not-top-level-form (form)
+  )
+
+(defun top-level-handle (form)
+  (let ((handler (get-top-level-handler (first form))))
+    (if handler
+	(funcall handler form)
+	(process-not-top-level-form form))))
+
+
+(defun top-handle-defun (form)
+  )
+
+(defun top-handle-progn (form)
+  (let ((forms (cdr form)))
+    (dolist (f forms)
+      (top-level-handle f))))
+
+(defun top-handle-defmacro (form)
+  )
+
+(defun top-handle-defparameter (form)
+  )
+
+

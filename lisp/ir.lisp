@@ -148,6 +148,9 @@
   (push (make-fun-rip-relative :name fun) (ir-component-rips component))
   (add-ir component (list (list 'load-call location 'call fun arguments-count))))
 
+(defun make-vop-ir (component ret-location arg-locations vop-name)
+  (add-ir component (list (list 'vop vop-name ret-location arg-locations))))
+
 (defun make-return-ir (component location)
   (add-ir component (list (list 'load (make-return-location) location))))
 
@@ -175,6 +178,7 @@
 							   :arguments-count arguments-count)
 				      arg-loc)))
 	(incf counter)))))
+
 
 (defun get-ir-used-location (ir)
   (let ((mnem (first ir)))
@@ -255,17 +259,18 @@
       location)))
 
 (defun emit-vop-ir (component node environments)
-  (add-ir component (list (list 'vop-call location (get-vop fun)))))
+  (let ((ret-location (make-return-location))
+	(arguments (call-node-arguments node)))
+    (let ((arg-locations))
+      (dolist (arg arguments)
+	(push (emit-node-ir component arg environments ) arg-locations))
+      (make-vop-ir component ret-location (reverse arg-locations) (call-node-function node))
+      ret-location)))
 
 (defun emit-call-or-vop (component node environments)
   (let ((fun (call-node-function node)))
     (if (get-vop fun)
-	(let* ((vop (get-vop fun))
-	       (node-args-count (length (call-node-arguments node)))
-	       (vop-args-count (length (vop-arguments vop))))
-	  (if (= node-args-count vop-args-count)
-	      (emit-vop-ir component node environments)
-	      (emit-call-ir component node environments)))
+	(emit-vop-ir component node environments)
 	(emit-call-ir component node environments))))
 
 (defun emit-call-ir (component node environments)
@@ -319,7 +324,7 @@
   (typecase node
     (lexical-var-node (emit-lexical-var-node node environments))
     (progn-node (emit-progn-ir component node environments))
-    (call-node (emit-call-ir component node environments))
+    (call-node (emit-call-or-vop component node environments))
     (if-node (emit-if-ir component node environments))
     (let-node (emit-let-ir component node environments))
     (lambda-node (emit-lambda-ir component node))
