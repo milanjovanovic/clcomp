@@ -21,6 +21,7 @@
 
 lispobj init_lisp(uintptr_t stack, uintptr_t heap);
 lispobj run_lisp_test(uintptr_t stack, uintptr_t heap, uintptr_t code_address);
+void print_lisp(lispobj obj);
 
 int64_t read_long(FILE *fp);
 
@@ -49,8 +50,8 @@ int is_fixnum(lispobj obj) {
   return (obj & MASK) == FIXNUM_TAG ? 1 : 0;
 }
 
-int is_list(lispobj obj) {
-  return (obj & MASK) == LIST_TAG ? 1 : 0;
+int is_cons(lispobj obj) {
+  return (obj & MASK) == CONS_TAG ? 1 : 0;
 }
     
 int is_fun(lispobj obj) {
@@ -76,8 +77,8 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
     return CHAR;
   } else if (is_pointer(obj)) {
     return POINTER;
-  } else if (is_list(obj)) {
-    return LIST;
+  } else if (is_cons(obj)) {
+    return CONS;
   } else if (is_fun(obj)) {
     return FUNCTION;
   } else {
@@ -85,9 +86,55 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
   }
 }
 
-void print_lisp(lispobj obj) {
 
-  printf("\nGOT FROM LISP: ");
+void print_lisp_cons_cdr(lispobj obj) {
+
+  lispobj _car = car(obj);
+  lispobj _cdr = cdr(obj);
+
+  print_lisp(_car);
+  if (_cdr != LISP_NIL) {
+    printf(" ");
+  }
+
+  enum base_lisp_type cdr_type = get_lisp_type(_cdr);
+
+  if (_cdr == LISP_NIL) {
+    printf(")");
+  } else if (cdr_type == CONS) {
+    print_lisp_cons_cdr(_cdr);
+  } else {
+    printf(" . ");
+    print_lisp(_cdr);
+    printf(")");
+  }
+  
+}
+
+void print_lisp_cons(lispobj obj) {
+
+  printf("(");
+  
+  lispobj _car = car(obj);
+  lispobj _cdr = cdr(obj);
+
+  print_lisp(_car);
+  printf(" ");
+
+  enum base_lisp_type cdr_type = get_lisp_type(_cdr);
+
+  if (_cdr == LISP_NIL) {
+    printf(")");
+  } else if (cdr_type == CONS) {
+    print_lisp_cons_cdr(_cdr);
+  } else {
+    printf(" . ");
+    print_lisp(_cdr);
+    printf(")");
+  }
+}
+
+void print_lisp(lispobj obj) {
 
   if(obj == LISP_NIL) {
     
@@ -109,19 +156,8 @@ void print_lisp(lispobj obj) {
     case CHAR :
       printf("%c", untag_char(obj));
       break;
-    case LIST :
-      printf("(");
-      print_lisp(car(obj));
-      if(cdr(obj) == LISP_NIL) {
-	printf(")");
-      } else if(get_lisp_type(cdr(obj)) == LIST) {
-	printf(" ");
-	print_lisp(cdr(obj));
-      } else {
-	printf(" . ");
-	print_lisp(cdr(obj));
-      }
-      printf(")");
+    case CONS :
+      print_lisp_cons(obj);
       break;
     case FUNCTION :
       printf("FUNCTION\n");
@@ -133,7 +169,6 @@ void print_lisp(lispobj obj) {
       break;
     }
   }
-  printf("\n");
 }
 
 
@@ -239,8 +274,10 @@ void run_test(char *test_file) {
   
   load_code(lcode.code, lcode.code_size);
   free(lcode.code);
-  
+
+  printf("\nGOT FROM LISP: ");
   print_lisp(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
+  printf("\n");
 }
 
 int main(int argc, char *argv[]) {

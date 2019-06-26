@@ -118,7 +118,12 @@
 			  (progn
 			    ,@body)))))
 
-(define-vop cons (res :storage) ((arg1 :register) (arg2 :register))
+(defun get-vop-code (vop  args)
+  (let ((*segment-instructions* nil))
+    (reverse
+     (apply (vop-fun vop) args))))
+
+(define-vop cons (res :register) ((arg1 :register) (arg2 :register))
   (inst :mov res (@ *heap-header-reg*))
   (inst :lea res (@ res nil nil (* 2 *word-size*)))
   (inst :mov (@ *heap-header-reg*) res)
@@ -127,7 +132,7 @@
   (inst :mov (@ res nil nil 8) arg2)
   (inst :add res *list-tag*))
 
-(define-vop car (res :storage) ((arg1 :register))
+(define-vop car (res :register) ((arg1 :register))
   (inst :lea res (@ arg1 nil nil (- *list-tag*)))
   (inst :test res *mask*)
   (inst :jump-fixup :jnbe :not-cons)
@@ -135,7 +140,7 @@
   (inst :label :not-cons)
   (inst :mov res *nil*))
 
-(define-vop cdr (res :storage) ((arg1 :register))
+(define-vop cdr (res :register) ((arg1 :register))
   (inst :lea res (@ arg1 nil nil (- *list-tag*)))
   (inst :test res *mask*)
   (inst :jump-fixup :jnbe :not-cons)

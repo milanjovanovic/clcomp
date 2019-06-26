@@ -23,7 +23,7 @@
 ;;; ir mnemonics :
 ;;; LAMBDA-ENTRY
 ;;; ARG-CHECK
-;;; RECEIVE-PARAMcsr
+;;; RECEIVE-PARAM
 ;;; PARAMS-COUNT
 ;;; LOAD-PARAM
 ;;; LOAD-CALL
@@ -121,11 +121,19 @@
 		       (list :sub *stack-pointer-reg*
 			     (* *word-size* (allocation-stack allocation)))))))
 
+(defun maybe-deallocate-stack-space (translator allocation)
+  (when (> (allocation-stack allocation) 0)
+    (emit-ir-assembly translator
+		      (list
+		       (list :add *stack-pointer-reg*
+			     (* *word-size* (allocation-stack allocation)))))))
+
 (defun translate-lambda-entry (translator allocation)
   (emit-ir-assembly translator
 		    (list
 		     (list :push *base-pointer-reg*)
 		     (list :mov *base-pointer-reg* *stack-pointer-reg*)))
+;;  #+nil ; better do caller save register
   (emit-ir-assembly translator (calle-save-registers))
   (maybe-allocate-stack-space translator allocation))
 
@@ -179,6 +187,45 @@
 			(list
 			 (list :mov (storage-operand storage) *return-value-reg*))))))
 
+(defun emit-vop-code (vop ir allocation translator)
+  ;; fixme, check if return storage is register
+  ;; in that case we don't need to use *return-value-reg*
+  (let (arguments-regs
+	(usable-registers *fun-arguments-regs*)
+	(ir-arguments (get-ir-vop-args ir)))
+    (dolist (argument ir-arguments)
+      (let ((arg-storage (get-allocation-storage argument allocation)))
+	(etypecase arg-storage
+	  (reg-storage
+	   (push (reg-storage-register arg-storage) arguments-regs))
+	  (stack-storage
+	   (let ((register (first usable-registers)))
+	     (emit-ir-assembly translator (asm-storage-move (make-reg-storage :register register)
+							    arg-storage))
+	     (push register arguments-regs))
+	   (setf usable-registers (rest usable-registers))))))
+    (emit-ir-assembly translator
+		      (get-vop-code vop (cons *return-value-reg*  (reverse arguments-regs))))
+    (emit-ir-assembly translator
+		      (list
+		       (list :mov (storage-operand (get-allocation-storage (third ir) allocation))
+			     *return-value-reg*)))))
+
+(defun translate-vop-call (ir translator allocation)
+  (let ((vop-name (get-ir-vop-name ir))
+	(ir-vop-args (get-ir-vop-args ir)))
+    (if vop-name
+	(let* ((vop (get-vop vop-name)))
+	  (if vop
+	      (let ((regs (length (vop-arguments vop))))
+		(when (> regs (length *fun-arguments-regs*))
+		  (error (format nil "Not enough regs for VOP ~a" ir)))
+		(when (not (= (length ir-vop-args) regs))
+		  (error (format nil "Wrong number of arguments for VOP in ~a" ir)))
+		(emit-vop-code vop ir allocation translator))
+	      (error (format nil "Unknown vop for ir ~a" ir))))
+	(error (format nil "Unknown vop for ir ~a" ir)))))
+
 (defun translate-if (ir translator allocation)
   (let* ((location (second ir))
 	 (storage (get-allocation-storage location allocation))
@@ -206,8 +253,9 @@
 		    (list
 		     (list :label (second ir)))))
 
-(defun translate-lambda-exit (translator)
+(defun translate-lambda-exit (translator allocation)
   (emit-ir-assembly translator (list (list :clc)))
+  (maybe-deallocate-stack-space translator allocation)
   (emit-ir-assembly translator (calle-restore-registers))
   (emit-ir-assembly translator
 		    (list
@@ -232,11 +280,12 @@
       (receive-param (translate-receive-param (second ir) (third ir) translator allocation))
       (load (translate-load ir translator allocation))
       (load-param (translate-load-param ir translator allocation))
-      (load-call (translate-load-call ir translator allocation)) 
+      (load-call (translate-load-call ir translator allocation))
+      (vop (translate-vop-call ir translator allocation))
       (if (translate-if ir translator allocation))
       (go (translate-go ir translator))
       (label (translate-label ir translator))
-      (lambda-exit (translate-lambda-exit translator)))))
+      (lambda-exit (translate-lambda-exit translator allocation)))))
 
 (defun translate-component (ir-component allocation)
   (let ((translator (make-translator)))
@@ -275,7 +324,6 @@
 	(index 1))
     (dolist (blok (ir-component-code-blocks ir-component))
       (dolist (ir (ir-block-ir blok))
-	(print ir)
 	(let ((mnemonic (first ir)))
 	  (case mnemonic
 	    (receive-param (add-from-interval intervals (second ir) 1))
@@ -284,6 +332,9 @@
 	     (add-to-interval intervals (get-load-to ir) index))
 	    (load-call (add-from-interval intervals (get-load-from ir) index))
 	    (if (add-from-interval intervals (second ir) index))
+	    (vop (mapcar (lambda (v)
+			   (add-from-interval intervals v index))
+			 (get-ir-vop-args ir)) )
 	    (otherwise nil)))
 	(incf index)))
     intervals))
@@ -402,6 +453,9 @@
 (defun compile-component-pass-1 (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
 	 (allocation (create-component-allocation intervals)))
+    (setf *i* intervals
+	  *ir* ir-component
+	  *all* allocation)
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
@@ -593,3 +647,5 @@
   )
 
 
+;;;; TODO
+;;; - stack offsets, when we removed saving preserved regs we are wasting stack space

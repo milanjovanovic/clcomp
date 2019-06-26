@@ -14,7 +14,7 @@ typedef uintptr_t lispobj;
 #define CLEAR_TAG_MASK 0xfffffffffffffff8
 
 #define FIXNUM_TAG 0x0 // #b000
-#define LIST_TAG 0x2 // #/* b010 */
+#define CONS_TAG 0x2 // #/* b010 */
 #define FUNCTION_TAG 0x3 // #b011
 #define CHAR_TAG 0x4 // #b100
 #define POINTER_TAG 0x7 // #b111
@@ -24,7 +24,7 @@ typedef uintptr_t lispobj;
 // 0x5  free 
 // 0x6  free
 
-enum base_lisp_type {FIXNUM, CHAR, LIST, FUNCTION, POINTER};
+enum base_lisp_type {FIXNUM, CHAR, CONS, FUNCTION, POINTER};
 enum pointer_lisp_type {STRING, UNKNOWN};
 
 #define CHAR_SHIFT 0x8

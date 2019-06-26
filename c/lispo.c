@@ -14,7 +14,7 @@ struct cons *allocate_cons(void **heap, lispobj car, lispobj cdr) {
 }
 
 lispobj tag_cons(struct cons *cons) {
-  return (lispobj) cons | LIST_TAG;
+  return (lispobj) cons | CONS_TAG;
 }
 
 struct cons *untag_cons(lispobj cons) {
