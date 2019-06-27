@@ -12,6 +12,8 @@
 	       (:file "lisp/instructions")
 	       (:file "lisp/tests")
 	       (:file "lisp/vops")
+	       (:file "lisp/x8664/cons")
+	       (:file "lisp/x8664/arith")
 	       (:file "lisp/transformations")
 	       (:file "lisp/ir")
 	       (:file "lisp/irutils")

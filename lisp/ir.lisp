@@ -194,6 +194,11 @@
 	   (list (second ir)))
 	  (t nil))))
 
+(defun get-ir-vop-name (ir)
+  (second ir))
+
+(defun get-ir-vop-args (ir)
+  (fourth ir))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Emiters

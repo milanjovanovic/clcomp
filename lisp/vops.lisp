@@ -1,10 +1,45 @@
 (in-package :clcomp)
+
 (declaim (optimize (speed 0) (safety 3) (debug 3)))
+
 
 (defparameter *segment-instructions* nil)
 
 (defun inst (&rest rest)
   (push rest *segment-instructions*))
+
+(defparameter *known-vops* (make-hash-table))
+
+(defstruct vop name arguments res fun)
+
+(defun get-vop (name)
+  (gethash name *known-vops*))
+
+(defun get-args-count (vop)
+  (length (vop-arguments vop)))
+
+(defun get-args-types (vop)
+  (mapcar 'second (vop-arguments vop)))
+
+(defun get-res-type (vop)
+  (second (vop-res vop)))
+
+(defmacro define-vop (name res (&rest arguments) &body body)
+  `(setf (gethash ',name *known-vops*)
+	 (make-vop :name ',name
+		   :res ',res
+		   :arguments ',arguments
+		   :fun (lambda ,(cons (first res) (mapcar 'car arguments))
+			  (progn
+			    ,@body)))))
+
+(defun get-vop-code (vop  args)
+  (let ((*segment-instructions* nil))
+    (reverse
+     (apply (vop-fun vop) args))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun vop-regs-listify (dest no-more-arguments-label)
   ;; dest should be list tagged pointer
@@ -57,93 +92,3 @@
   (inst :label :set-cdr)
   (inst :mov (@ :R10 nil nil (- *word-size* *list-tag*)) *nil*)
   (inst :label :end))
-
-(defun vop-cons (arg1 arg2 res)
-  ;; fixme, test heap end and since we dont' have GC yet just die
-  (inst :mov res (@ *heap-header-reg*))
-  (inst :lea res (@ res nil nil (* 2 *word-size*)))
-  (inst :mov (@ *heap-header-reg*) res)
-  (inst :lea res (@ res nil nil (- (* 2 *word-size*))))
-  (inst :mov (@ res) arg1)
-  (inst :mov (@ res nil nil 8) arg2)
-  (inst :add res *list-tag*))
-
-#+nil
-(defun vop-consp (arg1 res)
-  )
-
-(defun vop-car (arg1 res)
-  (inst :lea res (@ arg1 nil nil (- *list-tag*)))
-  (inst :test res *mask*)
-  (inst :jump-fixup :jnbe :not-cons)
-  (inst :mov res (@ res))
-  (inst :label :not-cons)
-  (inst :mov res *nil*))
-
-
-(defun vop-cdr (arg1 res)
-  (inst :lea res (@ arg1 nil nil (- *list-tag*)))
-  (inst :test res *mask*)
-  (inst :jump-fixup :jnbe :not-cons)
-  (inst :mov res (@ res nil nil *word-size*))
-  (inst :label :not-cons)
-  (inst :mov res *nil*))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defparameter *known-vops* (make-hash-table))
-
-(defstruct vop name arguments res fun)
-
-(defun get-vop (name)
-  (gethash name *known-vops*))
-
-(defun get-args-count (vop)
-  (length (vop-arguments vop)))
-
-(defun get-args-types (vop)
-  (mapcar 'second (vop-arguments vop)))
-
-(defun get-res-type (vop)
-  (second (vop-res vop)))
-
-(defmacro define-vop (name res (&rest arguments) &body body)
-  `(setf (gethash ',name *known-vops*)
-	 (make-vop :name ',name
-		   :res ',res
-		   :arguments ',arguments
-		   :fun (lambda ,(cons (first res) (mapcar 'car arguments))
-			  (progn
-			    ,@body)))))
-
-(defun get-vop-code (vop  args)
-  (let ((*segment-instructions* nil))
-    (reverse
-     (apply (vop-fun vop) args))))
-
-(define-vop cons (res :register) ((arg1 :register) (arg2 :register))
-  (inst :mov res (@ *heap-header-reg*))
-  (inst :lea res (@ res nil nil (* 2 *word-size*)))
-  (inst :mov (@ *heap-header-reg*) res)
-  (inst :lea res (@ res nil nil (- (* 2 *word-size*))))
-  (inst :mov (@ res) arg1)
-  (inst :mov (@ res nil nil 8) arg2)
-  (inst :add res *list-tag*))
-
-(define-vop car (res :register) ((arg1 :register))
-  (inst :lea res (@ arg1 nil nil (- *list-tag*)))
-  (inst :test res *mask*)
-  (inst :jump-fixup :jnbe :not-cons)
-  (inst :mov res (@ res))
-  (inst :label :not-cons)
-  (inst :mov res *nil*))
-
-(define-vop cdr (res :register) ((arg1 :register))
-  (inst :lea res (@ arg1 nil nil (- *list-tag*)))
-  (inst :test res *mask*)
-  (inst :jump-fixup :jnbe :not-cons)
-  (inst :mov res (@ res nil nil *word-size*))
-  (inst :label :not-cons)
-  (inst :mov res *nil*))
