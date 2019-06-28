@@ -120,9 +120,15 @@
 ;;; IR code generators
 ;;; FIXME, use structures
 
-
 (defstruct fun-rip-relative name)
+(defstruct component-rip-relative name)
 (defstruct sub-component name component)
+
+(defun get-rip-name (rip-relative-location)
+  (etypecase rip-relative-location
+    (fun-rip-relative (fun-rip-relative-name rip-relative-location))
+    (component-rip-relative (component-rip-relative-location rip-relative-location))))
+
 
 (defun add-ir (component ir)
   (setf (ir-component-code component)
@@ -323,6 +329,7 @@
 	(temp-loc (make-rip-relative-location :location (make-temp-location-symbol))))
     (push (make-sub-component :name temp-loc :component lambda-comp)
 	  (ir-component-sub-comps component))
+    (push (make-component-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))
     (make-ir node lambda-comp temp-loc)))
 
 (defun emit-node-ir (component node environments)

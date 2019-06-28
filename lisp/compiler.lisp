@@ -453,9 +453,6 @@
 (defun compile-component-pass-1 (ir-component)
   (let* ((intervals (create-ir-intervals ir-component))
 	 (allocation (create-component-allocation intervals)))
-    (setf *i* intervals
-	  *ir* ir-component
-	  *all* allocation)
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
@@ -527,7 +524,7 @@
 	(when (> (length rips))
 	  (dolist (rip-relative rips)
 	    (push *dummy-rip-value* pre-code)
-	    (push (list (fun-rip-relative-name rip-relative) start-offset) rip-offsets)
+	    (push (list (get-rip-relative-name rip-relative) start-offset) rip-offsets)
 	    (decf start-offset))))
       (setf (compile-component-byte-code component)
 	    main-code)
@@ -589,12 +586,12 @@
     (let ((this-rips nil)
 	  (comp-rips (compile-component-rips start-component)))
       (dolist (rip comp-rips)
-	(let ((rip-offset (get-rip-offset start-component (fun-rip-relative-name rip))))
+	(let ((rip-offset (get-rip-offset start-component (get-rip-relative-name rip))))
 	  (push 
 	   (make-rip-location :rip rip
 			      :byte-offset (+ (compile-component-start start-component)
-					    (length (first (compile-component-prefix-code start-component)))
-					    (* *word-size* (- rip-offset 1))))
+					      (length (first (compile-component-prefix-code start-component)))
+					      (* *word-size* (- rip-offset 1))))
 	   this-rips)))
       (append this-rips rips))))
 
@@ -608,10 +605,16 @@
     compilation-unit))
 
 (defun clcomp-compile (exp)
-  (let* ((ir-component (make-ir (create-node (expand exp)))))
-    (component-blocks-phase ir-component)
-    (let ((compile-unit (make-compile-unit-and-compile-pass-1 ir-component)))
-      (assemble-and-link-compilation-unit compile-unit 0))))
+  (let* ((expanded (expand exp))
+	 (nodes (create-node expanded))
+	 (a (print nodes))
+	 (ir (make-ir nodes))
+	 (c (print ir))
+	 (ir-blocks (component-blocks-phase ir))
+	 (x (print ir-blocks))
+	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
+	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
+    assembled-compile-unit))
 
 
 (defparameter *top-level-handlers* '(defun top-handle-defun
@@ -619,32 +622,33 @@
 				     defmacro top-handle-defmacro
 				     defparameter top-handle-defparameter))
 
-(defun get-top-level-handler (what)
-  (getf *top-level-handlers* what))
+#+nil (progn
+	(defun get-top-level-handler (what)
+	  (getf *top-level-handlers* what))
 
-(defun process-not-top-level-form (form)
-  )
+	(defun process-not-top-level-form (form)
+	  )
 
-(defun top-level-handle (form)
-  (let ((handler (get-top-level-handler (first form))))
-    (if handler
-	(funcall handler form)
-	(process-not-top-level-form form))))
+	(defun top-level-handle (form)
+	  (let ((handler (get-top-level-handler (first form))))
+	    (if handler
+		(funcall handler form)
+		(process-not-top-level-form form))))
 
 
-(defun top-handle-defun (form)
-  )
+	(defun top-handle-defun (form)
+	  )
 
-(defun top-handle-progn (form)
-  (let ((forms (cdr form)))
-    (dolist (f forms)
-      (top-level-handle f))))
+	(defun top-handle-progn (form)
+	  (let ((forms (cdr form)))
+	    (dolist (f forms)
+	      (top-level-handle f))))
 
-(defun top-handle-defmacro (form)
-  )
+	(defun top-handle-defmacro (form)
+	  )
 
-(defun top-handle-defparameter (form)
-  )
+	(defun top-handle-defparameter (form)
+	  ))
 
 
 ;;;; TODO

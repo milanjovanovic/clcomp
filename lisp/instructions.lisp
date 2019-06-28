@@ -36,9 +36,8 @@
 (define-inst-template :sub (:reg64 :addr) ()
 		      nil #x48 #x2b nil)
 
-(define-inst-template :sub (:addr :reg64) ()
+(define-inst-template :sub ((:reg64 :addr) :reg64) ()
 		      nil #x48 #x29 nil)
-
 
 
 ;;; MOV
