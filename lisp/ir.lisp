@@ -25,15 +25,20 @@
   (incf *label-counter*)
   (make-symbol (concatenate 'string "LABEL-" (write-to-string *label-counter*))))
 
-(defun make-return-location ()
-  (make-ret-location :location (make-temp-location-symbol)))
-
 (defstruct rip-relative-location location)
 (defstruct var-location location)
 (defstruct tmp-location location)
 (defstruct ret-location location)
 (defstruct param-location location param-number arguments-count)
+(defstruct lambda-return-location location)
 (defstruct immediate-constant constant)
+
+(defun make-return-location ()
+  (make-ret-location :location (make-temp-location-symbol)))
+
+(defun create-lambda-return-location ()
+  (make-lambda-return-location  :location (make-temp-location-symbol)))
+
 
 (defun location-equal (loc1 loc2)
   (and (eq (type-of loc1)
@@ -124,10 +129,10 @@
 (defstruct component-rip-relative name)
 (defstruct sub-component name component)
 
-(defun get-rip-name (rip-relative-location)
+(defun get-rip-relative-name (rip-relative-location)
   (etypecase rip-relative-location
     (fun-rip-relative (fun-rip-relative-name rip-relative-location))
-    (component-rip-relative (component-rip-relative-location rip-relative-location))))
+    (component-rip-relative (component-rip-relative-name rip-relative-location))))
 
 
 (defun add-ir (component ir)
@@ -157,8 +162,9 @@
 (defun make-vop-ir (component ret-location arg-locations vop-name)
   (add-ir component (list (list 'vop vop-name ret-location arg-locations))))
 
+
 (defun make-return-ir (component location)
-  (add-ir component (list (list 'load (make-return-location) location))))
+  (add-ir component (list (list 'load (create-lambda-return-location) location))))
 
 (defun make-lambda-exit-ir (component)
   (add-ir component (list (list 'lambda-exit))))
@@ -270,7 +276,7 @@
       location)))
 
 (defun emit-vop-ir (component node environments)
-  (let ((ret-location (make-return-location))
+  (let ((ret-location (make-temp-location))
 	(arguments (call-node-arguments node)))
     (let ((arg-locations))
       (dolist (arg arguments)

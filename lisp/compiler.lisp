@@ -188,8 +188,9 @@
 			 (list :mov (storage-operand storage) *return-value-reg*))))))
 
 (defun emit-vop-code (vop ir allocation translator)
-  ;; fixme, check if return storage is register
-  ;; in that case we don't need to use *return-value-reg*
+  ;; we are using fun arguments registers for our VOP
+  ;; allwaus use *RETURN-VALUE-REG* as return register
+  ;; FIXME, is this OK ?
   (let (arguments-regs
 	(usable-registers *fun-arguments-regs*)
 	(ir-arguments (get-ir-vop-args ir)))
@@ -305,19 +306,13 @@
     (sort res #'< :key (lambda (e) (first (second e))))))
 
 (defun add-interval (intervals location interval-num)
-  (let* ((var-map (intervals-map intervals))
-	 (var-interval (gethash (location-symbol location) var-map)))
-    (if var-interval
-	(setf (cdr var-interval) interval-num)
-	(setf (gethash (location-symbol location) var-map) (cons interval-num interval-num)))))
-
-(defun add-to-interval (intervals location index)
-  (case (type-of location)
-    ((var-location tmp-location) (add-interval intervals location index))))
-
-(defun add-from-interval (intervals location index)
-  (case (type-of location)
-    ((var-location tmp-location ret-location) (add-interval intervals location index))))
+  (typecase location
+    ((or tmp-location var-location ret-location)
+     (let* ((var-map (intervals-map intervals))
+	    (var-interval (gethash (location-symbol location) var-map)))
+       (if var-interval
+	   (setf (cdr var-interval) interval-num)
+	   (setf (gethash (location-symbol location) var-map) (cons interval-num interval-num)))))))
 
 (defun create-ir-intervals (ir-component)
   (let ((intervals (make-intervals :map (make-hash-table)))
@@ -326,15 +321,18 @@
       (dolist (ir (ir-block-ir blok))
 	(let ((mnemonic (first ir)))
 	  (case mnemonic
-	    (receive-param (add-from-interval intervals (second ir) 1))
-	    (load-param (add-from-interval intervals (get-load-from ir) index))
-	    (load (add-from-interval intervals (get-load-from ir) index)
-	     (add-to-interval intervals (get-load-to ir) index))
-	    (load-call (add-from-interval intervals (get-load-from ir) index))
-	    (if (add-from-interval intervals (second ir) index))
-	    (vop (mapcar (lambda (v)
-			   (add-from-interval intervals v index))
-			 (get-ir-vop-args ir)) )
+	    (receive-param (add-interval intervals (second ir) 1))
+	    (load-param (add-interval intervals (get-load-from ir) index))
+	    (load (add-interval intervals (get-load-from ir) index)
+	     (add-interval intervals (get-load-to ir) index))
+	    (load-call
+	     (add-interval intervals (second ir) index))
+	    (if (add-interval intervals (second ir) index))
+	    (vop
+	     (add-interval intervals (third ir) index)
+	     (mapcar (lambda (v)
+		       (add-interval intervals v index))
+		     (get-ir-vop-args ir)) )
 	    (otherwise nil)))
 	(incf index)))
     intervals))
@@ -376,6 +374,7 @@
 			(make-reg-storage :register *return-value-reg*)))
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-map allocation)))
       (rip-relative-location (make-memory-storage))
+      (lambda-return-location (make-reg-storage :register *return-value-reg*))
       (otherwise (error "Unknown location type")))))
 
 (defun interval-symbol (interval)
@@ -512,7 +511,10 @@
  	(rips (compile-component-rips component)))
     (let ((pre-code nil)
 	  (rip-offsets nil)
-	  (start-offset (+ (length subcomps) (length rips))))
+	  (start-offset (+ (length subcomps)
+			   (length (remove-if (lambda (rip)
+						(typep rip 'component-rip-relative))
+					      rips)))))
       (when (> start-offset 0)
 	(push (assemble-instruction (list :jmp (* *word-size* start-offset))) pre-code)
 	(when (> (length subcomps) 0)
@@ -521,10 +523,11 @@
 	    (push (list (rip-relative-location-location (car subcomp)) start-offset) rip-offsets)
 	    (decf start-offset)))
 	;; non subcomponent rips
-	(when (> (length rips))
+	(when (> (length rips) (length subcomps))
 	  (dolist (rip-relative rips)
-	    (push *dummy-rip-value* pre-code)
-	    (push (list (get-rip-relative-name rip-relative) start-offset) rip-offsets)
+	    (when (not (typep rip-relative 'component-rip-relative))
+	      (push *dummy-rip-value* pre-code)
+	      (push (list (get-rip-relative-name rip-relative) start-offset) rip-offsets))
 	    (decf start-offset))))
       (setf (compile-component-byte-code component)
 	    main-code)
@@ -607,11 +610,8 @@
 (defun clcomp-compile (exp)
   (let* ((expanded (expand exp))
 	 (nodes (create-node expanded))
-	 (a (print nodes))
 	 (ir (make-ir nodes))
-	 (c (print ir))
 	 (ir-blocks (component-blocks-phase ir))
-	 (x (print ir-blocks))
 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
     assembled-compile-unit))

@@ -119,7 +119,9 @@ void print_lisp_cons(lispobj obj) {
   lispobj _cdr = cdr(obj);
 
   print_lisp(_car);
-  printf(" ");
+    if (_cdr != LISP_NIL) {
+    printf(" ");
+  }
 
   enum base_lisp_type cdr_type = get_lisp_type(_cdr);
 
