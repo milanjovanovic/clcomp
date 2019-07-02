@@ -104,6 +104,7 @@
 
 (defun calle-save-registers ()
   (let (assembly)
+    (push (list :sub :RSP 8) assembly)
     (dolist (reg *preserved-regs*)
       (push (list :push reg) assembly))
     assembly))
@@ -112,6 +113,7 @@
   (let (assembly)
     (dolist (reg (reverse *preserved-regs*))
       (push (list :pop reg) assembly))
+    (push (list :add :RSP 8) assembly)
     assembly))
 
 (defun maybe-allocate-stack-space (translator allocation)

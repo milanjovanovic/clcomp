@@ -16,7 +16,7 @@
 #define STATIC_SPACE_SIZE (30 * 1024 * 1024)
 
 #define LISP_HEAP_START 0x200000000
-#define STACK_SIZE (2 * 1024 * 1024)
+#define STACK_SIZE (5 * 1024 * 1024)
 #define LISP_HEAP_SIZE (100 * 1024 * 1024)
 
 lispobj init_lisp(uintptr_t stack, uintptr_t heap);
@@ -27,7 +27,7 @@ int64_t read_long(FILE *fp);
 
 
 uintptr_t allocation_start = LISP_HEAP_START - STACK_SIZE;
-uintptr_t stack_start = LISP_HEAP_START - WORD_SIZE;
+intptr_t stack_start = LISP_HEAP_START - 0x10; // 16 byte aligned
 uintptr_t heap_end = LISP_HEAP_START + LISP_HEAP_SIZE - WORD_SIZE;
 
 uintptr_t static_memory_start = STATIC_SPACE_START;
@@ -171,6 +171,7 @@ void print_lisp(lispobj obj) {
       break;
     }
   }
+  fflush(stdout);
 }
 
 
@@ -280,10 +281,12 @@ void run_test(char *test_file) {
   printf("\nGOT FROM LISP: ");
   print_lisp(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
   printf("\n");
+
+  //  run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address);
 }
 
 int main(int argc, char *argv[]) {
-  
+
   init_runtime();
   
   load_core();
@@ -295,3 +298,8 @@ int main(int argc, char *argv[]) {
   destroy_runtime();
   
 }
+
+
+
+
+
