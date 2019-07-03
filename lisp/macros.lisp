@@ -5,7 +5,7 @@
 (defun macro-dotimes (form)
   (let ((limit (gensym "LIMIT-"))
 	(tag1 (gensym "TAG1-"))
-	(vsym))
+	(vsym (first (second form))))
     (list 'block nil
 	  (list 'let (list (list vsym 0)
 			   (list limit (second (second form))))
