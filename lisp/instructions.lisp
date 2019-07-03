@@ -82,7 +82,7 @@
 ;;; CMP
 
 (define-inst-template :cmp (:reg64 :reg64) ()
-		      nil #x48 #x38 nil)
+		      nil #x48 #x39 nil)
 
 (define-inst-template :cmp (:reg64 :addr) ()
 		      nil #x48 #x3b nil)
