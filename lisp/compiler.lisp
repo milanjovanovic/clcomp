@@ -610,47 +610,14 @@
     compilation-unit))
 
 (defun clcomp-compile (exp)
-  (let* ((expanded (expand exp))
+  (let* ((macroexpanded-form (clcomp-macroexpand exp))
+	 (expanded (expand macroexpanded-form))
 	 (nodes (create-node expanded))
 	 (ir (make-ir nodes))
 	 (ir-blocks (component-blocks-phase ir))
 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
     assembled-compile-unit))
-
-
-(defparameter *top-level-handlers* '(defun top-handle-defun
-				     progn top-handle-progn
-				     defmacro top-handle-defmacro
-				     defparameter top-handle-defparameter))
-
-#+nil (progn
-	(defun get-top-level-handler (what)
-	  (getf *top-level-handlers* what))
-
-	(defun process-not-top-level-form (form)
-	  )
-
-	(defun top-level-handle (form)
-	  (let ((handler (get-top-level-handler (first form))))
-	    (if handler
-		(funcall handler form)
-		(process-not-top-level-form form))))
-
-
-	(defun top-handle-defun (form)
-	  )
-
-	(defun top-handle-progn (form)
-	  (let ((forms (cdr form)))
-	    (dolist (f forms)
-	      (top-level-handle f))))
-
-	(defun top-handle-defmacro (form)
-	  )
-
-	(defun top-handle-defparameter (form)
-	  ))
 
 
 ;;;; TODO

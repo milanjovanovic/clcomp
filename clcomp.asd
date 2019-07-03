@@ -15,6 +15,8 @@
 	       (:file "lisp/x8664/cons")
 	       (:file "lisp/x8664/arith")
 	       (:file "lisp/x8664/call")
+	       (:file "lisp/x8664/char")
+	       (:file "lisp/macros")
 	       (:file "lisp/transformations")
 	       (:file "lisp/ir")
 	       (:file "lisp/assembling")
