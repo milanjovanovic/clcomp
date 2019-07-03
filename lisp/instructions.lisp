@@ -148,6 +148,18 @@
 		      nil nil #xe9 nil)
 
 
+(define-inst-template :jl (:imm32) ()
+		      #x0f nil #x8C nil)
+
+(define-inst-template :jnge (:imm32) ()
+		      #x0f nil #x8C nil)
+
+(define-inst-template :jg (:imm32) ()
+		      #x0f nil #x8f nil)
+
+(define-inst-template :jnle (:imm32) ()
+		      #x0f nil #x8f nil)
+
 ;; JE
 (define-inst-template :je (:imm32) ()
 		      #x0f nil #x84 nil)
