@@ -51,11 +51,11 @@
 
 (defun get-block-or-return-from-symbol (env block-symbol base-name)
   (let* ((hash-key (concatenate 'string (symbol-name block-symbol) base-name))
-	 (sym (gethash hash-key (env-blocks env))))
+	 (sym (gethash hash-key (macros-env-blocks env))))
     (if sym
 	sym
 	(let ((sym (gensym base-name)))
-	  (setf (gethash hash-key (env-blocks env)) sym)
+	  (setf (gethash hash-key (macros-env-blocks env)) sym)
 	  sym))))
 
 (defun block-to-value-name (env block-name)
