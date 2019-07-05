@@ -47,7 +47,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defstruct env blocks)
+(defstruct macros-env blocks)
 
 (defun get-block-or-return-from-symbol (env block-symbol base-name)
   (let* ((hash-key (concatenate 'string (symbol-name block-symbol) base-name))
@@ -70,10 +70,10 @@
 	  bindings))
 
 (defun %clcomp-macroexpand-let (form env)
-  (cons (list 'let (%clcomp-macroexpand-let-bindings (second form) env))
-	(mapcar (lambda (f)
-		  (clcomp-macroexpand f env))
-		(cddr form))))
+  (list (first form) (%clcomp-macroexpand-let-bindings (second form) env)
+	(cons 'progn (mapcar (lambda (f)
+			       (clcomp-macroexpand f env))
+			     (cddr form)))))
 
 (defun %clcomp-macroexpand-block (form env)
   (let ((tagbody-symbol (block-to-label-name env (second form)))
@@ -111,8 +111,7 @@
   (let* ((macro-fun (gethash (first macro-form) *macros*))
 	 (expanded (funcall macro-fun macro-form)))
     (if (consp expanded)
-	(mapcar (lambda (f)
-		  (clcomp-macroexpand f env)) expanded)
+	(clcomp-macroexpand expanded env)
 	expanded)))
 
 ;; FIXME, %rt-defun ?!?!
@@ -144,7 +143,7 @@
 
 (defun clcomp-macroexpand (form &optional env)
   (unless env
-    (setf env (make-env :blocks (make-hash-table :test 'equalp))))
+    (setf env (make-macros-env :blocks (make-hash-table :test 'equalp))))
   (if (atom form)
       form
       (let ((first (first form)))
@@ -152,7 +151,8 @@
 	  (if macro-fun
 	      (%clcomp-macroexpand form env)
 	      (case first
-		(let (%clcomp-macroexpand-let form env))
+		;; FIXME, transform let* to let
+		((let let*) (%clcomp-macroexpand-let form env))
 		(block (%clcomp-macroexpand-block form env))
 		(return-from (%clcomp-macroexpand-return-from form env))
 		(progn (%clcomp-macroexpand-progn form env))
@@ -161,3 +161,9 @@
 		(lambda (%clcomp-macroexpand-lambda form env))
 		(setf (%clcomp-macroexpand-setf form env))
 		(otherwise (%clcomp-macroexpand-all form env))))))))
+
+
+
+
+
+
