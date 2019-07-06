@@ -24,3 +24,12 @@
   (inst :add :RSP 8)
   (inst :pop :R15)
   (inst :mov :RBX :RAX))
+
+(define-vop null (:res register) ((arg :register))
+  (inst :cmp arg1 *nil*)
+  (inst :jump-fixup :je :less)
+  (inst :mov res *nil*)
+  (inst :jump-fixup :jmp :end)
+  (inst :label :less)
+  (inst :mov res *t*)
+  (inst :label :end)))

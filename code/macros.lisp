@@ -20,13 +20,14 @@
 (setf (gethash 'dotimes *macros*) 'macro-dotimes)
 
 
+;; fixme, use endp for testing istead of null
 (defun macro-dolist (form)
   (let ((olist (gensym "LIST-"))
 	(list-cdr (gensym "LIST-CDR"))
 	(tag1 (gensym "TAG1-"))
 	(vsym (first (second form))))
     (list 'block nil
-	  (list 'let* (list (list olist (second (second form)))
+	  (list 'let (list (list olist (second (second form)))
 			    (list list-cdr olist)
 			    (list vsym (list 'car list-cdr)))
 		(list 'tagbody tag1
@@ -134,7 +135,7 @@
 	(what (third form)))
     (if (symbolp where)
 	(list 'setq where (clcomp-macroexpand what env))
-	(let* ((accessor (first where)))
+	(let ((accessor (first where)))
 	  (cond
 	    ((eq accessor 'car)
 	     (list '%setf-car (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
@@ -152,7 +153,7 @@
 	      (%clcomp-macroexpand form env)
 	      (case first
 		;; FIXME, transform let* to let
-		((let let*) (%clcomp-macroexpand-let form env))
+		((let let) (%clcomp-macroexpand-let form env))
 		(block (%clcomp-macroexpand-block form env))
 		(return-from (%clcomp-macroexpand-return-from form env))
 		(progn (%clcomp-macroexpand-progn form env))
@@ -161,9 +162,3 @@
 		(lambda (%clcomp-macroexpand-lambda form env))
 		(setf (%clcomp-macroexpand-setf form env))
 		(otherwise (%clcomp-macroexpand-all form env))))))))
-
-
-
-
-
-

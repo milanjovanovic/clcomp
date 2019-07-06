@@ -35,5 +35,30 @@
 		  (list 1 2 3)))))
 
 
+(defun t3 ()
+  (=  1 (funcall (eval (clcomp-macroexpand
+		     (lambda ()
+		      (block foo
+			(tagbody bla
+			   (tagbody
+			      (go bla)
+			    bla
+			      (return-from foo 1))))))))))
+
+(defun t4 ()
+  (=  2 (funcall (eval (clcomp-macroexpand
+			(lambda ()
+			  (block foo
+			    (block foo
+			      (tagbody bla
+				 (tagbody
+				    (go bla)
+				  bla
+				    (return-from foo 1))))
+			    2)))))))
+
+
 (defun run-macros-tests ()
-  (and (t1) (t2)))
+  (or
+   (and (t1) (t2) (t3) (t4))
+   (error "Failed tests !!!")))
