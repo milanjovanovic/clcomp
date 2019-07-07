@@ -454,7 +454,7 @@
 		    (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
 		    (setf (ldb *modrm.mod.byte* modrm) #b10))
 		   (t (error "Bad displacement")))
-	     (if (or scale index)
+	     (if (or scale index (rsp-or-r12 base))
 		 (progn
 		   (setf (ldb *modrm.rm.byte* modrm) #b100)
 		   (destructuring-bind (rex sib) (encode-sib rex 0 addr-operand)

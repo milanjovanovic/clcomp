@@ -35,6 +35,10 @@
    (list (make-instruction :mov :RBP (@ :RSP)) '(#x48 #x8b #x2c #x24))
    (list (make-instruction :MOV :RAX (@ nil :RBP 2 nil)) '(#x48 #x8b #x04 #x6d #x00 #x00 #x00 #x00))
    (list (make-instruction :MOV :RAX (@ :RBP :RCX nil nil)) '(#x48 #x8b #x44 #x0d #x00))
+   (list (make-instruction :MOV :RAX (@ :RSP)) '(#x48 #x8b #x04 #x24))
+   (list (make-instruction :MOV :RAX (@ :R12)) '(#x49 #x8b #x04 #x24))
+   (list (make-instruction :MOV :RAX (@ :R12 nil nil -2)) '(#x49 #x8b #x44 #x24 #xfe))
+   
    
    ;; LEA
    (list (make-instruction :lea :RAX (@ :RCX nil nil nil)) '(#x48 #x8D #x01))
