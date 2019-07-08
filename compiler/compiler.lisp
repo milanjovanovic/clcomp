@@ -243,8 +243,8 @@
       (setf test-storage (make-reg-storage :register *tmp-reg*)))
     (emit-ir-assembly translator
 		      (list
-		       (list :cmp (storage-operand test-storage) *t*)
-		       (list :jump-fixup :je (fourth ir))))))
+		       (list :cmp (storage-operand test-storage) *nil*)
+		       (list :jump-fixup :jne (fourth ir))))))
 
 (defun translate-go (ir translator)
   (emit-ir-assembly translator
