@@ -33,6 +33,9 @@
 			  (progn
 			    ,@body)))))
 
+(defun make-vop-label (name)
+  (gensym name))
+
 (defun get-vop-code (vop  args)
   (let ((*segment-instructions* nil))
     (reverse

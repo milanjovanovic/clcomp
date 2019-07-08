@@ -610,8 +610,7 @@
     compilation-unit))
 
 (defun clcomp-compile (exp)
-  (let* ((macroexpanded-form (clcomp-macroexpand exp))
-	 (expanded (expand macroexpanded-form))
+  (let* ((expanded (clcomp-macroexpand exp))
 	 (nodes (create-node expanded))
 	 (ir (make-ir nodes))
 	 (ir-blocks (component-blocks-phase ir))
