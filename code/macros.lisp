@@ -103,10 +103,12 @@
 	  form))
 
 (defun %clcomp-macroexpand-progn (form env)
-  (cons 'progn
-	(mapcar (lambda (f)
-		       (clcomp-macroexpand f env))
-		(cdr form))))
+  (if (= 1 (length form))
+      (list 'progn nil)
+      (cons 'progn
+	    (mapcar (lambda (f)
+		      (clcomp-macroexpand f env))
+		    (cdr form)))))
 
 (defun %clcomp-macroexpand (macro-form env)
   (let* ((macro-fun (gethash (first macro-form) *macros*))

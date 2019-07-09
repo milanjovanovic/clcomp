@@ -147,6 +147,11 @@
 (define-inst-template :jmp (:imm32) ()
 		      nil nil #xe9 nil)
 
+;;; fixnme, look at assembling and jmm* instruction size
+#+nil
+(define-inst-template :jmp (:imm8) ()
+		      nil nil #xeb nil)
+
 
 (define-inst-template :jl (:imm32) ()
 		      #x0f nil #x8C nil)
@@ -170,6 +175,9 @@
 
 (define-inst-template :jnbe (:imm32) ()
 		      #x0f nil #x87 nil)
+
+
+
 
 (define-inst-template :ret () ()
 		      nil nil #xc3 nil)

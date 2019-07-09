@@ -21,7 +21,8 @@
 	       (if label-offset
 		   (push (list (second inst)
 			       (if (eq direction :normal)
-				   (- label-offset)
+				   ;; when we jump backward add jmp instruction size to jump offset
+				   (- (+ label-offset (jump-instruction-size inst)))
 				   label-offset))
 			 new-instructions)
 		   (push inst new-instructions))
