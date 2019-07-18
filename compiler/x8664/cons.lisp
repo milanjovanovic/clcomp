@@ -35,3 +35,15 @@
     (inst :mov res *nil*)
     (inst :label done-label)))
 
+(define-vop null (res :register) ((arg :register))
+  (let ((eq-label (make-vop-label "eq"))
+	(end-label (make-vop-label "end")))
+    (inst :cmp arg *nil*)
+    (inst :jump-fixup :je eq-label)
+    (inst :mov res *nil*)
+    (inst :jump-fixup :jmp end-label)
+    (inst :label eq-label)
+    (inst :mov res *t*)
+    (inst :label end-label)))
+
+

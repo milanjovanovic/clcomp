@@ -1,6 +1,6 @@
 (in-package :clcomp)
 
-#+nil
+
 (define-vop c_print_lisp (res :register) ((arg :register))
   (when (not (eq arg :RDI))
     (inst :mov :RDI arg))
@@ -25,14 +25,3 @@
    (inst :add :RSP 8)
    (inst :pop :R15)
    (inst :mov :RBX :RAX))
-
-(define-vop null (res :register) ((arg :register))
-  (let ((eq-label (make-vop-label "eq"))
-	(end-label (make-vop-label "end")))
-   (inst :cmp arg *nil*)
-   (inst :jump-fixup :je eq-label)
-   (inst :mov res *nil*)
-   (inst :jump-fixup :jmp end-label)
-   (inst :label eq-label)
-   (inst :mov res *t*)
-   (inst :label end-label)))

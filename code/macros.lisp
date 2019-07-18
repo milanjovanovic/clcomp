@@ -46,6 +46,28 @@
 (setf (gethash 'return *macros*) 'macro-return)
 
 
+(defun macro-or (form)
+  (if (= (length form) 2)
+      (second form)
+   (let ((f (gensym "F-")))
+     (list 'let (list (list f (second form)))
+	   (list 'if f f (cons 'or (cddr form)))))))
+(setf (gethash 'or *macros*) 'macro-or)
+
+
+(defun macro-and (form)
+  (if (= 2 (length form))
+      (second form)
+      (cons 'and (cons (list 'if (second form) (third form))
+		       (cdddr form)))))
+(setf (gethash 'and *macros*) 'macro-and)
+
+
+;;; this handle simple form of defstrict
+(defun macro-defstruct (form)
+  form)
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defstruct macros-env blocks)
