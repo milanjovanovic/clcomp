@@ -23,6 +23,7 @@
 ;;; ir mnemonics :
 ;;; LAMBDA-ENTRY
 ;;; ARG-CHECK
+;;; LISTIFY-ARGS FIXME, not implemented yet
 ;;; RECEIVE-PARAM
 ;;; PARAMS-COUNT
 ;;; LOAD-PARAM
@@ -34,7 +35,8 @@
 ;;; LAMBDA-EXIT
 
 
-;;;;  STACK
+;;;;  STACK ;;;;
+;;;;
 ;;;; CSRN - calle saved registers
 ;;;; L1 - local variable
 ;;;; ARGN - function arguments with no register
@@ -104,7 +106,6 @@
 
 (defun calle-save-registers ()
   (let (assembly)
-    (push (list :sub :RSP 8) assembly)
     (dolist (reg *preserved-regs*)
       (push (list :push reg) assembly))
     assembly))
@@ -113,22 +114,28 @@
   (let (assembly)
     (dolist (reg (reverse *preserved-regs*))
       (push (list :pop reg) assembly))
-    (push (list :add :RSP 8) assembly)
     assembly))
 
 (defun maybe-allocate-stack-space (translator allocation)
-  (when (> (allocation-stack allocation) 0)
-    (emit-ir-assembly translator
-		      (list
-		       (list :sub *stack-pointer-reg*
-			     (* *word-size* (allocation-stack allocation)))))))
+  (let ((stack-size (allocation-stack allocation)))
+   (when (> (allocation-stack allocation) 0)
+     (emit-ir-assembly translator
+		       (list
+			(list :sub *stack-pointer-reg*
+			      (* *word-size* (if (oddp stack-size)
+						 (+ 1 stack-size)
+						 stack-size))))))))
 
 (defun maybe-deallocate-stack-space (translator allocation)
-  (when (> (allocation-stack allocation) 0)
-    (emit-ir-assembly translator
-		      (list
-		       (list :add *stack-pointer-reg*
-			     (* *word-size* (allocation-stack allocation)))))))
+  (let ((stack-size (allocation-stack allocation)))
+   (when (> (allocation-stack allocation) 0)
+     (emit-ir-assembly translator
+		       (list
+			(list :add *stack-pointer-reg*
+			      ;; 16 byte stack alligments
+			      (* *word-size* (if (oddp stack-size)
+						 (+ 1 stack-size)
+						 stack-size))))))))
 
 (defun translate-lambda-entry (translator allocation)
   (emit-ir-assembly translator
@@ -357,7 +364,7 @@
 
 (defun make-receive-param-storage (param-number)
   (if (> param-number (length *fun-arguments-regs*))
-      ;; we already did push RBP to stack and with return addres that's 2 slots
+      ;; we already did push RBP to stack and with return addres that's 2 slots so arguments are RBP+16, RBP+24 ...
       (make-memory-storage :base *base-pointer-reg* :offset (* *word-size* (+ 2 (- param-number (length *fun-arguments-regs*) 1))))
       (make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*))))
 
@@ -437,6 +444,12 @@
 (defstruct rip-location rip byte-offset)
 (defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets byte-code) 
 (defstruct compilation-unit compile-component start fixups code)
+
+(defun get-compilation-unit-code-size (compilation-unit)
+  (reduce (lambda (s c)
+	    (+ s (length c)))
+	  (compilation-unit-code compilation-unit)
+	  :initial-value 0))
 
 (defun get-compilation-unit-code-buffer (compilation-unit)
   (let* ((code (compilation-unit-code compilation-unit))
@@ -609,13 +622,16 @@
 	  (get-all-components-rips start-component))
     compilation-unit))
 
-(defun clcomp-compile (exp)
+(defun clcomp-compile (name exp)
   (let* ((expanded (clcomp-macroexpand exp))
 	 (nodes (create-node expanded))
 	 (ir (make-ir nodes))
 	 (ir-blocks (component-blocks-phase ir))
 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
+    (when name
+      (rt-define-function name assembled-compile-unit))
+    (rt-add-to-compilation assembled-compile-unit)
     assembled-compile-unit))
 
 
