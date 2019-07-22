@@ -141,7 +141,7 @@
 
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)
-  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%rt-defun (second form)))
+  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun (second form)))
 	(list '%defun (second form)
 	      (clcomp-macroexpand (list 'lambda (third form) (fourth form)) env))))
 

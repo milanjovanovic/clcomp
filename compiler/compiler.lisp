@@ -182,7 +182,7 @@
   (emit-ir-assembly translator
 		    (list
 		     (list :rip-relative-fixup :mov *fun-address-reg* (list 'function-address (fourth ir)))
-		     (list :call (@ *fun-address-reg*))))
+		     (list :call *fun-address-reg*)))
   (let ((arguments-count (nth 4 ir)))
     (when (> arguments-count (length *fun-arguments-regs*))
       (emit-ir-assembly translator
@@ -561,6 +561,7 @@
       (let ((code nil)
 	    (current-size 0))
 	(dolist (inst (compile-component-byte-code component))
+	  ;; FIXME, check this again
 	  (incf current-size (instruction-size inst))
 	  (cond ((eq (first inst) :rip-relative-fixup)
 		 (let* ((mnemonic (second inst))
@@ -622,6 +623,9 @@
 	  (get-all-components-rips start-component))
     compilation-unit))
 
+(defun %compiler-defun (f)
+  (declare (ignore f)))
+
 (defun clcomp-compile (name exp)
   (let* ((expanded (clcomp-macroexpand exp))
 	 (nodes (create-node expanded))
@@ -629,9 +633,9 @@
 	 (ir-blocks (component-blocks-phase ir))
 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
-    (when name
-      (rt-define-function name assembled-compile-unit))
     (rt-add-to-compilation assembled-compile-unit)
+    (when name
+      (rt-%defun name assembled-compile-unit))
     assembled-compile-unit))
 
 

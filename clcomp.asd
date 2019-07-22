@@ -23,4 +23,6 @@
 	       (:file "code/macros")
 	       (:file "code/macros-tests")
 	       (:file "runtime/rt")
-	       (:file "compiler/eval")))
+	       (:file "compiler/eval")
+	       (:file "compiler/fcomp")))
+

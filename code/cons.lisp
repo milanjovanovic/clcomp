@@ -14,14 +14,11 @@
   (car (cdr cons)))
 
 (defun caddr (cons)
-  (car (cdr (cdr list))))
+  (car (cdr (cdr cons))))
 
 (defun cadddr (cons)
   (car (cdr (cdr (cdr cons)))))
 
-
-(defun first (list)
-  (car cons))
 
 (defun first (list)
   (car list))
