@@ -39,7 +39,7 @@ void read_nm(char *file) {
 int64_t read_long(FILE *fp) {
   
   int64_t address = 0;
-  char buffer[8];
+  unsigned char buffer[8];
   fread(buffer, 1, 8, fp);
 
   address |= (int64_t) buffer[0] << 56;
