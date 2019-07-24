@@ -46,4 +46,16 @@
     (inst :mov res *t*)
     (inst :label end-label)))
 
+(define-vop listp (res :register) ((arg :register))
+  (let ((list-label (make-vop-label "is-list"))
+	(exit-label (make-vop-label "exit")))
+    (inst :lea *tmp-reg* (@ arg nil nil (- *list-tag*)))
+    (inst :test *tmp-reg* *list-tag*)
+    (inst :jump-fixup :je list-label)
+    (inst :mov res *nil*)
+    (inst :jump-fixup :jmp exit-label)
+    (inst :label list-label)
+    (inst :mov res *t*)
+    (inst :label exit-label)))
+
 

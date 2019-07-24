@@ -1,3 +1,11 @@
+(defun null (thing)
+  (null thing))
+
+(defun consp (thing)
+  (if (null thing)
+      nil
+      (listp thing)))
+
 (defun cons (car cdr)
   (cons car cdr))
 
@@ -19,6 +27,9 @@
 (defun cadddr (cons)
   (car (cdr (cdr (cdr cons)))))
 
+
+(defun listp (thing)
+  (listp thing))
 
 (defun first (list)
   (car list))
