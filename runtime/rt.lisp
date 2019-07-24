@@ -12,7 +12,7 @@
 
 (defun rt-%defun (name compilation-unit)
   ;; code loading will increase heap pointer
-  (setf (gethash name *rt-funs*) *compilation-start-addres*)
+  (setf (gethash name *rt-funs*) *compilation-start-address*)
   (setf *compilation-start-address* (+ *compilation-start-address* (get-compilation-unit-code-size compilation-unit))))
 
 ;; FIXME
@@ -52,10 +52,7 @@
       (dolist (c (immediate-as-byte-list *start-address* :imm64))
 	(write-byte c f))
       (dolist (buffer (nreverse code-buffers))
-	(format t "FOO: ~a~%" (apply #'concatenate 'string (mapcar #'byte-hex (coerce buffer 'list))))
-	(loop for b across buffer
-	      do
-		 (write-byte b f)))
+	(write-sequence buffer f))
       (rt-reset))))
 
 (defun rt-add-to-compilation (compilation-unit)

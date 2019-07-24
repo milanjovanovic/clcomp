@@ -54,6 +54,11 @@
 	   (list 'if f f (cons 'or (cddr form)))))))
 (setf (gethash 'or *macros*) 'macro-or)
 
+(defun macro-named-lambda (form)
+  (list 'lambda (third form)
+	(cons 'block (cons (second form) (list (fourth form))))))
+(setf (gethash 'named-lambda *macros*) 'macro-named-lambda)
+
 
 (defun macro-and (form)
   (if (= 2 (length form))
@@ -94,9 +99,11 @@
 
 (defun %clcomp-macroexpand-let (form env)
   (list (first form) (%clcomp-macroexpand-let-bindings (second form) env)
-	(cons 'progn (mapcar (lambda (f)
-			       (clcomp-macroexpand f env))
-			     (cddr form)))))
+	(if (> (length (cddr form)) 1)
+	 (cons 'progn (mapcar (lambda (f)
+				(clcomp-macroexpand f env))
+			      (cddr form)))
+	 (clcomp-macroexpand (first (cddr form)) env))))
 
 (defun %clcomp-macroexpand-block (form env)
   (let ((tagbody-symbol (block-to-label-name env (second form)))
@@ -143,15 +150,19 @@
 (defun %clcomp-macroexpand-defun (form env)
   (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun (second form)))
 	(list '%defun (second form)
-	      (clcomp-macroexpand (list 'lambda (third form) (fourth form)) env))))
+	      (clcomp-macroexpand (list 'named-lambda (second form)  (third form) (fourth form)) env))))
 
 (defun %clcomp-macroexpand-eval-when (form env)
   (list 'eval-when (second form)
-	(clcomp-macroexpand (cons 'progn (cddr form)) env)))
+	(if (> (length (cddr form)) 1)
+	    (clcomp-macroexpand (cons 'progn (cddr form)) env)
+	    (clcomp-macroexpand (first (cddr form)) env))))
 
 (defun %clcomp-macroexpand-lambda (form env)
   (list 'lambda (second form)
-	(clcomp-macroexpand (cons 'progn (cddr form)) env)))
+	(if (> (length (cddr form)) 1)
+	    (clcomp-macroexpand (cons 'progn (cddr form)) env)
+	    (clcomp-macroexpand (first (cddr form)) env))))
 
 ;; FIXME, implement setf macro expanders
 (defun %clcomp-macroexpand-setf (form env)
