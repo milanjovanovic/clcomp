@@ -150,7 +150,8 @@ void print_lisp_cons(lispobj obj) {
 }
 
 void print_lisp_array(lispobj obj) {
-  struct array *ar = (struct array *) obj;
+  
+  struct array *ar = (struct array *) untag_pointer(obj);
   lispobj size = ar->size;
   lispobj elements = ar->elements;
   int64_t array_size = untag_fixnum(size);

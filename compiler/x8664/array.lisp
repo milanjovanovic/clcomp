@@ -3,6 +3,7 @@
 (define-vop allocate-array (res :register) ((arg :register))
   (inst :mov *tmp-reg* (@ *heap-header-reg*))
   (inst :mov res *tmp-reg*)
+  (inst :shr arg *tag-size*)
   (inst :lea *tmp-reg* (@ *tmp-reg* arg *word-size* (* *word-size* *array-header-size*)))
   (inst :mov (@ *heap-header-reg*) *tmp-reg*)
   (inst :mov (@ res nil nil nil) *simple-array-tag*)
