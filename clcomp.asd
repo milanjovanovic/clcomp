@@ -13,6 +13,7 @@
 	       (:file "compiler/vops")
 	       (:file "compiler/x8664/cons")
 	       (:file "compiler/x8664/arith")
+	       (:file "compiler/x8664/array")
 	       (:file "compiler/x8664/call")
 	       (:file "compiler/x8664/char")
 	       (:file "compiler/transformations")

@@ -58,6 +58,17 @@ int is_fun(lispobj obj) {
   return (obj & MASK) == FUNCTION_TAG ? 1 : 0;
 }
 
+int is_simple_array(lispobj obj) {
+
+  if(!is_pointer(obj)) {
+    return 0;
+  }
+
+  lispobj *tag = (lispobj *) untag_pointer(obj);
+
+  return (*tag & 0xFF) == SIMPLE_ARRAY_TAG ? 1 : 0;
+}
+
 int is_string(lispobj obj) {
   if(!is_pointer(obj)) {
     return 0;
@@ -85,6 +96,8 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
     return -1;
   }
 }
+
+
 
 
 void print_lisp_cons_cdr(lispobj obj) {
@@ -136,6 +149,24 @@ void print_lisp_cons(lispobj obj) {
   }
 }
 
+void print_lisp_array(lispobj obj) {
+  struct array *ar = (struct array *) obj;
+  lispobj size = ar->size;
+  lispobj elements = ar->elements;
+  int64_t array_size = untag_fixnum(size);
+  printf("#( %ld )", (long) array_size);
+}
+
+
+void print_lisp_pointer(lispobj obj) {
+  if (is_simple_array(obj)) {
+    print_lisp_array(obj);
+  } else {
+    printf("UNKNOWN POINTER");
+  }
+  
+}
+
 void print_lisp(lispobj obj) {
 
   if(obj == LISP_NIL) {
@@ -165,7 +196,8 @@ void print_lisp(lispobj obj) {
       printf("FUNCTION\n");
       break;
     case POINTER :
-      printf("POINTER\n");
+      print_lisp_pointer(obj);
+      break;
     default :
       printf("UNKNOWN PRINT: %d", type);
       break;

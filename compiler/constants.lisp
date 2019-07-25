@@ -11,7 +11,9 @@
 (defparameter *function-tag* 3)
 (defparameter *char-tag* 4)
 (defparameter *pointer-tag* 7)
-(defparameter *extended-tag* 1)
+
+
+(defparameter *simple-array-tag* 1)
 
 ;;; tag 5 and 6 are free
 
@@ -23,6 +25,9 @@
 
 (defparameter *most-negative-fixnum* (- (expt 2 (- (* *word-size* 8)
 						   (+ 1 *tag-size*)))))
+
+
+(defparameter *array-header-size* 3) ;; look at lispo.h
 
 (defun fixnumize (num)
   (if (and (> num *most-negative-fixnum*)

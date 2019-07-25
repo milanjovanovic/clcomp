@@ -40,20 +40,22 @@
 
 (defun print-hex-code (buffers)
   (with-output-to-string (s)
-    (dolist (buffer (nreverse buffers))
+    (dolist (buffer (reverse buffers))
       (format s "~a" (apply #'concatenate 'string (mapcar #'byte-hex (coerce buffer 'list)))))
     s))
 
 (defun rt-dump-binary (file)
   (let (code-buffers)
-   (dolist (comp-unit (nreverse (compilation-units *current-compilation*)))
-     (push (resolve-fixups comp-unit) code-buffers))
+    (dolist (comp-unit (reverse (compilation-units *current-compilation*)))
+      (push (resolve-fixups comp-unit) code-buffers))
     (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
       (dolist (c (immediate-as-byte-list *start-address* :imm64))
 	(write-byte c f))
-      (dolist (buffer (nreverse code-buffers))
-	(write-sequence buffer f))
-      (rt-reset))))
+      (when *debug*
+	(format t "~a" (print-hex-code code-buffers)))
+      (dolist (buffer (reverse code-buffers))
+	(write-sequence buffer f)))
+    (rt-reset)))
 
 (defun rt-add-to-compilation (compilation-unit)
   (setf (compilation-units *current-compilation*)
@@ -70,3 +72,4 @@
   (setf *compilation-start-address* *runtime-heap-start*)
   (setf *start-address* *runtime-heap-start*)
   (setf *rt-funs* (make-hash-table)))
+

@@ -176,7 +176,19 @@
 (define-inst-template :jnbe (:imm32) ()
 		      #x0f nil #x87 nil)
 
+(define-inst-template :jrcxz (:imm8) ()
+		      #xE3 nil nil nil)
 
+;; shift
+
+(define-inst-template :shl (:reg64 :imm8) ()
+		      nil #x48 #xC1 #x20)
+
+(define-inst-template :shr (:reg64 :imm8) ()
+		      nil #x48 #xC1 #x28)
+
+(define-inst-template :sar (:reg64 :imm8) ()
+		      nil #x48 #xC1 #x38)
 
 
 (define-inst-template :ret () ()
@@ -184,3 +196,4 @@
 
 (define-inst-template :clc () ()
 		      nil nil #xf8 nil)
+

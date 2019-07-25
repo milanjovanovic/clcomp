@@ -19,8 +19,6 @@ typedef uintptr_t lispobj;
 #define CHAR_TAG 0x4 // #b100
 #define POINTER_TAG 0x7 // #b111
 
-#define EXTENDED_TAG 0x1 // #b001, this tag is first word in POINTER objects
-
 // 0x5  free 
 // 0x6  free
 
@@ -37,13 +35,15 @@ struct cons {
 #define CAR_OFFSET -2
 #define CDR_OFFSET 6
 
+#define SIMPLE_ARRAY_TAG 0x1
+
 struct array {
   lispobj tag;
   lispobj size;
   lispobj elements;
 };
 
-#define CHAR_ARRAY_TAG 0x1
+#define CHAR_ARRAY_TAG 0x2
 
 struct symbol {
   lispobj tag;
