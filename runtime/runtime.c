@@ -153,9 +153,20 @@ void print_lisp_array(lispobj obj) {
   
   struct array *ar = (struct array *) untag_pointer(obj);
   lispobj size = ar->size;
-  lispobj elements = ar->elements;
   int64_t array_size = untag_fixnum(size);
-  printf("#( %ld )", (long) array_size);
+
+  lispobj *first = &ar->elements;
+
+  printf("#(");
+
+  for (long index = 0; index < array_size; index++) {
+    print_lisp(*(first + index));
+    if (index + 1 < array_size)
+      printf(" ");
+  }
+
+  printf(")");
+
 }
 
 
