@@ -245,8 +245,7 @@
 	   (eq storage-type 'stack-storage)
 	   (eq storage-type 'memory-storage))
       (emit-ir-assembly translator
-			(list
-			 (list :mov (make-reg-storage :register *tmp-reg*) storage)))
+			(asm-storage-move (make-reg-storage :register *tmp-reg*) storage ))
       (setf test-storage (make-reg-storage :register *tmp-reg*)))
     (emit-ir-assembly translator
 		      (list

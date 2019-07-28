@@ -52,7 +52,7 @@
       (dolist (c (immediate-as-byte-list *start-address* :imm64))
 	(write-byte c f))
       (when *debug*
-	(format t "~a" (print-hex-code code-buffers)))
+	(format t "~a~%" (print-hex-code code-buffers)))
       (dolist (buffer (reverse code-buffers))
 	(write-sequence buffer f)))
     (rt-reset)))
@@ -72,4 +72,18 @@
   (setf *compilation-start-address* *runtime-heap-start*)
   (setf *start-address* *runtime-heap-start*)
   (setf *rt-funs* (make-hash-table)))
+
+
+(defun test1 (form)
+  (clcomp-compile-file "/Users/milan/projects/clcomp.github/code/array.lisp")
+  (clcomp-compile-file "/Users/milan/projects/clcomp.github/code/arith.lisp")
+  (set-start-address)
+  (clcomp-compile nil form)
+  (maphash (lambda (k v)
+	     (format t "~a -> ~x~%" k v))
+	   *rt-funs*)
+  (rt-dump-binary "/tmp/core"))
+
+
+
 

@@ -3,7 +3,8 @@
 	(index 0))
     (dolist (e initial-content)
       (setf-aref array index e)
-      (setf index (+ 1 index)))))
+      (setf index (+ 1 index)))
+    array))
 
 (defun allocate-array (size)
   (allocate-array size))
