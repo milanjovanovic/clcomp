@@ -8,7 +8,7 @@
 	(tag1 (gensym "TAG1-"))
 	(vsym (first (second form))))
     (list 'block nil
-	  (list 'let (list (list vsym 0)
+	  (list 'let* (list (list vsym 0)
 			   (list limit (second (second form))))
 		(list 'tagbody tag1
 		      (list 'progn
@@ -27,7 +27,7 @@
 	(tag1 (gensym "TAG1-"))
 	(vsym (first (second form))))
     (list 'block nil
-	  (list 'let (list (list olist (second (second form)))
+	  (list 'let* (list (list olist (second (second form)))
 			    (list list-cdr olist)
 			    (list vsym (list 'car list-cdr)))
 		(list 'tagbody tag1
@@ -177,6 +177,10 @@
 	    ((eq accessor 'cdr)
 	     (list '%setf-cdr (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env))))))))
 
+(defun clcomp-macroexpand-1 (macro-form)
+  (let* ((macro-fun (gethash (first macro-form) *macros*)))
+    (funcall macro-fun macro-form)))
+
 (defun clcomp-macroexpand (form &optional env)
   (unless env
     (setf env (make-macros-env :blocks (make-hash-table :test 'equalp))))
@@ -188,7 +192,7 @@
 	      (%clcomp-macroexpand form env)
 	      (case first
 		;; FIXME, transform let* to let
-		((let let) (%clcomp-macroexpand-let form env))
+		((let let*) (%clcomp-macroexpand-let form env))
 		(block (%clcomp-macroexpand-block form env))
 		(return-from (%clcomp-macroexpand-return-from form env))
 		(progn (%clcomp-macroexpand-progn form env))

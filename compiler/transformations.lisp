@@ -88,7 +88,9 @@
 	       (create-lambda-node form))
 	      ((eq first 'if)
 	       (create-if-node form))
-	      ((eq first 'let)
+	      ;; FIXME, currently let behave as let*
+	      ((or (eq first 'let)
+		   (eq first 'let*))
 	       (create-let-node form))
 	      ((eq first 'progn)
 	       (create-progn-node form))
