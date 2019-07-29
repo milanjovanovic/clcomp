@@ -554,6 +554,15 @@
 (defun get-rip-offset (component rip-name)
   (second (assoc rip-name (compile-component-rip-offsets component))))
 
+(defun calculate-rip-offset (current-code-size rip-name component)
+  ;; add current code size + all rip offsets - (actual rip offset - 1)
+  ;; most distant rip is on offset 1
+  (let ((rip-offset (get-rip-offset component rip-name))
+	(rips-size (length (compile-component-rip-offsets component))))
+    (- (- current-code-size
+	  (- (* *word-size* (- rips-size (- rip-offset 1))))))))
+
+;;; Actually assemble loading data from RIP relative address
 (defun resolve-component-rips (component)
   (let ((rip-offsets (compile-component-rip-offsets component)))
     (when rip-offsets
@@ -565,9 +574,10 @@
 	  (cond ((eq (first inst) :rip-relative-fixup)
 		 (let* ((mnemonic (second inst))
 			(to (third inst))
-			(rip-offset-name (second (fourth inst)))
-			(rip (list *instruction-pointer-register* nil nil (- (+ current-size
-										(* *word-size* (get-rip-offset component rip-offset-name))))))
+			(rip-name (second (fourth inst)))
+			(rip (list *instruction-pointer-register* nil nil (calculate-rip-offset current-size
+												rip-name
+												component)))
 			(instruction (list mnemonic to rip)))
 		   (push (assemble-instruction instruction) code)
 		   (when *debug*
