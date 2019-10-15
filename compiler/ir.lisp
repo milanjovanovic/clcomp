@@ -67,6 +67,10 @@
     (param-location (param-location-location location))
     (otherwise (error "Unknown location type"))))
 
+(defun register-location-p (location)
+  (and (member (type-of location) '(tmp-location var-location ret-location))
+       t))
+
 ;;; environments
 ;;; lexical vars environments
 
@@ -372,8 +376,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; IR blocks
-
-(defstruct ir-block num ir from-blocks to-blocks used-locations)
+(defstruct ir-block num ir from-blocks to-blocks used-locations use def in out)
 
 (defun new-blockp (inst counter)
   (or (= 0 counter)
@@ -450,14 +453,49 @@
   blocks)
 
 ;;; remove blocks to which no blocks connect to
+(defun any-of-blocks-exist (blocks-indexes block-map)
+  (dolist (block-index blocks-indexes)
+    (when
+	(or 
+	 (zerop block-index)
+	 (gethash block-index block-map))
+      (return-from any-of-blocks-exist t))))
+
+(defun remove-dead-blocks-2 (blocks block-map)
+  "Second run, we already removed fake blocks, now remove those connected only to them"
+  ;; FIXME
+  ;; not great solution but works for now
+  (let ((live-blocks nil))
+    (dolist (block blocks)
+      (if (or (zerop (ir-block-num block))
+		(let ((from-blocks-indexes (ir-block-from-blocks block)))
+		  (and from-blocks-indexes
+		       (any-of-blocks-exist from-blocks-indexes block-map))))
+	  (push block live-blocks)
+	  (remhash (ir-block-num block) block-map)))
+    (reverse live-blocks)))
+
+(defun remove-references-from-dead-blocks (blocks block-map)
+  (dolist (block blocks)
+    (let ((from (ir-block-from-blocks block))
+	  (new-from nil))
+      (dolist (i from)
+	(when (gethash i block-map)
+	  (push i new-from)))
+      (setf (ir-block-from-blocks block) new-from)))
+  blocks)
+
 (defun remove-dead-blocks (blocks)
-  (let (live-blocks)
+  (let ((live-blocks nil)
+	(block-map (make-hash-table)))
     (dotimes (index (length blocks))
       (let ((block (nth index blocks)))
 	(when (or (zerop index)
 		  (ir-block-from-blocks block))
-	  (push block live-blocks))))
-    (reverse live-blocks)))
+	  (push block live-blocks)
+	  (setf (gethash index block-map) block))))
+    (let ((live-blocks (remove-dead-blocks-2 (reverse live-blocks) block-map)))
+      (remove-references-from-dead-blocks live-blocks block-map))))
 
 (defun get-used-locations (ir-block)
   (let (locations)
@@ -648,3 +686,37 @@
 			   new-code))))
 	    (push ir new-code)))
       (reverse new-code))))
+
+
+;;;;;;;;;;;;;;;;;
+
+(defun check-location (location)
+  (if (register-location-p location)
+      (list location)
+      nil))
+
+(defun check-locations (locations)
+  (let ((goodl (remove-if-not #'check-location locations)))
+    (if (plusp (length goodl))
+	goodl
+	nil)))
+
+(defun get-ir-locations (ir)
+  "Returns list of list of defined locations and list of used locations"
+  (let ((mnemonic (first ir)))
+    (case mnemonic
+      (receive-param (list nil (check-location (second ir))))
+      (load-param (list nil (check-location (get-load-from ir))))
+      (load (list (check-location (get-load-to ir))
+		  (check-location (get-load-from ir))))
+      (load-call (list (check-location (second ir)) nil))
+      (if (list nil (check-location (second ir))))
+      (vop (list (check-location (third ir))
+		 (check-locations (get-ir-vop-args ir))))
+      (otherwise nil))))
+
+(defun make-block-by-index-map (blocks)
+  (let ((map (make-hash-table)))
+    (dolist (block blocks)
+      (setf (gethash (ir-block-num block) map) block))
+    map))

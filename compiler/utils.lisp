@@ -111,3 +111,20 @@
   (dotimes (i size)
     (print (list (+ i start) (- size i)))
     (setf (aref byte-object (+ i start)) (logbitp (- size i 1) what))))
+
+
+(defun hash-keys (hash)
+  (let (keys)
+    (maphash (lambda (k v)
+	       (declare (ignore v))
+	       (push k keys))
+	     hash)
+    keys))
+
+(defun hash-values (hash)
+  (let (vals)
+    (maphash (lambda (k v)
+	       (declare (ignore k))
+	       (push v vals))
+	     hash)
+    vals))

@@ -1,6 +1,6 @@
 (in-package #:clcomp)
 
-(declaim (optimize (speed 0) (debug 3) (safety 3)))
+(declaim (optimize (speed 0) (debug 3)))
 
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *stack-pointer-reg* :RSP)
@@ -16,6 +16,10 @@
 
 
 (defparameter *debug* nil)
+
+(defparameter *c* nil)
+(defparameter *all* nil)
+(defparameter *ir* nil)
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
@@ -300,57 +304,356 @@
   (let ((translator (make-translator)))
     (dolist (blok (ir-component-code-blocks ir-component))
       (dolist (ir (ir-block-ir blok))
-	(to-asm ir translator allocation)))
+	(let ((ir-instruction (cdr ir))
+	      (index (car ir)))
+	  (when *debug*
+	    (format t "~% ********* INDEX: ~a~%" index))
+	  (to-asm ir-instruction translator allocation))))
     translator))
 
 ;;; linear scan register allocation
+;;; LIFETIME ANALYSIS
 
-(defstruct intervals map)
-(defun get-sorted-intervals (intervals)
-  (let (res)
-    (maphash (lambda (k v)
-	       (push (list k v) res))
-	     (intervals-map intervals))
-    (sort res #'< :key (lambda (e) (first (second e))))))
+(defun register-locations-used (block locations)
+  (dolist (loc locations)
+    (let ((loc-sym (location-symbol loc)))
+      (setf (ir-block-use block)
+	    (adjoin loc-sym (ir-block-use block))))))
 
-(defun add-interval (intervals location interval-num)
-  (typecase location
-    ((or tmp-location var-location ret-location)
-     (let* ((var-map (intervals-map intervals))
-	    (var-interval (gethash (location-symbol location) var-map)))
-       (if var-interval
-	   (setf (cdr var-interval) interval-num)
-	   (setf (gethash (location-symbol location) var-map) (cons interval-num interval-num)))))))
+(defun maybe-kill-used (block defined)
+  (let ((defined (mapcar #'location-symbol defined)))
+    (setf (ir-block-def block)
+	  (union defined (ir-block-def block)))
+    (setf (ir-block-use block)
+	  (set-difference (ir-block-use block) defined))))
 
-(defun create-ir-intervals (ir-component)
-  (let ((intervals (make-intervals :map (make-hash-table)))
-	(index 1))
-    (dolist (blok (ir-component-code-blocks ir-component))
-      (dolist (ir (ir-block-ir blok))
-	(let ((mnemonic (first ir)))
-	  (case mnemonic
-	    (receive-param (add-interval intervals (second ir) 1))
-	    (load-param (add-interval intervals (get-load-from ir) index))
-	    (load (add-interval intervals (get-load-from ir) index)
-	     (add-interval intervals (get-load-to ir) index))
-	    (load-call
-	     (add-interval intervals (second ir) index))
-	    (if (add-interval intervals (second ir) index))
-	    (vop
-	     (add-interval intervals (third ir) index)
-	     (mapcar (lambda (v)
-		       (add-interval intervals v index))
-		     (get-ir-vop-args ir)) )
-	    (otherwise nil)))
-	(incf index)))
-    intervals))
+(defun finish-block (block)
+  (setf (ir-block-in block)
+	(union (ir-block-use block)
+	       (set-difference (ir-block-out block)
+			       (ir-block-def block)))))
 
-(defstruct allocation active map stack registers-available)
+(defun analyse-block-lifetime (block)
+  (dolist (ir-cons (reverse (ir-block-ir block)))
+    (let ((locations (get-ir-locations (cdr ir-cons))))
+      (when locations
+	(destructuring-bind (defined used) locations
+	  (when defined
+	    (maybe-kill-used block defined))
+	  (when used
+	    (register-locations-used block used))))))
+  (finish-block block))
+
+(defun lifetime-trace-block (block indexed-blocks)
+  (let ((from-blocks (ir-block-from-blocks block)))
+    (dolist (fb-index from-blocks)
+      (let ((fb (gethash fb-index indexed-blocks)))
+	(if (null fb)
+	    (error "fb is null !!")
+	    (let* ((fb-out (ir-block-out fb))
+		   (new-out (union fb-out (ir-block-in block))))
+	      (when (set-difference new-out fb-out)
+		(setf (ir-block-out fb) new-out)
+		(finish-block fb)
+		(lifetime-trace-block fb indexed-blocks))))))))
+
+(defun lifetime-trace-analysis (ir-component indexed-blocks)
+  (let ((blocks (reverse (ir-component-code-blocks ir-component))))
+    (dolist (block blocks)
+      (lifetime-trace-block block indexed-blocks))))
+
+(defun do-lifetime-analysis (ir-component)
+  (let* ((blocks (ir-component-code-blocks ir-component))
+	 (indexed-blocks (make-block-by-index-map blocks)))
+    (dolist (block blocks)
+      (analyse-block-lifetime block))
+    (lifetime-trace-analysis ir-component indexed-blocks)))
+
+;;; CREATE LIFETIME INTERVALS
+
+(defstruct interval sym intervals)
+
+(defun get-interval-first-start (interval)
+  (first (first (interval-intervals interval))))
+
+(defun get-interval-first-end (interval)
+  (second (first (interval-intervals interval))))
+
+(defun collect-intervals-by-name (intervals)
+  (let ((map (make-hash-table)))
+    (dolist (int intervals)
+      (let ((name (first int))
+	    (start (second int))
+	    (end (third int)))
+	(let ((existing (gethash name map)))
+	  (if existing
+	      (setf (gethash name map) (sort
+					(cons (list start end) existing)
+					#'<
+					:key #'first))
+	      (setf (gethash name map) (list (list start end)))))))
+    map))
+
+(defun merge-interval-list (interval-list)
+  (let ((sorted-intervals (sort interval-list #'< :key #'first))
+	(result nil)
+	(last-int nil))
+    (dolist (int sorted-intervals)
+      (if last-int
+	  (if (= (+ 1 (second last-int)) (first int))
+	      (setf (second last-int) (second int))
+	      (progn
+		(push last-int result)
+		(setf last-int int)))
+	  (setf last-int int)))
+    (push last-int result)
+    (reverse result)))
+
+(defun merge-add-interval (var map start end)
+  (let ((existing (gethash var map)))
+    (if existing
+	(setf (gethash var map)
+	      (cons (list start end) (gethash var map)))
+	(setf (gethash var map) (list (list start end))))))
+
+(defun merge-intervals (intervals)
+  (let ((imap (make-hash-table)))
+    (dolist (int intervals)
+      (merge-add-interval (first int) imap (second int) (third int)))
+    (let ((hkeys (hash-keys imap)))
+      (dolist (k hkeys)
+	(setf (gethash k imap)
+	      (merge-interval-list (gethash k imap)))))
+    imap))
+
+(defun get-block-intervals (ir-component)
+  (let ((complete-intervals nil))
+    (dolist (block (ir-component-code-blocks ir-component))
+      (let ((in (ir-block-in block))
+	    (out (ir-block-out block))
+	    (first-index (first (first (ir-block-ir block))))
+	    (last-index (first (car (last (ir-block-ir block)))))
+	    (uncomplete-intervals (make-hash-table)))
+	(dolist (v in)
+	  (let ((v-interval (gethash v uncomplete-intervals)))
+	    (unless v-interval
+	      (setf (gethash v uncomplete-intervals) (cons first-index nil)))))
+	(dolist (ir-list (ir-block-ir block))
+	  (let ((index (first ir-list))
+		(ir (rest ir-list)))
+	    (let ((locs (get-ir-locations ir)))
+	      (when locs
+		(destructuring-bind (defined used) locs
+		  (when defined
+		    (dolist (def (mapcar #'location-symbol defined))
+		      (let ((ui (gethash def uncomplete-intervals)))
+			(if ui
+			    (setf (cdr ui) index)
+			    (setf (gethash def uncomplete-intervals) (cons index nil))))))
+		  (when used
+		    (dolist (use (mapcar #'location-symbol used))
+		      (unless (find use out)
+			(let ((vint (gethash use uncomplete-intervals)))
+			  (if (not vint)
+			      (error (concatenate 'string "We don't have interval for " (symbol-name use)))
+			      (setf (cdr vint) index)))))))))))
+	(let ((uncomplete-keys (hash-keys uncomplete-intervals)))
+	  (dolist (uk uncomplete-keys)
+	    (let ((inter (gethash uk uncomplete-intervals)))
+	      (let ((start (car inter))
+		    (end (cdr inter)))
+		(if (not (find uk out))
+		    (push (list uk start (or end start)) complete-intervals)
+		    (push (list uk start last-index) complete-intervals))))))))
+    complete-intervals))
+
+(defun make-ir-intervals (ir-component)
+  (setf *c* ir-component)
+  (do-lifetime-analysis ir-component)
+  (let ((block-intervals (get-block-intervals ir-component)))
+    (merge-intervals block-intervals)))
+
+;;; ALOCATION
+
+(defstruct allocation active inactive handled reg-map registers inactive-registers storage stack)
 (defstruct reg-storage register)
 ;;; FIXME, no need for stack-storage, should be memory-storage with RBP as base
 (defstruct stack-storage offset)
 (defstruct memory-storage base offset)
 (defstruct constant-storage constant)
+(defstruct interval-storage-pair storage interval)
+
+(defun allocation-add-storage (allocation interval storage)
+  (setf (gethash (interval-sym interval) (allocation-storage allocation))
+	storage))
+
+(defun get-interval-register (allocation interval)
+  (gethash (interval-sym interval) (allocation-reg-map allocation)))
+
+(defun put-interval-register (allocation interval register)
+  (setf (gethash (interval-sym interval) (allocation-reg-map allocation))
+	register))
+
+(defun get-sorted-intervals-list (intervals-map)
+  (let (res)
+    (maphash (lambda (k v)
+	       (push (make-interval :sym k :intervals v) res))
+	     intervals-map)
+    (sort res #'< :key (lambda (i) (first (first (interval-intervals i)))))))
+
+(defun interval-is-handled (interval index)
+  (every (lambda (i)
+	   (< (second i) index))
+	 (interval-intervals interval)))
+
+(defun interval-is-active (interval index)
+  (some (lambda (i)
+	  (and (<= (first i) index)
+	       (>= (second i) index)))
+	(interval-intervals interval)))
+
+(defun interval-remove-first (interval)
+  (make-interval :sym (interval-sym interval)
+		 :intervals (cdr (interval-intervals interval))))
+
+(defun interval-dont-intersect (i1 i2)
+  (let ((i1-start (first i1))
+	(i1-end (second i1))
+	(i2-start (first i2))
+	(i2-end (second i2)))
+    (or (< i1-end i2-start)
+	(> i1-start i2-end))))
+
+(defun intervals-dont-intersect (i1 i2)
+  (dolist (int1 (interval-intervals i1))
+    (dolist (int2 (interval-intervals i2))
+      (when (not (interval-dont-intersect int1 int2))
+	(return-from intervals-dont-intersect nil))))
+  t)
+
+(defun maybe-activate-inactive (allocation index)
+  (do ((inactive (allocation-inactive allocation) (cdr inactive)))
+      ((or (null inactive)
+	   (not (interval-is-active (car inactive) index)))
+       (setf (allocation-inactive allocation) inactive))
+    (push (car inactive) (allocation-active allocation))
+    (delete-inactive-register allocation (car inactive)))
+  (sort-allocation-active allocation)
+  allocation)
+
+(defun sort-allocation-inactive (allocation)
+  (setf (allocation-inactive allocation)
+	(sort (allocation-inactive allocation)
+	      #'< :key (lambda (i)
+			 (first (first (interval-intervals i))))))
+  allocation)
+
+(defun sort-allocation-active (allocation)
+  (setf (allocation-active allocation)
+	(sort (allocation-active allocation)
+	      #'< :key (lambda (i)
+			 (second (first (interval-intervals i))))))
+  allocation)
+
+(defun return-inactive-register (allocation interval)
+  (setf (gethash (get-interval-register allocation interval)
+		 (allocation-inactive-registers allocation))
+	'free))
+
+(defun delete-inactive-register (allocation interval)
+  (remhash (get-interval-register allocation interval)
+	   (allocation-inactive-registers allocation)))
+
+(defun take-inactive-register (allocation interval)
+  (setf (gethash (get-interval-register allocation interval)
+		 (allocation-inactive-registers allocation))
+	'taken))
+
+(defun inactive-register-free (allocation interval)
+  (eq (gethash (get-interval-register allocation interval)
+	       (allocation-inactive-registers allocation))
+      'free))
+
+(defun maybe-return-inactive-register (allocation interval)
+  (unless (gethash (get-interval-register allocation interval)
+		 (allocation-inactive-registers allocation))
+    (return-inactive-register allocation interval)))
+
+(defun maybe-expire-intervals (allocation index)
+  (dolist (interval (allocation-active allocation))
+    ;; active list is sorted
+    (if (not (interval-is-active interval index))
+	(progn
+	  (setf (allocation-active allocation)
+		(cdr (allocation-active allocation)))
+	  (if (interval-is-handled interval index)
+	      (progn
+		(push interval (allocation-handled allocation))
+		(or (maybe-return-inactive-register allocation interval)
+		    (push (get-interval-register allocation interval)
+			  (allocation-registers allocation))))
+	      (progn
+		(push (interval-remove-first interval) (allocation-inactive allocation))
+		(return-inactive-register allocation interval)
+		(sort-allocation-inactive allocation))))
+	(return-from maybe-expire-intervals allocation))))
+
+
+(defun find-inactive-interval (allocation interval)
+  (declare (optimize (speed 0) (debug 3)))
+  ;; (when (equalp (interval-intervals interval) (list (list 11 11))) (break))
+  (dolist (inactive (allocation-inactive allocation))
+    (when (and
+	   (intervals-dont-intersect inactive interval)
+	   (inactive-register-free allocation inactive))
+      (take-inactive-register allocation inactive)
+      (return-from find-inactive-interval inactive))))
+
+(defun find-register (allocation interval)
+  ;; first try inactive intervals ???
+  (declare (optimize (speed 0) (debug 3)))
+  ;; (when (equalp (interval-intervals interval) (list (list 11 11))) (break))
+  (let ((inactive-interval (find-inactive-interval allocation interval)))
+    (if inactive-interval
+	(get-interval-register allocation inactive-interval)
+	(let ((registers (allocation-registers allocation)))
+	  (when registers
+	    (setf (allocation-registers allocation)
+		  (cdr registers))
+	    (car registers))))))
+
+;;; FIXME check last of active intervals like in Linear Scan Allocation paper !!!
+(defun spill-something (allocation interval)
+  (allocation-add-storage allocation interval
+			  (make-stack-storage :offset (allocation-stack allocation)))
+  (incf (allocation-stack allocation))
+  (push interval (allocation-active allocation))
+  (sort-allocation-active allocation))
+
+(defun maybe-allocate-register-storage (allocation interval)
+  (declare (optimize (speed 0) (debug 3)))
+  ;; (when (equalp (interval-intervals interval) (list (list 12 13))) (break))
+  (let ((register (find-register allocation interval)))
+    (when register
+      (push interval (allocation-active allocation))
+      (sort-allocation-active allocation)
+      (put-interval-register allocation interval register)
+      (allocation-add-storage allocation interval
+			      (make-reg-storage :register register)))))
+
+(defun make-component-allocation (intervals-map)
+  (declare (optimize (speed 0) (debug 3)))
+  (let ((allocation (make-allocation  :stack 0
+				      :reg-map (make-hash-table)
+				      :registers *preserved-regs*
+				      :inactive-registers (make-hash-table)
+				      :storage (make-hash-table))))
+    (dolist (interval (get-sorted-intervals-list intervals-map))
+      (maybe-activate-inactive allocation (get-interval-first-start interval) )
+      (maybe-expire-intervals allocation (get-interval-first-start interval))
+      (unless (maybe-allocate-register-storage allocation interval)
+	(spill-something allocation interval)))
+    allocation))
 
 (defun storage-operand (storage)
   (case (type-of storage)
@@ -378,66 +681,13 @@
     (case location-type
       (immediate-constant (make-constant-storage :constant (immediate-constant-constant location)))
       (param-location (get-param-storage (param-location-param-number location)))
-      (ret-location (or (gethash (location-symbol location) (allocation-map allocation))
+      (ret-location (or #+nil(gethash (location-symbol location) (allocation-storage allocation))
 			(make-reg-storage :register *return-value-reg*)))
-      ((var-location tmp-location) (gethash (location-symbol location) (allocation-map allocation)))
+      ((var-location tmp-location) (gethash (location-symbol location) (allocation-storage allocation)))
       (rip-relative-location (make-memory-storage))
       (lambda-return-location (make-reg-storage :register *return-value-reg*))
       (otherwise (error "Unknown location type")))))
 
-(defun interval-symbol (interval)
-  (first interval))
-(defun interval-start (interval)
-  (car (second interval)))
-(defun interval-end (interval)
-  (cdr (second interval)))
-
-(defun expire-old-intervals (allocation start)
-  (let (new-active)
-    (dolist (interval (allocation-active allocation))
-      (cond ((< (interval-end interval) start)
-	     (let ((interval-storage (gethash (interval-symbol interval) (allocation-map allocation))))
-	       (push (reg-storage-register interval-storage) (allocation-registers-available allocation))))
-	    (t (push interval new-active))))
-    (setf (allocation-active allocation)
-	  (sort new-active #'< :key (lambda (int) (interval-end int))))
-    allocation))
-
-(defun add-live-interval (allocation interval)
-  (let ((new-active (cons interval
-			  (allocation-active allocation)))
-	(int-sym (interval-symbol interval))
-	(register (pop (allocation-registers-available allocation))))
-    (setf (allocation-active allocation)
-	  (sort new-active #'< :key (lambda (int) (interval-end int))))
-    (setf (gethash int-sym (allocation-map allocation)) (make-reg-storage :register register))
-    allocation))
-
-(defun spill-interval (allocation interval)
-  (let* ((last-interval (car (last (allocation-active allocation))))
-	 (greater (>= (interval-end interval) (interval-end last-interval))))
-    (cond (greater
-	   (setf (gethash (interval-symbol interval) (allocation-map allocation))
-		 (make-stack-storage :offset (allocation-stack allocation)))
-	   (incf (allocation-stack allocation)))
-	  (t
-	   (let ((last-interval-storage (gethash (interval-symbol last-interval)
-						 (allocation-map allocation))))
-	     (push (reg-storage-register last-interval-storage) (allocation-registers-available allocation))
-	     (setf (gethash (interval-symbol last-interval) (allocation-map allocation))
-		   (make-stack-storage :offset (allocation-stack allocation))))
-	   (incf (allocation-stack allocation))
-	   (setf (allocation-active allocation) (butlast (allocation-active allocation)))
-	   (add-live-interval allocation interval)))))
-
-(defun create-component-allocation (intervals)
-  (let ((allocation (make-allocation :map (make-hash-table) :stack 0 :registers-available *preserved-regs*)))
-    (dolist (interval (get-sorted-intervals intervals))
-      (expire-old-intervals allocation (interval-start interval))
-      (cond ((> (length (allocation-registers-available allocation)) 0)
-	     (add-live-interval allocation interval))
-	    (t (spill-interval allocation interval))))
-    allocation))
 
 
 (defstruct rip-location rip byte-offset)
@@ -464,8 +714,11 @@
       buffer)))
 
 (defun compile-component-pass-1 (ir-component)
-  (let* ((intervals (create-ir-intervals ir-component))
-	 (allocation (create-component-allocation intervals)))
+  (let* ((intervals (make-ir-intervals ir-component))
+	 (allocation (make-component-allocation intervals)))
+    (setf *c* ir-component
+	  *ir* intervals
+	  *all* allocation)
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
@@ -479,6 +732,15 @@
       (when (eq (type-of component) 'ir-component)
 	(component-blocks-phase component)))))
 
+(defun index-ir-component-instr (ir-component)
+  (let ((index 1))
+    (dolist (block (ir-component-code-blocks ir-component))
+      (let ((indexed-ir nil))
+	(dolist (ir (ir-block-ir block))
+	  (push (cons index ir) indexed-ir)
+	  (incf index))
+	(setf (ir-block-ir block) (reverse indexed-ir))))))
+
 (defun component-blocks-phase (ir-component)
   (let ((blocks (make-blocks (ir-component-code ir-component))))
     (setf (ir-component-code-blocks ir-component)
@@ -490,6 +752,7 @@
 	(setf (ir-block-used-locations blok) nil)))
     (try-component-sub-components-blocks-phase (ir-component-sub-comps ir-component))
     (setf (ir-component-code ir-component) nil)
+    (index-ir-component-instr ir-component)
     ir-component))
 
 
