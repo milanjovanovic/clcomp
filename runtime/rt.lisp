@@ -23,6 +23,7 @@
 	 (fun-address (rt-get-fun-address name)))
     (unless fun-address
       (error (format nil "Unknown fun ~a" name)))
+    (format t "Name: ~a, Address: ~x~%" name fun-address)
     (let ((bytes (little-endian-64bit fun-address))
 	  (index offset))
       (dolist (byte bytes)
@@ -75,6 +76,7 @@
 
 
 (defun test1 (form)
+  (rt-reset)
   (clcomp-compile-file "/Users/milan/projects/clcomp.github/code/array.lisp")
   (clcomp-compile-file "/Users/milan/projects/clcomp.github/code/arith.lisp")
   (set-start-address)

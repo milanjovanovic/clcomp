@@ -481,7 +481,6 @@
 (defstruct stack-storage offset)
 (defstruct memory-storage base offset)
 (defstruct constant-storage constant)
-(defstruct interval-storage-pair storage interval)
 
 (defun allocation-add-storage (allocation interval storage)
   (setf (gethash (interval-sym interval) (allocation-storage allocation))
@@ -575,7 +574,7 @@
       'free))
 
 (defun maybe-return-inactive-register (allocation interval)
-  (unless (gethash (get-interval-register allocation interval)
+  (when (gethash (get-interval-register allocation interval)
 		 (allocation-inactive-registers allocation))
     (return-inactive-register allocation interval)))
 
