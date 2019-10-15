@@ -173,9 +173,11 @@
 	(let ((accessor (first where)))
 	  (cond
 	    ((eq accessor 'car)
-	     (list '%setf-car (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
+	     (list 'setf-car (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
 	    ((eq accessor 'cdr)
-	     (list '%setf-cdr (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env))))))))
+	     (list 'setf-cdr (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
+	    ((eq accessor 'aref)
+	     (list 'setf-aref (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env))))))))
 
 (defun clcomp-macroexpand-1 (macro-form)
   (let* ((macro-fun (gethash (first macro-form) *macros*)))

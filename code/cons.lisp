@@ -27,6 +27,11 @@
 (defun cadddr (cons)
   (car (cdr (cdr (cdr cons)))))
 
+(defun setf-car (cons e)
+  (setf-car cons e ))
+
+(defun setf-cdr (cons e)
+  (setf-cdr cons e ))
 
 (defun listp (thing)
   (listp thing))
