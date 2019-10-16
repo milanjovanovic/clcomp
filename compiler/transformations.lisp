@@ -14,7 +14,7 @@
 (defstruct progn-node forms)
 (defstruct call-node function arguments)
 (defstruct block-node name form)
-(defstruct lambda-node name arguments body)
+(defstruct lambda-node name arguments declarations body)
 (defstruct tagbody-node forms)
 (defstruct go-node label-node)
 (defstruct label-node label)
@@ -25,10 +25,14 @@
 	    (make-lexical-var-node :name var :form nil))
 	  arguments))
 
+(defun parse-declarations (form)
+  form)
+
 (defun create-lambda-node (form)
   (make-lambda-node :name nil
+		    :declarations (parse-declarations (third form))
 		    :arguments (create-lambda-arguments-nodes (second form))
-		    :body (create-node (third form))))
+		    :body (create-node (fourth form))))
 
 (defun create-if-node (form)
   (make-if-node :test-form (create-node (second form))

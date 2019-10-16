@@ -158,11 +158,23 @@
 	    (clcomp-macroexpand (cons 'progn (cddr form)) env)
 	    (clcomp-macroexpand (first (cddr form)) env))))
 
+(defun %lambda-has-declarations (form)
+  (eq 'declare (and (listp (third form))
+		    (first (third form)))))
+
 (defun %clcomp-macroexpand-lambda (form env)
-  (list 'lambda (second form)
-	(if (> (length (cddr form)) 1)
-	    (clcomp-macroexpand (cons 'progn (cddr form)) env)
-	    (clcomp-macroexpand (first (cddr form)) env))))
+  (let ((has-declarations (%lambda-has-declarations form)))
+    (list 'lambda (second form)
+	  (if has-declarations (third form) nil)
+	  (if (> (length (cddr form)) 1)
+	      (clcomp-macroexpand (cons 'progn (if has-declarations
+						   (cdddr form)
+						   (cddr form)))
+				  env)
+	      (clcomp-macroexpand (first (if has-declarations
+					     (cdddr form)
+					     (cddr form)))
+				  env)))))
 
 ;; FIXME, implement setf macro expanders
 (defun %clcomp-macroexpand-setf (form env)
