@@ -1,3 +1,9 @@
+(defun + (a b)
+  (+ a b))
+
+(defun - (a b)
+  (- a b))
+
 (defun = (a b)
   (= a b))
 

@@ -25,5 +25,6 @@
 	       (:file "code/macros-tests")
 	       (:file "runtime/rt")
 	       (:file "compiler/eval")
-	       (:file "compiler/fcomp")))
+	       (:file "compiler/fcomp")
+	       (:file "compiler/compiler-tests")))
 

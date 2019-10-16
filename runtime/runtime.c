@@ -10,7 +10,7 @@
 #include <string.h>
 #include <errno.h>
 #include "lispo.h"
-
+#include <dirent.h>
 
 #define STATIC_SPACE_START 0x20000000
 #define STATIC_SPACE_SIZE (30 * 1024 * 1024)
@@ -314,7 +314,7 @@ struct lisp_code load_test_code(char *file) {
   return lcode;
 }
 
-void run_test(char *test_file) {
+lispobj run_test(char *test_file) {
   
   struct lisp_code lcode = load_test_code(test_file);
   uintptr_t code_address = (uintptr_t) *heap_header;
@@ -322,10 +322,7 @@ void run_test(char *test_file) {
   load_code(lcode.code, lcode.code_size);
   free(lcode.code);
 
-  printf("\nGOT FROM LISP: ");
-  print_lisp(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
-  printf("\n");
-
+  return(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
   //  run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address);
 }
 
@@ -335,15 +332,45 @@ int main(int argc, char *argv[]) {
   
   load_core();
 
-  if (argc > 1) {
-    run_test(argv[1]);
+  if (argc == 2) {
+    
+    lispobj result = run_test(argv[1]);
+    printf("\nGOT FROM LISP: ");
+    print_lisp(result);
+    printf("\n");
+
+  } else if (argc == 3) {
+    
+    lispobj expected;
+    
+    if (strcmp(argv[2], "T")) {
+      expected = LISP_T;
+    } else {
+      expected = LISP_NIL;
+    }
+
+    lispobj result = run_test(argv[1]);
+
+    if (result != expected) {
+
+      printf("\n== ERROR in %s ==\n", argv[1]);
+      printf("\nGOT FROM LISP: ");
+      print_lisp(result);
+      printf("\n");
+      
+      return 1;
+    }
+    
+  } else {
+    
+    printf("Wrong number of arguments !!!");
+    return(1);
+
   }
 
+      
   destroy_runtime();
+
+  return(0);
   
 }
-
-
-
-
-

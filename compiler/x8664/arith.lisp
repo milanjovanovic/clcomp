@@ -1,5 +1,17 @@
 (in-package :clcomp)
 
+(define-vop fixnump (res :register) ((arg :register))
+  (let ((true-label (make-vop-label "true"))
+	(exit-label (make-vop-label "exit")))
+    (inst :lea *tmp-reg* (@ arg nil nil (- *fixnum-tag*)))
+    (inst :test *tmp-reg* *mask*)
+    (inst :jump-fixup :je true-label)
+    (inst :mov res *nil*)
+    (inst :jump-fixup :jmp exit-label)
+    (inst :label true-label)
+    (inst :mov res *t*)
+    (inst :label exit-label)))
+
 (define-vop + (res :register) ((arg1 :register) (arg2 :register))
   (inst :mov res arg1)
   (inst :add res arg2))
