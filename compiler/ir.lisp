@@ -75,7 +75,7 @@
 ;;; lexical vars environments
 
 (defun make-env-holder ()
-  (list 'envs nil nil))
+  (list 'envs nil nil nil))
 
 (defun make-env ()
   (make-hash-table))
@@ -101,7 +101,25 @@
   ;; FIXME, unboud vars threat as special vars
   (error (concatenate 'string "Missing lexical variable " (symbol-name (lexical-var-node-name var-node)))))
 
-  ;;; go tags environment
+
+;;; declarations environment
+(defun add-declarations-env (declarations environments)
+  (push declarations (fourth environments)))
+
+(defun remove-declarations-env (environments)
+  (pop (fourth environments)))
+
+;; this only inlines vops
+(defun inline-fun-p (fun environments)
+  (dolist (decls (fourth environments))
+    (let ((inline (cdr (assoc 'inline decls)))
+	  (notinline (cdr (assoc 'notinline decls))))
+      (cond ((member fun inline) (return-from inline-fun-p t))
+	    ((member fun notinline) (return-from inline-fun-p nil)))))
+  ;; default is inline if there is
+  t)
+
+;;; go tags environment
 (defun make-tagbody-env ()
   (make-hash-table))
 
@@ -290,7 +308,7 @@
 
 (defun emit-call-or-vop (component node environments)
   (let ((fun (call-node-function node)))
-    (if (get-vop fun)
+    (if (and (get-vop fun) (inline-fun-p fun environments))
 	(emit-vop-ir component node environments)
 	(emit-call-ir component node environments))))
 
@@ -365,13 +383,16 @@
     (let ((arguments (lambda-node-arguments lambda-node))
 	  (body (lambda-node-body lambda-node))
 	  (environments (make-env-holder))
-	  (env (make-env)))
+	  (env (make-env))
+	  (declarations (lambda-node-declarations lambda-node)))
       (add-env env environments)
+      (add-declarations-env declarations environments)
       (make-lambda-entry-ir component (length arguments))
       (make-lambda-arguments-ir component arguments environments)
       (make-return-ir component (emit-node-ir component body environments))
       (make-lambda-exit-ir component)
-      (remove-env environments))
+      (remove-env environments)
+      (remove-declarations-env environments))
     (or name component)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

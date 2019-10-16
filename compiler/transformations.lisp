@@ -26,7 +26,7 @@
 	  arguments))
 
 (defun parse-declarations (form)
-  form)
+  (cdr form))
 
 (defun create-lambda-node (form)
   (make-lambda-node :name nil
