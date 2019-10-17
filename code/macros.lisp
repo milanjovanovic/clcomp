@@ -56,7 +56,8 @@
 
 (defun macro-named-lambda (form)
   (list 'lambda (third form)
-	(cons 'block (cons (second form) (list (fourth form))))))
+	(fourth form)
+	(cons 'block (cons (second form) (cddddr form)))))
 (setf (gethash 'named-lambda *macros*) 'macro-named-lambda)
 
 
@@ -146,11 +147,19 @@
 	(clcomp-macroexpand expanded env)
 	expanded)))
 
+(defun %parse-defun-to-lambda (form)
+  (let ((got-declarations (and (listp (fourth form))
+			       (eq 'declare (first (fourth form))))))
+    (append (list 'named-lambda (second form)
+		  (third form)
+		  (if got-declarations (fourth form) nil))
+	    (if got-declarations (cddddr form) (cdddr form) ))))
+
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)
   (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun (second form)))
 	(list '%defun (second form)
-	      (clcomp-macroexpand (list 'named-lambda (second form)  (third form) (fourth form)) env))))
+	      (clcomp-macroexpand (%parse-defun-to-lambda form) env))))
 
 (defun %clcomp-macroexpand-eval-when (form env)
   (list 'eval-when (second form)
