@@ -343,7 +343,7 @@ int main(int argc, char *argv[]) {
     
     lispobj expected;
     
-    if (strcmp(argv[2], "T")) {
+    if (strcmp(argv[2], "T") == 0) {
       expected = LISP_T;
     } else {
       expected = LISP_NIL;
@@ -358,7 +358,7 @@ int main(int argc, char *argv[]) {
       print_lisp(result);
       printf("\n");
       
-      return 1;
+      return(1);
     }
     
   } else {

@@ -4,6 +4,7 @@
 
 (defun dump-core (file form)
   (rt-reset)
+  (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/arith.lisp" *clcomp-home*))
   (set-start-address)
@@ -26,8 +27,27 @@
 	     '(lambda ()
 	       (= 1 0))))
 
+(defun cons-test-1 ()
+  (dump-core (make-core-file-name "list-test" t)
+	     '(lambda ()
+	       (let ((l (cons 1 (cons 2 (cons 3 nil)))))
+		 (setf (car l) 10)
+		 (let ((c (car l)))
+		   (= c 10))))))
+
+(defun cons-test-2 ()
+  (dump-core (make-core-file-name "list-test-notinline" t)
+	     '(lambda ()
+	       (declare (notinline cons car))
+	       (let ((l (cons 1 (cons 2 (cons 3 nil)))))
+		 (setf (car l) 10)
+		 (let ((c (car l)))
+		   (= c 10))))))
+
 
 (defun generate-all-test-cores ()
   (simple-test-1)
   (simple-test-2)
+  (cons-test-1)
+  (cons-test-2)
   (values))
