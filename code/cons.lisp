@@ -28,10 +28,10 @@
   (car (cdr (cdr (cdr cons)))))
 
 (defun rplaca (cons e)
-  (setf-car cons e ))
+  (rplaca cons e ))
 
 (defun rplacd (cons e)
-  (setf-cdr cons e ))
+  (rplacd cons e ))
 
 (defun listp (thing)
   (listp thing))
