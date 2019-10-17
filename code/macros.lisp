@@ -185,9 +185,9 @@
 	(let ((accessor (first where)))
 	  (cond
 	    ((eq accessor 'car)
-	     (list 'setf-car (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
+	     (list 'rplaca (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
 	    ((eq accessor 'cdr)
-	     (list 'setf-cdr (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
+	     (list 'rplacd (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
 	    ((eq accessor 'aref)
 	     (list 'setf-aref (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env))))))))
 

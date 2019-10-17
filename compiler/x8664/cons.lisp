@@ -22,7 +22,7 @@
     (inst :mov res *nil*)
     (inst :label done-label)))
 
-(define-vop setf-car (res :register) ((arg1 :register) (arg2 :register))
+(define-vop rplaca (res :register) ((arg1 :register) (arg2 :register))
   (let ((not-cons-label (make-vop-label "not-cons"))
 	(done-label (make-vop-label "done")))
     (inst :lea res (@ arg1 nil nil (- *list-tag*)))
@@ -49,7 +49,7 @@
     (inst :mov res *nil*)
     (inst :label done-label)))
 
-(define-vop setf-cdr (res :register) ((arg1 :register) (arg2 :register))
+(define-vop rplacd (res :register) ((arg1 :register) (arg2 :register))
   (let ((not-cons-label (make-vop-label "not-cons"))
 	(done-label (make-vop-label "done")))
     (inst :lea res (@ arg1 nil nil (- *list-tag*)))
