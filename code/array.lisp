@@ -8,6 +8,7 @@
   (setf-aref array index value))
 
 (defun make-array (size initial-content)
+  (declare (notinline allocate-array setf-aref))
   (let ((array (allocate-array size))
 	(index 0))
     (dolist (e initial-content)
