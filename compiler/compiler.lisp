@@ -21,6 +21,9 @@
 (defparameter *all* nil)
 (defparameter *ir* nil)
 
+
+(defparameter *dont-inline* nil)
+
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
 ;;;

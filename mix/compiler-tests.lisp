@@ -1,7 +1,5 @@
 (in-package :clcomp)
 
-(defparameter *clcomp-home* (namestring (ql:where-is-system "clcomp")))
-
 (defun dump-core (file form)
   (rt-reset)
   (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))

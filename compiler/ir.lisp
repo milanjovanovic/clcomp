@@ -308,7 +308,7 @@
 
 (defun emit-call-or-vop (component node environments)
   (let ((fun (call-node-function node)))
-    (if (and (get-vop fun) (inline-fun-p fun environments))
+    (if (and (get-vop fun) (inline-fun-p fun environments) (not *dont-inline*))
 	(emit-vop-ir component node environments)
 	(emit-call-ir component node environments))))
 

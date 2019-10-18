@@ -68,9 +68,13 @@
 		       (cdddr form)))))
 (setf (gethash 'and *macros*) 'macro-and)
 
+(defun macro-typecase (form)
+  (declare (ignore form))
+  "FIXME")
 
 ;;; this handle simple form of defstrict
 (defun macro-defstruct (form)
+  (declare (ignore form))
   form)
 
 
@@ -152,7 +156,7 @@
 			       (eq 'declare (first (fourth form))))))
     (append (list 'named-lambda (second form)
 		  (third form)
-		  (if got-declarations (fourth form) nil))
+		  (if got-declarations (fourth form) (list 'declare)))
 	    (if got-declarations (cddddr form) (cdddr form) ))))
 
 ;; FIXME, %rt-defun ?!?!
@@ -174,7 +178,7 @@
 (defun %clcomp-macroexpand-lambda (form env)
   (let ((has-declarations (%lambda-has-declarations form)))
     (list 'lambda (second form)
-	  (if has-declarations (third form) nil)
+	  (if has-declarations (third form) (list 'declare))
 	  (if (> (length (cddr form)) 1)
 	      (clcomp-macroexpand (cons 'progn (if has-declarations
 						   (cdddr form)
@@ -198,7 +202,8 @@
 	    ((eq accessor 'cdr)
 	     (list 'rplacd (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
 	    ((eq accessor 'aref)
-	     (list 'setf-aref (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env))))))))
+	     (list 'setf-aref (clcomp-macroexpand (second where) env) (clcomp-macroexpand (third where) env)
+		   (clcomp-macroexpand what env))))))))
 
 (defun clcomp-macroexpand-1 (macro-form)
   (let* ((macro-fun (gethash (first macro-form) *macros*)))

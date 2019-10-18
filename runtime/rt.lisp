@@ -10,6 +10,8 @@
 
 (defparameter *start-address* *runtime-heap-start*)
 
+(defparameter *clcomp-home* (namestring (ql:where-is-system "clcomp")))
+
 (defun rt-%defun (name compilation-unit)
   ;; code loading will increase heap pointer
   (setf (gethash name *rt-funs*) *compilation-start-address*)
@@ -75,10 +77,11 @@
   (setf *rt-funs* (make-hash-table)))
 
 
-(defun test1 (form)
+(defun compile-and-dump (form)
   (rt-reset)
-  (clcomp-compile-file "/Users/milan/projects/clcomp.github/code/array.lisp")
-  (clcomp-compile-file "/Users/milan/projects/clcomp.github/code/arith.lisp")
+  (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
+  (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
+  (clcomp-compile-file (format nil "~a/code/arith.lisp" *clcomp-home*))
   (set-start-address)
   (clcomp-compile nil form)
   (maphash (lambda (k v)

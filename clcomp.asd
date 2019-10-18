@@ -22,9 +22,8 @@
 	       (:file "compiler/compiler")
 	       (:file "runtime/ffi")
 	       (:file "code/macros")
-	       (:file "code/macros-tests")
 	       (:file "runtime/rt")
 	       (:file "compiler/eval")
 	       (:file "compiler/fcomp")
-	       (:file "compiler/compiler-tests")))
-
+	       (:file "mix/macros-tests")
+	       (:file "mix/compiler-tests")))
