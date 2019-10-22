@@ -374,3 +374,8 @@ int main(int argc, char *argv[]) {
   return(0);
   
 }
+
+int from_lisp_test() {
+  printf("this is test\n");
+  return(80);
+}

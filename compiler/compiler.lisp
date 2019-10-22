@@ -125,24 +125,29 @@
 
 (defun maybe-allocate-stack-space (translator allocation)
   (let ((stack-size (allocation-stack allocation)))
-   (when (> (allocation-stack allocation) 0)
-     (emit-ir-assembly translator
-		       (list
-			(list :sub *stack-pointer-reg*
-			      (* *word-size* (if (oddp stack-size)
-						 (+ 1 stack-size)
-						 stack-size))))))))
+    (if (> (allocation-stack allocation) 0)
+	(emit-ir-assembly translator
+			  (list
+			   (list :sub *stack-pointer-reg*
+				 (* *word-size* (if (oddp stack-size)
+						    stack-size
+						    (+ 1 stack-size)))))) ; 16 byte aligment
+	;; 16 byte aligment
+	(emit-ir-assembly translator
+			  (list (list :sub *stack-pointer-reg* *word-size*))))))
 
 (defun maybe-deallocate-stack-space (translator allocation)
   (let ((stack-size (allocation-stack allocation)))
-   (when (> (allocation-stack allocation) 0)
-     (emit-ir-assembly translator
-		       (list
-			(list :add *stack-pointer-reg*
-			      ;; 16 byte stack alligments
-			      (* *word-size* (if (oddp stack-size)
-						 (+ 1 stack-size)
-						 stack-size))))))))
+    (if (> (allocation-stack allocation) 0)
+	(emit-ir-assembly translator
+			  (list
+			   (list :add *stack-pointer-reg*
+				 ;; 16 byte stack alligments
+				 (* *word-size* (if (oddp stack-size)
+						    stack-size
+						    (+ 1 stack-size))))))
+	(emit-ir-assembly translator
+			  (list (list :add *stack-pointer-reg* *word-size*))))))
 
 (defun translate-lambda-entry (translator allocation)
   (emit-ir-assembly translator
@@ -167,9 +172,12 @@
 		      (list
 		       (list :mov *fun-number-of-arguments-reg* (fixnumize arguments-count))))
     (when (> arguments-count (length *fun-arguments-regs*))
-      (emit-ir-assembly translator
-			(list (list :sub *stack-pointer-reg*
-				    (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
+      (let ((stack-args (- arguments-count (length *fun-arguments-regs*))))
+	(emit-ir-assembly translator
+			  (list (list :sub *stack-pointer-reg*
+				      (* *word-size* (if (oddp stack-args)
+							 (+ 1 stack-args)
+							 stack-args)))))))))
 
 (defun translate-receive-param (param-location param-index translator allocation)
   (let ((storage (get-allocation-storage param-location allocation)))
@@ -207,6 +215,8 @@
   ;; we are using fun arguments registers for our VOP
   ;; allwaus use *RETURN-VALUE-REG* as return register
   ;; FIXME, is this OK ?
+  ;; FIXME, this is wrong, we are using registers that regalloc already allocated for VAR's
+  ;; TODO, spill register value
   (let (arguments-regs
 	(usable-registers *fun-arguments-regs*)
 	(ir-arguments (get-ir-vop-args ir)))
@@ -217,12 +227,15 @@
 	   (push (reg-storage-register arg-storage) arguments-regs))
 	  (stack-storage
 	   (let ((register (first usable-registers)))
+	     ;; FIXME, this is bogus
 	     (emit-ir-assembly translator (asm-storage-move (make-reg-storage :register register)
 							    arg-storage))
 	     (push register arguments-regs))
 	   (setf usable-registers (rest usable-registers))))))
+    ;; FIXME don't hardcode *return-value-reg*
     (emit-ir-assembly translator
 		      (get-vop-code vop (cons *return-value-reg*  (reverse arguments-regs))))
+    ;; FIXME, this is also bogus
     (emit-ir-assembly translator
 		      (list
 		       (list :mov (storage-operand (get-allocation-storage (third ir) allocation))
@@ -683,8 +696,11 @@
     (case location-type
       (immediate-constant (make-constant-storage :constant (immediate-constant-constant location)))
       (param-location (get-param-storage (param-location-param-number location)))
-      (ret-location (or #+nil(gethash (location-symbol location) (allocation-storage allocation))
-			(make-reg-storage :register *return-value-reg*)))
+      (ret-location   (or
+		       ;; (gethash (location-symbol location) (allocation-storage allocation))
+		       (make-reg-storage :register *return-value-reg*)
+		       )
+       )
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-storage allocation)))
       (rip-relative-location (make-memory-storage))
       (lambda-return-location (make-reg-storage :register *return-value-reg*))
