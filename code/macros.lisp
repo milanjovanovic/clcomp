@@ -212,9 +212,9 @@
   (let ((f nil)
 	(i (- (length string) 1)))
     (dotimes (c (+ 1 i))
-      (setf f (list 'cons (char string i) f))
+      (push (char string i) f)
       (decf i))
-    (list 'make-string (length string) f)))
+    (list 'make-string (length string) (cons 'list  f))))
 
 (defun clcomp-macroexpand (form &optional env)
   (unless env

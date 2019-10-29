@@ -41,7 +41,6 @@
 
 (defun get-vop-code (vop  args)
   (let ((*segment-instructions* nil))
-    
     (apply (vop-fun vop) args)
     (reverse *segment-instructions*)))
 

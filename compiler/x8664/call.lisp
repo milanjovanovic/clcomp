@@ -60,11 +60,16 @@
 	  (rdi-label (make-vop-label "rdi-"))
 	  (r8-label (make-vop-label "r8-"))
 	  (r9-label (make-vop-label "r9-"))
+	  (zero-args (make-vop-label "zero-args-"))
 	  (exit (make-vop-label "exit-")))
 
       (inst :mov *tmp-reg* fixed-arguments-count)
       ;; (inst :shr *tmp-reg* *tag-size*)
       (inst :shr *fun-number-of-arguments-reg* *tag-size*)
+
+      ;; handle case when there are no arguments
+      (inst :test *fun-number-of-arguments-reg* *fun-number-of-arguments-reg*)
+      (inst :jump-fixup :je zero-args)
 
       ;; allocate space for whole list
       (inst :mov :r12 *fun-number-of-arguments-reg*)
@@ -130,6 +135,9 @@
       (inst :lea :r14 (@ :r14 nil nil (* 2 *word-size*)))
       (inst :sub *fun-number-of-arguments-reg* 1)
       (inst :jump-fixup :jmp start)
+
+      (inst :label zero-args)
+      (inst :mov :rdx *nil*)
     
       (inst :label exit))
     (reverse *segment-instructions*)))
