@@ -30,7 +30,8 @@
 ;;; ir mnemonics :
 ;;; LAMBDA-ENTRY
 ;;; ARG-CHECK
-;;; LISTIFY-ARGS FIXME, not implemented yet
+;;; ARG-MINIMUM-CHECK
+;;; LISTIFY-ARGS
 ;;; RECEIVE-PARAM
 ;;; PARAMS-COUNT
 ;;; LOAD-PARAM
@@ -158,6 +159,10 @@
   (emit-ir-assembly translator (calle-save-registers))
   (maybe-allocate-stack-space translator allocation))
 
+(defun translate-listify-args (ir translator)
+  (emit-ir-assembly translator
+		    (listify-code-generator (second ir))))
+
 (defun translate-arg-check (ir translator)
   (let ((arg-count (second ir)))
     (declare (ignore arg-count))
@@ -165,6 +170,14 @@
 		      (list
 		       (list :cmp *fun-number-of-arguments-reg* (fixnumize (second ir)))
 		       (list :jump-fixup :jne :wrong-arg-count-label)))))
+
+(defun translate-arg-minimum-check (ir translator)
+  (let ((arg-count (second ir)))
+    (declare (ignore arg-count))
+    (emit-ir-assembly translator
+		      (list
+		       (list :cmp *fun-number-of-arguments-reg* (fixnumize (second ir)))
+		       (list :jump-fixup :jl :wrong-arg-count-label)))))
 
 (defun translate-params-count (ir translator)
   (let ((arguments-count (second ir)))
@@ -217,24 +230,28 @@
   ;; FIXME, is this OK ?
   ;; FIXME, this is wrong, we are using registers that regalloc already allocated for VAR's
   ;; TODO, spill register value
-  (let (arguments-regs
+  (let ((arguments-storage nil)
 	(usable-registers *fun-arguments-regs*)
-	(ir-arguments (get-ir-vop-args ir)))
+	(ir-arguments (get-ir-vop-args ir))
+	(vop-arguments (vop-arguments vop)))
     (dolist (argument ir-arguments)
-      (let ((arg-storage (get-allocation-storage argument allocation)))
+      (let ((arg-storage (get-allocation-storage argument allocation))
+	    (vop-argument (first vop-arguments)))
 	(etypecase arg-storage
 	  (reg-storage
-	   (push (reg-storage-register arg-storage) arguments-regs))
+	   (push (reg-storage-register arg-storage) arguments-storage))
 	  (stack-storage
-	   (let ((register (first usable-registers)))
-	     ;; FIXME, this is bogus
-	     (emit-ir-assembly translator (asm-storage-move (make-reg-storage :register register)
-							    arg-storage))
-	     (push register arguments-regs))
-	   (setf usable-registers (rest usable-registers))))))
+	   (if (eq :register (second vop-argument))
+	       (let ((register (first usable-registers)))
+		 ;; FIXME, check this again !!!
+		 (emit-ir-assembly translator (asm-storage-move (make-reg-storage :register register)
+								arg-storage))
+		 (push register arguments-storage)
+		 (setf usable-registers (rest usable-registers)))
+	       (push (storage-operand arg-storage) arguments-storage))))))
     ;; FIXME don't hardcode *return-value-reg*
     (emit-ir-assembly translator
-		      (get-vop-code vop (cons *return-value-reg*  (reverse arguments-regs))))
+		      (get-vop-code vop (cons *return-value-reg*  (reverse arguments-storage))))
     ;; FIXME, this is also bogus
     (emit-ir-assembly translator
 		      (list
@@ -254,7 +271,7 @@
 		  (error (format nil "Wrong number of arguments for VOP in ~a" ir)))
 		(emit-vop-code vop ir allocation translator))
 	      (error (format nil "Unknown vop for ir ~a" ir))))
-	(error (format nil "Unknown vop for ir ~a" ir)))))
+	(error (format nil "Unknown vop for isrr ~a" ir)))))
 
 (defun translate-if (ir translator allocation)
   (let* ((location (second ir))
@@ -304,7 +321,9 @@
 	(format t "~%")))
     (case mnemonic
       (lambda-entry (translate-lambda-entry translator allocation))
+      (listify-args (translate-listify-args ir translator))
       (arg-check (translate-arg-check ir translator))
+      (arg-minimum-check (translate-arg-minimum-check ir translator))
       (params-count (translate-params-count ir translator))
       (receive-param (translate-receive-param (second ir) (third ir) translator allocation))
       (load (translate-load ir translator allocation))

@@ -149,7 +149,7 @@ void print_lisp_cons(lispobj obj) {
   }
 }
 
-void print_lisp_array(lispobj obj) {
+void print_lisp_string(lispobj obj) {
   
   struct array *ar = (struct array *) untag_pointer(obj);
   lispobj size = ar->size;
@@ -157,26 +157,43 @@ void print_lisp_array(lispobj obj) {
 
   lispobj *first = &ar->elements;
 
-  printf("#(");
+  printf("\"");
 
   for (long index = 0; index < array_size; index++) {
     print_lisp(*(first + index));
-    if (index + 1 < array_size)
-      printf(" ");
   }
 
-  printf(")");
+  printf("\"");
+}
 
+void print_lisp_array(lispobj obj) {
+
+   struct array *ar = (struct array *) untag_pointer(obj);
+   lispobj size = ar->size;
+   int64_t array_size = untag_fixnum(size);
+
+   lispobj *first = &ar->elements;
+
+   printf("#(");
+
+   for (long index = 0; index < array_size; index++) {
+     print_lisp(*(first + index));
+     if (index + 1 < array_size)
+       printf(" ");
+   }
+
+   printf(")");
 }
 
 
 void print_lisp_pointer(lispobj obj) {
   if (is_simple_array(obj)) {
     print_lisp_array(obj);
+  } else if (is_string(obj)) {
+    print_lisp_string(obj);
   } else {
     printf("UNKNOWN POINTER");
   }
-  
 }
 
 void print_lisp(lispobj obj) {
@@ -216,6 +233,12 @@ void print_lisp(lispobj obj) {
     }
   }
   fflush(stdout);
+}
+
+void lisp_error(lispobj error_msg) {
+  printf("LISP ERROR: ");
+  print_lisp_string(error_msg);
+  exit(1);
 }
 
 
@@ -379,3 +402,17 @@ int from_lisp_test() {
   printf("this is test\n");
   return(80);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+

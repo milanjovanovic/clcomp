@@ -10,10 +10,12 @@
 (defparameter *list-tag* 2)
 (defparameter *function-tag* 3)
 (defparameter *char-tag* 4)
+(defparameter *symbol-tag* 5)
 (defparameter *pointer-tag* 7)
 
 
-(defparameter *simple-array-tag* 1)
+(defparameter *pointer-simple-array-tag* 1)
+(defparameter *pointer-string-tag* 2)
 
 ;;; tag 5 and 6 are free
 
@@ -34,3 +36,7 @@
 	   (< num *most-positive-fixnum* ))
       (ash num *tag-size*)
       (error "Number is to big to be fixnum !!!")))
+
+(defun characterize (char)
+  (let ((code (char-code char)))
+    (+ (ash code *tag-size*) *char-tag*)))

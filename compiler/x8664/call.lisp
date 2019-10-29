@@ -1,43 +1,147 @@
 (in-package :clcomp)
 
-#+nil(defun listify-arguments (args-count)
-  (let* ((collect-registers (nthcdr args-count *fun-arguments-regs*))
-	 (result-offset (+ 1 args-count))
-	 (maybe-result-register (first collect-registers)))
-    ;; traverse arguments from last to first 
-    (dolist (reg collect-registers)
-      (inst ))))
+#+nil(define-vop %alloc-symbol (res :register) ((name :register))
+       (inst :mov *tmp-reg* (@ *heap-header-reg*))
+       (inst :mov res *tmp-reg*)
+       (inst :add *tmp-reg* 4)
+       (inst :mov *tmp-reg* (@ *heap-header-reg*) )
+       (inst :mov (@ res) SYMBOL_TAG)
+       (inst :mov (@ res nil nil *word-size*) name)
+       (inst :mov (@ res nil nil (* 2 *word-size*)) *nil*)
+       (inst :mov (@ res nil nil (* 3 *word-size*)) *nil*)
+       (inst :add res *poin)
+  
+  
+       (inst :add *temp-reg* 4)
+       (inst :mov res *tmp-reg*)
+       (inst :lea *tmp-reg* (@ *tmp-reg* arg *word-size* (* *word-size* *array-header-size*)))
+       (inst :mov (@ *heap-header-reg*) *tmp-reg*)
+       (inst :mov (@ res nil nil nil) *simple-array-tag*)
+       (inst :shl arg *tag-size*)
+       (inst :mov (@ res nil nil *word-size*) arg)
+       (inst :add res *pointer-tag*))
 
-
-(define-vop from-lisp-test (res :register) ()
-  (inst :mov :RAX 33561728)
+(define-vop %error (res :register) ((msg :register))
+  (inst :mov :RAX 33560352)
   (dolist (reg *c-call-save-registers*)
     (unless (eq reg res)
       (inst :push reg)))
   (inst :push :rbp)
   (inst :mov :rbp :rsp)
+  (when (not (eq msg :rdi))
+    (inst :mov :rdi msg))
   (inst :call :rax)
-  ;; (inst :push :R15)
-  ;; (inst :push :RBP)
-  ;; (inst :mov :RSP :RBP)
-  ;; (inst :call :RAX)
-  ;; (inst :pop :RBP)
-  ;; (inst :pop :R15)
   (inst :mov res :RAX)
   (inst :pop :rbp)
   (dolist (reg (reverse *c-call-save-registers*))
     (unless (eq reg res)
       (inst :pop reg))))
 
+(define-vop from-lisp-test (res :register) ()
+  (inst :mov :RAX 33560352)
+  (dolist (reg *c-call-save-registers*)
+    (unless (eq reg res)
+      (inst :push reg)))
+  (inst :push :rbp)
+  (inst :mov :rbp :rsp)
+  (inst :call :rax)
+  (inst :mov res :RAX)
+  (inst :pop :rbp)
+  (dolist (reg (reverse *c-call-save-registers*))
+    (unless (eq reg res)
+      (inst :pop reg))))
 
-#+nil
- (define-vop foo (res :register) ((arg :register))
-   (when (not (eq arg :RDI))
-     (inst :mov :RDI arg))
-   (inst :mov :RAX 33561792)
-   (inst :push :R15)
-   (inst :sub :RSP 8)
-   (inst :call :RAX)
-   (inst :add :RSP 8)
-   (inst :pop :R15)
-   (inst :mov :RBX :RAX))
+(defun listify-code-generator (fixed-arguments-count)
+  (let ((*segment-instructions* nil))
+    (let ((start (make-vop-label "start-"))
+	  (make-cons (make-vop-label "make-cons-"))
+	  (regs-args (make-vop-label "regs-args-"))
+	  (rdx-label (make-vop-label "rdx-"))
+	  (rdi-label (make-vop-label "rdi-"))
+	  (r8-label (make-vop-label "r8-"))
+	  (r9-label (make-vop-label "r9-"))
+	  (exit (make-vop-label "exit-")))
+
+      (inst :mov *tmp-reg* fixed-arguments-count)
+      ;; (inst :shr *tmp-reg* *tag-size*)
+      (inst :shr *fun-number-of-arguments-reg* *tag-size*)
+
+      ;; allocate space for whole list
+      (inst :mov :r12 *fun-number-of-arguments-reg*)
+      (inst :sub :r12 *tmp-reg*)
+      (inst :mov :r13 (@ *heap-header-reg*))
+      (inst :mov :r14 :r13) ;; save header start, current allocation pointer is in R14
+      (inst :add :r12 :r12)
+      (inst :lea :r13 (@ :r13 :r12 8)) ;; FIXME FIXME FIXME, check format
+      (inst :mov (@ *heap-header-reg*) :r13)
+      (inst :mov :r12 *nil*) ;; first cdr is NIL
+
+      ;; loop start
+      ;; loop vars, *tmp-reg*, r14, r12
+      (inst :label start)
+      (inst :cmp *fun-number-of-arguments-reg* *tmp-reg*)
+      (inst :jump-fixup :je exit)
+      (inst :cmp *fun-number-of-arguments-reg* 4) ; is number of args in register
+      (inst :jump-fixup :jle regs-args)
+
+      ;; stack arguments processing
+      (inst :mov :r13 *fun-number-of-arguments-reg*)
+      (inst :sub :r13 *tmp-reg*)
+      (inst :mov :r11 (@ *base-pointer-reg* :r13 8 8))
+      ;; save address of current cons in a case that this is our lats &rest arg
+      (inst :mov :r13 (@ :r14 nil nil *list-tag*))
+      (inst :mov (@ *base-pointer-reg* :r13 8 8) :r13)
+      (inst :jump-fixup :jmp make-cons)
+
+      (inst :label regs-args)
+      (inst :cmp *fun-number-of-arguments-reg* 4)
+      (inst :jump-fixup :je r9-label)
+      (inst :cmp *fun-number-of-arguments-reg* 3)
+      (inst :jump-fixup :je r8-label)
+      (inst :cmp *fun-number-of-arguments-reg* 2)
+      (inst :jump-fixup :je rdi-label)
+
+      (inst :label rdx-label)
+      (inst :mov :r11 :rdx)
+      ;; save address of current cons in a case that this is our lats &rest arg
+      (inst :lea :rdx (@ :r14 nil nil *list-tag*))
+      (inst :jump-fixup :jmp make-cons)
+
+      (inst :label rdi-label)
+      (inst :mov :r11 :rdi)
+      (inst :lea :rdi (@ :r14 nil nil *list-tag*))
+      (inst :jump-fixup :jmp make-cons)
+
+      (inst :label r8-label)
+      (inst :mov :r11 :r8)
+      (inst :lea :r8 (@ :r14 nil nil *list-tag*))
+      (inst :jump-fixup :jmp make-cons)
+
+      (inst :label r9-label)
+      (inst :mov :r11 :r9)
+      (inst :lea :r9 (@ :r14 nil nil *list-tag*))
+      (inst :jump-fixup :jmp make-cons)
+
+      (inst :label make-cons)
+      ;; expecting car in r11, cdr in r12, resulting cons is in r12
+      (inst :mov (@ :r14) :r11)
+      (inst :mov (@ :r14 nil nil 8) :r12)
+      (inst :lea :r12 (@ :r14 nil nil *list-tag*))
+      (inst :lea :r14 (@ :r14 nil nil (* 2 *word-size*)))
+      (inst :sub *fun-number-of-arguments-reg* 1)
+      (inst :jump-fixup :jmp start)
+    
+      (inst :label exit))
+    (reverse *segment-instructions*)))
+
+  ;; (define-vop open (:res register) ((path :register) (mode :register)))
+
+  ;; (define-vop close (:res register) ())
+
+  ;; (define-vop read (:res register) ())
+
+  ;; (define-vop write (:res register) ((buf :register) (nbyte :register)))
+
+
+  
+

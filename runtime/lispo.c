@@ -91,13 +91,13 @@ int64_t untag_fixnum(lispobj obj) {
 lispobj tag_char(char c) {
   lispobj lc = 0L;
   lc |= c;
-  lc <<= CHAR_SHIFT;
+  lc <<= TAG_SIZE;
   lc |= CHAR_TAG;
   return lc;
 }
 
 char untag_char(lispobj obj) {
-  obj >>= CHAR_SHIFT;
+  obj >>= TAG_SIZE;
   return (char) obj;
 }
 

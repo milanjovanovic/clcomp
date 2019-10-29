@@ -191,8 +191,26 @@
 (defun make-lambda-exit-ir (component)
   (add-ir component (list (list 'lambda-exit))))
 
-(defun make-lambda-entry-ir (component number-of-arguments)
-  (add-ir component (list (list 'lambda-entry) (list 'arg-check number-of-arguments))))
+(defun get-minimum-number-of-args (args)
+  (let ((i 0))
+    (dolist (arg args)
+      (unless (lexical-var-node-rest arg)
+	(incf i)))
+    i))
+
+(defun contains-rest-arg (args)
+  (dolist (arg args)
+    (when (lexical-var-node-rest arg)
+      (return-from contains-rest-arg (get-minimum-number-of-args args)))))
+
+(defun make-lambda-entry-ir (component arguments)
+  (add-ir component (list (list 'lambda-entry)))
+  (add-ir component (list (if (contains-rest-arg arguments)
+			      (list 'arg-minimum-check (get-minimum-number-of-args arguments))
+			      (list 'arg-check (get-minimum-number-of-args arguments)))))
+  (let ((min-args (contains-rest-arg arguments)))
+    (when min-args
+      (add-ir component (list (list 'listify-args min-args))))))
 
 (defun make-lambda-arguments-ir (component arguments environments)
   (let ((index 1))
@@ -387,7 +405,7 @@
 	  (declarations (lambda-node-declarations lambda-node)))
       (add-env env environments)
       (add-declarations-env declarations environments)
-      (make-lambda-entry-ir component (length arguments))
+      (make-lambda-entry-ir component arguments)
       (make-lambda-arguments-ir component arguments environments)
       (make-return-ir component (emit-node-ir component body environments))
       (make-lambda-exit-ir component)

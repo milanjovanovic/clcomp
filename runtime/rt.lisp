@@ -82,6 +82,7 @@
   (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/arith.lisp" *clcomp-home*))
+  (clcomp-compile-file (format nil "~a/code/call.lisp" *clcomp-home*))
   (set-start-address)
   (clcomp-compile nil form)
   (maphash (lambda (k v)

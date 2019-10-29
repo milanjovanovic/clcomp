@@ -74,7 +74,6 @@
 
 ;;; this handle simple form of defstrict
 (defun macro-defstruct (form)
-  (declare (ignore form))
   form)
 
 
@@ -209,11 +208,20 @@
   (let* ((macro-fun (gethash (first macro-form) *macros*)))
     (funcall macro-fun macro-form)))
 
+(defun clcomp-macroexpand-string (string)
+  (let ((f nil)
+	(i (- (length string) 1)))
+    (dotimes (c (+ 1 i))
+      (setf f (list 'cons (char string i) f))
+      (decf i))
+    (list 'make-string (length string) f)))
+
 (defun clcomp-macroexpand (form &optional env)
   (unless env
     (setf env (make-macros-env :blocks (make-hash-table :test 'equalp))))
   (if (atom form)
-      form
+      (cond ((stringp form) (clcomp-macroexpand-string form))
+	    (t form))
       (let ((first (first form)))
 	(let ((macro-fun (gethash first *macros*)))
 	  (if macro-fun

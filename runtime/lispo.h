@@ -17,6 +17,7 @@ typedef uintptr_t lispobj;
 #define CONS_TAG 0x2 // #/* b010 */
 #define FUNCTION_TAG 0x3 // #b011
 #define CHAR_TAG 0x4 // #b100
+#define SYMBOL_TAG 0x5 //#b101
 #define POINTER_TAG 0x7 // #b111
 
 // 0x5  free 
@@ -76,3 +77,6 @@ char untag_char(lispobj obj);
 
 lispobj tag_pointer(uintptr_t pointer);
 lispobj untag_pointer(lispobj obj);
+
+
+

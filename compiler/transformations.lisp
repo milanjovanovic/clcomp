@@ -8,7 +8,7 @@
 (defstruct immediate-constant-node value)
 (defstruct heap-constant-node form)
 (defstruct quoted-node form)
-(defstruct lexical-var-node name form)
+(defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
 (defstruct if-node test-form true-form false-form)
 (defstruct let-node bindings form)
 (defstruct progn-node forms)
@@ -21,9 +21,14 @@
 (defstruct setq-node var form)
 
 (defun create-lambda-arguments-nodes (arguments)
-  (mapcar (lambda (var)
-	    (make-lexical-var-node :name var :form nil))
-	  arguments))
+  (let ((nodes nil)
+	(rest-node nil))
+    (dolist (argument arguments)
+      (cond ((eq '&rest argument) (setf rest-node t))
+	    (rest-node (push (make-lexical-var-node :name argument :form nil :rest t) nodes)
+		       (setf rest-node nil))
+	    (t (push (make-lexical-var-node :name argument :form nil) nodes))))
+    (reverse nodes)))
 
 (defun parse-declarations (form)
   (cdr form))
@@ -64,7 +69,7 @@
 	((integerp form)
 	 (make-immediate-constant-node :value (fixnumize form)))
 	((characterp form)
-	 (make-immediate-constant-node :value form))
+	 (make-immediate-constant-node :value (characterize form)))
 	(t (make-heap-constant-node :form form))))
 
 (defun create-tagbody-node (forms)
@@ -86,7 +91,9 @@
 	     (create-constant-node form))
 	    ((make-lexical-var-node :name form :form nil)))
       (let ((first (first form)))
-	(cond ((eq first 'quote)
+	(cond ((eq first '%compile-constant) ;; FIXME, need this for now, just for testing
+	       (make-immediate-constant-node :value (second form)))
+	      ((eq first 'quote)
 	       (make-quoted-node :form (second form)))
 	      ((eq first 'lambda)
 	       (create-lambda-node form))

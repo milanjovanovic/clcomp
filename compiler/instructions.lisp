@@ -156,6 +156,9 @@
 (define-inst-template :jl (:imm32) ()
 		      #x0f nil #x8C nil)
 
+(define-inst-template :jle (:imm32) ()
+		      #x0f nil #x8E nil)
+
 (define-inst-template :jnge (:imm32) ()
 		      #x0f nil #x8C nil)
 
