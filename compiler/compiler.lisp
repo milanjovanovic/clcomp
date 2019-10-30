@@ -213,9 +213,10 @@
 		     (list :call *fun-address-reg*)))
   (let ((arguments-count (nth 4 ir)))
     (when (> arguments-count (length *fun-arguments-regs*))
-      (emit-ir-assembly translator
-			(list (list :add *stack-pointer-reg*
-				    (* *word-size* (- arguments-count (length *fun-arguments-regs*))))))))
+      (let ((stack-args (- arguments-count (length *fun-arguments-regs*))))
+       (emit-ir-assembly translator
+			 (list (list :add *stack-pointer-reg*
+				     (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
   (let ((storage (get-allocation-storage (second ir) allocation)))
     (when (and storage
 	       (when (typep storage 'reg-storage)

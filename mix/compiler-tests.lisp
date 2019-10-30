@@ -63,10 +63,11 @@
 
 
 (defun generate-all-test-cores ()
-  (simple-test-1)
-  (simple-test-2)
-  (cons-test-1)
-  (cons-test-2)
-  (array-test-1)
-  (array-test-2)
-  (values))
+  (let ((*debug* nil))
+    (simple-test-1)
+    (simple-test-2)
+    (cons-test-1)
+    (cons-test-2)
+    (array-test-1)
+    (array-test-2)
+    (values)))
