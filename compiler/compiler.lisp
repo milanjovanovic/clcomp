@@ -214,11 +214,16 @@
   (let ((arguments-count (nth 4 ir)))
     (when (> arguments-count (length *fun-arguments-regs*))
       (let ((stack-args (- arguments-count (length *fun-arguments-regs*))))
-       (emit-ir-assembly translator
-			 (list (list :add *stack-pointer-reg*
-				     (* *word-size* (- arguments-count (length *fun-arguments-regs*)))))))))
+	(emit-ir-assembly translator
+			  (list (list :add *stack-pointer-reg*
+				      (* *word-size* (if (oddp stack-args)
+							 (+ 1 stack-args)
+							 stack-args))))))))
   (let ((storage (get-allocation-storage (second ir) allocation)))
-    (when (and storage
+    (emit-ir-assembly translator
+		      (list
+		       (list :mov (storage-operand storage) *return-value-reg*)))
+    #+nil(when (and storage
 	       (when (typep storage 'reg-storage)
 		 (not (eq (reg-storage-register storage) *return-value-reg*))))
       (emit-ir-assembly translator
@@ -716,10 +721,11 @@
     (case location-type
       (immediate-constant (make-constant-storage :constant (immediate-constant-constant location)))
       (param-location (get-param-storage (param-location-param-number location)))
-      (ret-location   (or
-		       ;; (gethash (location-symbol location) (allocation-storage allocation))
-		       (make-reg-storage :register *return-value-reg*)
-		       )
+      (ret-location (gethash (location-symbol location) (allocation-storage allocation))
+       #+nil(or
+	     (gethash (location-symbol location) (allocation-storage allocation))
+	     (make-reg-storage :register *return-value-reg*)
+	     )
        )
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-storage allocation)))
       (rip-relative-location (make-memory-storage))
