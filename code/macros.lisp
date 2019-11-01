@@ -1,4 +1,5 @@
 (in-package :clcomp)
+(declaim (optimize (speed 0) (safety 3) (debug 3)))
 
 (defparameter *macros* (make-hash-table))
 (defparameter *setf-expanders* (make-hash-table))
@@ -75,6 +76,18 @@
 ;;; this handle simple form of defstrict
 (defun macro-defstruct (form)
   form)
+
+(defun macro-unless (form)
+  (list 'if (second form)
+	nil
+	(third form)))
+(setf (gethash 'unless *macros*) 'macro-unless)
+
+
+(defun macro-when (form)
+  (list 'if (second form)
+	(third form)))
+(setf (gethash 'when *macros*) 'macro-when)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -156,7 +169,7 @@
     (append (list 'named-lambda (second form)
 		  (third form)
 		  (if got-declarations (fourth form) (list 'declare)))
-	    (if got-declarations (cddddr form) (cdddr form) ))))
+	    (if got-declarations (cddddr form) (cdddr form)))))
 
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)

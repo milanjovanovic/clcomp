@@ -109,15 +109,14 @@
 (defun remove-declarations-env (environments)
   (pop (fourth environments)))
 
-;; this only inlines vops
+;; for now if we want to find vop we need to declare it inline
 (defun inline-fun-p (fun environments)
   (dolist (decls (fourth environments))
     (let ((inline (cdr (assoc 'inline decls)))
 	  (notinline (cdr (assoc 'notinline decls))))
       (cond ((member fun inline) (return-from inline-fun-p t))
 	    ((member fun notinline) (return-from inline-fun-p nil)))))
-  ;; default is inline if there is
-  t)
+  nil)
 
 ;;; go tags environment
 (defun make-tagbody-env ()
@@ -240,6 +239,8 @@
 	   (list (second ir) (third ir)))
 	  ((eq mnem 'load-call)
 	   (list (second ir)))
+	  ((eq mnem 'vop)
+	   (cons (third ir) (fourth ir)))
 	  ((eq mnem 'param)
 	   (list (second ir)))
 	  ((eq mnem 'return)
@@ -324,9 +325,13 @@
       (make-vop-ir component ret-location (reverse arg-locations) (call-node-function node))
       ret-location)))
 
+;; FIXME, for now we just check does number of arguments match with vop arguments count
+(defun does-vop-match (node vop)
+  (= (length (call-node-arguments node )) (length (vop-arguments vop ))))
+
 (defun emit-call-or-vop (component node environments)
   (let ((fun (call-node-function node)))
-    (if (and (get-vop fun) (inline-fun-p fun environments) (not *dont-inline*))
+    (if (and (get-vop fun) (inline-fun-p fun environments) (not *dont-inline*) (does-vop-match node (get-vop fun)))
 	(emit-vop-ir component node environments)
 	(emit-call-ir component node environments))))
 
@@ -567,7 +572,8 @@
 (defun load-ir-p (ir)
   (or (eq (first ir) 'load)
       (eq (first ir) 'load-param)
-      (eq (first ir) 'load-call)))
+      (eq (first ir) 'load-call)
+      (eq (first ir) 'vop)))
 
 (defun block-use-location (block location)
   (dolist (loc (ir-block-used-locations block))

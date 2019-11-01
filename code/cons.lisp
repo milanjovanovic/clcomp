@@ -2,59 +2,62 @@
   rest)
 
 (defun null (thing)
+  (declare (inline null))
   (null thing))
 
 (defun consp (thing)
+  (declare (inline null listp))
   (if (null thing)
       nil
       (listp thing)))
 
 (defun cons (car cdr)
+  (declare (inline cons))
   (cons car cdr))
 
 (defun car (cons)
+  (declare (inline listp car))
   (if (listp cons)
       (car cons)
-      (error "Arguments is not cons")))
+      (error "Arguments is not of type LIST")))
 
 (defun cdr (cons)
+  (declare (inline cdr))
   (if (listp cons)
       (cdr cons)
-      (error "Arguments is not cons")))
+      (error "Arguments is not of type LIST")))
 
 (defun caar (cons)
-  (declare (notinline car))
   (car (car cons)))
 
 (defun cadr (cons)
-  (declare (notinline car cdr))
   (car (cdr cons)))
 
 (defun caddr (cons)
-  (declare (notinline car cdr))
   (car (cdr (cdr cons))))
 
 (defun cadddr (cons)
-  (declare (notinline car cdr))
   (car (cdr (cdr (cdr cons)))))
 
 (defun rplaca (cons e)
+  (declare (inline listp rplaca))
   (if (listp cons)
       (rplaca cons e)
-      (error "Argument is not cons")))
+      (error "Argument is not of type LIST")))
 
 (defun rplacd (cons e)
+  (declare (inline listp rplacd))
   (if (listp cons)
       (rplacd cons e )
-      (error "Argument is not cons")))
+      (error "Argument is not of type LIST")))
 
 (defun listp (thing)
+  (declare (inline listp))
   (listp thing))
 
 (defun first (list)
-  (if (listp list)
-      (car list)
-      (error "Argument is not cons")))
+  (declare (inline car))
+  (car list))
 
 (defun second (list)
   (cadr list))

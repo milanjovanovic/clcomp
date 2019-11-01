@@ -2,6 +2,27 @@
 
 (declaim (optimize (debug 3) (safety 3) (speed 0)))
 
+
+;;; FIXME, think some better way for source transformation
+;;; for now to make compiler works we just want to transform function call to two arg version if any
+
+(defparameter *two-arg-transformation* '((+  two-args-+)
+					 (- two-args--)
+					 (= two-args-=)
+					 (> two-args->)
+					 (< two-args-<)
+					 (>= two-args->=)
+					 (<= two-args-<=)))
+
+(defun get-two-arg-version (fun)
+  (second (assoc fun *two-arg-transformation*)))
+
+(defun maybe-transform-to-two-args-fun (form)
+  (let* ((two-arg-version (get-two-arg-version (first form))))
+    (if (and two-arg-version (= 2 (length (cdr form))))
+	(cons two-arg-version (cdr form))
+	form)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; transform sexp expression to structures tree
 
@@ -59,7 +80,8 @@
   (make-progn-node :forms (mapcar #'create-node (rest form))))
 
 (defun create-call-node (form)
-  (make-call-node :function (first form) :arguments (mapcar #'create-node (rest form))))
+  (let ((form (maybe-transform-to-two-args-fun form)))
+   (make-call-node :function (first form) :arguments (mapcar #'create-node (rest form)))))
 
 (defun create-constant-node (form)
   (cond ((eq form nil)

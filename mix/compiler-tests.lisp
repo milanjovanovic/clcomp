@@ -43,6 +43,12 @@
 		 (let ((c (car l)))
 		   (= c 10))))))
 
+(defun list-test-1 ()
+  (dump-core (make-core-file-name "list-test-1" t)
+	     '(lambda ()
+	       (let ((l (list 1 2 3 4 5 6)))
+		 (= 6 (+ (car l) 5))))))
+
 (defun array-test-1 ()
   (dump-core (make-core-file-name "array-test-1" t)
 	     '(lambda ()

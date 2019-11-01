@@ -36,6 +36,7 @@
 ;;; PARAMS-COUNT
 ;;; LOAD-PARAM
 ;;; LOAD-CALL
+;;; VOP
 ;;; LOAD
 ;;; IF
 ;;; LABEL
