@@ -1,7 +1,7 @@
 (in-package :clcomp)
 
 (define-vop char-code (res :register) ((arg1 :register))
-  (inst :mov res (@ arg1 nil nil (- *char-tag*))))
+  (inst :lea res (@ arg1 nil nil (- *char-tag*))))
 
 (define-vop characterp (res :register) ((arg :register))
   (let ((true-label (make-vop-label "true"))
