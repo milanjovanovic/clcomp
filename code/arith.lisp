@@ -21,7 +21,7 @@
 
 (defun two-args-= (a b)
   (declare (inline two-args-=))
-  (= a b))
+  (two-args-= a b))
 
 (defun = (num &rest rest)
   (progn
@@ -32,7 +32,7 @@
 
 (defun two-args-> (a b)
   (declare (inline two-args->))
-  (> a b))
+  (two-args-> a b))
 
 (defun > (num &rest rest)
   (progn
@@ -43,13 +43,13 @@
 
 (defun two-args-< (a b)
   (declare (inline two-args-<))
-  (< a b))
+  (two-args-< a b))
 
-(defun > (num &rest rest)
+(defun < (num &rest rest)
   (progn
     (dolist (i rest)
-      (unless (> i num)
-	(return-from > nil)))
+      (unless (< i num)
+	(return-from < nil)))
     t))
 
 ;; FIXME, use vop
