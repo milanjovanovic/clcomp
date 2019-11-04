@@ -67,6 +67,14 @@
 	       (let ((l (list 1 2 3 4 5 6)))
 		 (= 4 (list-length l))))))
 
+(defun list-test-5 ()
+  (dump-core (make-core-file-name "list-test-5" t)
+	     '(lambda ()
+	       (let ((l (list 1 2 3 4 5 6)))
+		 (and
+		  (= 6 (car (list-reverse l)))
+		  (= 6 (list-length (list-reverse l))))))))
+
 (defun array-test-1 ()
   (dump-core (make-core-file-name "array-test-1" t)
 	     '(lambda ()
@@ -96,6 +104,7 @@
     (list-test-2)
     (list-test-3)
     (list-test-4)
+    (list-test-5)
     (array-test-1)
     (array-test-2)
     (values)))

@@ -78,3 +78,11 @@
 	  (setf x (+ x 1)))
 	x)
       (error "Argument is not of type List")))
+
+(defun list-reverse (list)
+  (if (listp list)
+      (let ((current nil))
+	(dolist (l list)
+	  (setf current (cons l current)))
+	current)
+      (error "Argument is not of type List")))
