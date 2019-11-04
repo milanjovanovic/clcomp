@@ -10,7 +10,7 @@
 (defparameter *closure-env-reg* :RSI)
 (defparameter *heap-header-reg* :R15)
 (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
-(defparameter *scratch-regs* '(:R10 :R11))
+(defparameter *sxcratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
 (defparameter *preserved-regs* '(:R12 :R13 :R14))
 
@@ -516,8 +516,6 @@
     (merge-intervals block-intervals)))
 
 ;;; ALOCATION
-
-(defstruct allocation active inactive handled reg-map registers inactive-registers storage stack)
 (defstruct reg-storage register)
 ;;; FIXME, no need for stack-storage, should be memory-storage with RBP as base
 (defstruct stack-storage offset)
@@ -553,9 +551,9 @@
 	       (>= (second i) index)))
 	(interval-intervals interval)))
 
-(defun interval-remove-first (interval)
-  (make-interval :sym (interval-sym interval)
-		 :intervals (cdr (interval-intervals interval))))
+(defun interval-is-inactive (interval index)
+  (and (not (interval-is-handled interval index))
+       (not (interval-is-active interval index))))
 
 (defun interval-dont-intersect (i1 i2)
   (let ((i1-start (first i1))
@@ -572,23 +570,6 @@
 	(return-from intervals-dont-intersect nil))))
   t)
 
-(defun maybe-activate-inactive (allocation index)
-  (do ((inactive (allocation-inactive allocation) (cdr inactive)))
-      ((or (null inactive)
-	   (not (interval-is-active (car inactive) index)))
-       (setf (allocation-inactive allocation) inactive))
-    (push (car inactive) (allocation-active allocation))
-    (delete-inactive-register allocation (car inactive)))
-  (sort-allocation-active allocation)
-  allocation)
-
-(defun sort-allocation-inactive (allocation)
-  (setf (allocation-inactive allocation)
-	(sort (allocation-inactive allocation)
-	      #'< :key (lambda (i)
-			 (first (first (interval-intervals i))))))
-  allocation)
-
 (defun sort-allocation-active (allocation)
   (setf (allocation-active allocation)
 	(sort (allocation-active allocation)
@@ -596,29 +577,89 @@
 			 (second (first (interval-intervals i))))))
   allocation)
 
-(defun return-inactive-register (allocation interval)
-  (setf (gethash (get-interval-register allocation interval)
-		 (allocation-inactive-registers allocation))
-	'free))
+;;; FIXME check last of active intervals like in Linear Scan Allocation paper !!!
+(defun spill-something (allocation interval)
+  (allocation-add-storage allocation interval
+			  (make-stack-storage :offset (allocation-stack allocation)))
+  (incf (allocation-stack allocation)))
 
-(defun delete-inactive-register (allocation interval)
-  (remhash (get-interval-register allocation interval)
-	   (allocation-inactive-registers allocation)))
+(defstruct allocation registers stack active inactive handled reg-map storage shared-reg-counter)
 
-(defun take-inactive-register (allocation interval)
-  (setf (gethash (get-interval-register allocation interval)
-		 (allocation-inactive-registers allocation))
-	'taken))
+(defun register-shared-register (allocation register)
+  (if (gethash register (allocation-shared-reg-counter allocation))
+      (incf (gethash register (allocation-shared-reg-counter allocation)))
+      (setf (gethash register (allocation-shared-reg-counter allocation)) 0)))
 
-(defun inactive-register-free (allocation interval)
-  (eq (gethash (get-interval-register allocation interval)
-	       (allocation-inactive-registers allocation))
-      'free))
+(defun deregister-shared-register (allocation register)
+  (let ((cnt (gethash register (allocation-shared-reg-counter allocation))))
+    (if (zerop cnt)
+	(remhash register (allocation-shared-reg-counter allocation))
+	(decf (allocation-shared-reg-counter allocation)))))
 
-(defun maybe-return-inactive-register (allocation interval)
-  (when (gethash (get-interval-register allocation interval)
-		 (allocation-inactive-registers allocation))
-    (return-inactive-register allocation interval)))
+(defun maybe-return-register (allocation interval)
+  (let ((register (get-interval-register allocation interval)))
+    (unless (gethash register (allocation-shared-reg-counter allocation))
+      (push register (allocation-registers allocation)))))
+
+(defun maybe-activate-inactive (allocation index)
+  (let ((new-inactive nil))
+    (dolist (inactive-interval (allocation-inactive allocation))
+      (cond ((interval-is-active inactive-interval index)
+	     (push inactive-interval (allocation-active allocation))
+	     (deregister-shared-register allocation (get-interval-register allocation inactive-interval)))
+	    ((interval-is-handled inactive-interval index)
+	     (push inactive-interval (allocation-handled allocation))
+	     (deregister-shared-register allocation (get-interval-register allocation inactive-interval))
+	     (maybe-return-register allocation inactive-interval))
+	    (t (push inactive-interval new-inactive))))
+    (setf (allocation-inactive allocation) new-inactive)
+    (sort-allocation-active allocation)))
+
+(defun search-for-inactive-register (allocation interval)
+  (let ((maybe-regs (hash-keys (allocation-shared-reg-counter allocation)))
+	(reg-cnt-map (make-hash-table)))
+    (dolist (reg (hash-keys (allocation-shared-reg-counter allocation)))
+      (setf (gethash reg reg-cnt-map)
+	    (gethash reg (allocation-shared-reg-counter allocation))))
+    (if (null maybe-regs)
+	nil
+	(dolist (inactive-interval (allocation-inactive allocation))
+	  (when (null maybe-regs)
+	    (return-from search-for-inactive-register nil))
+	  (let ((reg (get-interval-register allocation inactive-interval)))
+	    (when reg
+	      (if (intervals-dont-intersect interval inactive-interval)
+		  (progn
+		    (decf (gethash reg reg-cnt-map))
+		    (when (zerop (gethash reg reg-cnt-map))
+		      (return-from search-for-inactive-register reg)))
+		  (setf maybe-regs (set-difference maybe-regs (list reg))))))))))
+
+
+(defun find-register (allocation interval)
+  (declare (optimize (speed 0) (debug 3)))
+  ;; (when (equalp (interval-intervals interval) (list (list 11 11))) (break))
+  (let ((inactive-register (search-for-inactive-register allocation interval)))
+    (if inactive-register
+	(progn
+	  (register-shared-register allocation inactive-register)
+	  inactive-register)
+	(let ((registers (allocation-registers allocation)))
+	  (when registers
+	    (setf (allocation-registers allocation)
+		  (cdr registers))
+	    (car registers))))))
+
+(defun maybe-allocate-register-storage (allocation interval)
+  ;; (when (equalp (interval-intervals interval) (list (list 12 13))) (break))
+  (let ((register (find-register allocation interval)))
+    (when register
+      (push interval (allocation-active allocation))
+      (sort-allocation-active allocation)
+      (put-interval-register allocation interval register)
+      (allocation-add-storage allocation interval
+			      (make-reg-storage :register register)))))
+
 
 (defun maybe-expire-intervals (allocation index)
   (dolist (interval (allocation-active allocation))
@@ -630,71 +671,28 @@
 	  (if (interval-is-handled interval index)
 	      (progn
 		(push interval (allocation-handled allocation))
-		(or (maybe-return-inactive-register allocation interval)
-		    (push (get-interval-register allocation interval)
-			  (allocation-registers allocation))))
+		(maybe-return-register allocation interval))
 	      (progn
-		(push (interval-remove-first interval) (allocation-inactive allocation))
-		(return-inactive-register allocation interval)
-		(sort-allocation-inactive allocation))))
+		(push interval (allocation-inactive allocation))
+		(register-shared-register allocation (get-interval-register allocation interval)))))
 	(return-from maybe-expire-intervals allocation))))
-
-
-(defun find-inactive-interval (allocation interval)
-  (declare (optimize (speed 0) (debug 3)))
-  ;; (when (equalp (interval-intervals interval) (list (list 11 11))) (break))
-  (dolist (inactive (allocation-inactive allocation))
-    (when (and
-	   (intervals-dont-intersect inactive interval)
-	   (inactive-register-free allocation inactive))
-      (take-inactive-register allocation inactive)
-      (return-from find-inactive-interval inactive))))
-
-(defun find-register (allocation interval)
-  ;; first try inactive intervals ???
-  (declare (optimize (speed 0) (debug 3)))
-  ;; (when (equalp (interval-intervals interval) (list (list 11 11))) (break))
-  (let ((inactive-interval (find-inactive-interval allocation interval)))
-    (if inactive-interval
-	(get-interval-register allocation inactive-interval)
-	(let ((registers (allocation-registers allocation)))
-	  (when registers
-	    (setf (allocation-registers allocation)
-		  (cdr registers))
-	    (car registers))))))
-
-;;; FIXME check last of active intervals like in Linear Scan Allocation paper !!!
-(defun spill-something (allocation interval)
-  (allocation-add-storage allocation interval
-			  (make-stack-storage :offset (allocation-stack allocation)))
-  (incf (allocation-stack allocation))
-  (push interval (allocation-active allocation))
-  (sort-allocation-active allocation))
-
-(defun maybe-allocate-register-storage (allocation interval)
-  (declare (optimize (speed 0) (debug 3)))
-  ;; (when (equalp (interval-intervals interval) (list (list 12 13))) (break))
-  (let ((register (find-register allocation interval)))
-    (when register
-      (push interval (allocation-active allocation))
-      (sort-allocation-active allocation)
-      (put-interval-register allocation interval register)
-      (allocation-add-storage allocation interval
-			      (make-reg-storage :register register)))))
 
 (defun make-component-allocation (intervals-map)
   (declare (optimize (speed 0) (debug 3)))
   (let ((allocation (make-allocation  :stack 0
 				      :reg-map (make-hash-table)
 				      :registers *preserved-regs*
-				      :inactive-registers (make-hash-table)
-				      :storage (make-hash-table))))
+				      :storage (make-hash-table)
+				      :shared-reg-counter (make-hash-table))))
     (dolist (interval (get-sorted-intervals-list intervals-map))
-      (maybe-activate-inactive allocation (get-interval-first-start interval) )
-      (maybe-expire-intervals allocation (get-interval-first-start interval))
-      (unless (maybe-allocate-register-storage allocation interval)
-	(spill-something allocation interval)))
+      (let ((interval-start (get-interval-first-start interval)))
+	(maybe-activate-inactive allocation interval-start)
+	(maybe-expire-intervals allocation interval-start)
+	(unless (maybe-allocate-register-storage allocation interval)
+	  (spill-something allocation interval))))
     allocation))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun storage-operand (storage)
   (case (type-of storage)
@@ -958,3 +956,26 @@
 
 ;;;; TODO
 ;;; - stack offsets, when we removed saving preserved regs we are wasting stack space
+
+(defun test-reg-allocation (reg locs intervals)
+  (declare (ignore reg))
+  (dolist (loc locs)
+    (dolist (loc2 locs)
+      (unless (eq loc loc2)
+	(let ((i1 (make-interval :sym loc :intervals (gethash loc intervals)))
+	      (i2 (make-interval :sym loc2 :intervals (gethash loc2 intervals))))
+	  (unless (intervals-dont-intersect i1 i2)
+	    (print (list i1 i2))))))))
+
+(defun test-allocation (allocation intervals)
+  (let ((th (make-hash-table))
+	(locs (hash-keys (allocation-storage allocation))))
+    (dolist (l locs)
+      (let ((storage (gethash l (allocation-storage allocation))))
+	(when (typep storage 'reg-storage)
+	  (setf (gethash (reg-storage-register storage) th)
+		(cons l (gethash (reg-storage-register storage) th))))))
+    (let ((regs (hash-keys th)))
+      (dolist (reg regs)
+	(test-reg-allocation reg (gethash reg th) intervals)))))
+

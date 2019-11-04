@@ -49,6 +49,24 @@
 	       (let ((l (list 1 2 3 4 5 6)))
 		 (= 6 (+ (car l) 5))))))
 
+(defun list-test-2 ()
+  (dump-core (make-core-file-name "list-test-2" t)
+	     '(lambda ()
+	       (let ((l (list 1 2 3 4 5 6)))
+		 (= 6 (list-length l))))))
+
+(defun list-test-3 ()
+  (dump-core (make-core-file-name "list-test-3" t)
+	     '(lambda ()
+	       (let ((l (list 1 2 3 4 5 6)))
+		 (= 4 (list-length (cddr l)))))))
+
+(defun list-test-4 ()
+  (dump-core (make-core-file-name "list-test-4" nil)
+	     '(lambda ()
+	       (let ((l (list 1 2 3 4 5 6)))
+		 (= 4 (list-length l))))))
+
 (defun array-test-1 ()
   (dump-core (make-core-file-name "array-test-1" t)
 	     '(lambda ()
@@ -74,6 +92,12 @@
     (simple-test-2)
     (cons-test-1)
     (cons-test-2)
+    (list-test-1)
+    (list-test-2)
+    (list-test-3)
+    (list-test-4)
     (array-test-1)
     (array-test-2)
     (values)))
+
+

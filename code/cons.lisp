@@ -30,6 +30,9 @@
 (defun caar (cons)
   (car (car cons)))
 
+(defun cddr (cons)
+  (cdr (cdr cons)))
+
 (defun cadr (cons)
   (car (cdr cons)))
 
@@ -67,3 +70,11 @@
 
 (defun fourth (list)
   (cadddr list))
+
+(defun list-length (list)
+  (if (listp list)
+      (let ((x 0))
+	(dolist (l list)
+	  (setf x (+ x 1)))
+	x)
+      (error "Argument is not of type List")))
