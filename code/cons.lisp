@@ -86,3 +86,47 @@
 	  (setf current (cons l current)))
 	current)
       (error "Argument is not of type List")))
+
+;;; FIXME. list can be improper
+(defun copy-list (list)
+  (let ((new-list nil))
+    (dolist (elem list))))
+
+(defun append (&rest lists)
+  (if (null lists)
+      nil
+      (if (= 1 (list-length lists))
+	  (first lists)
+	  (let* ((result-list nil)
+		 (current-result-cdr nil))
+	    (do* ((lcdr lists (cdr lcdr))
+		  (lcar (car lcdr) (car lcdr)))
+		 ((null (cdr lcdr))
+		  (setf (cdr current-result-cdr) lcar)
+		  result-list)
+	      (dolist (elem lcar)
+		(let ((new-cdr (cons elem nil)))
+		  (if (null result-list)
+		      (progn
+			(setf result-list new-cdr)
+			(setf current-result-cdr new-cdr))
+		      (progn
+			(setf (cdr current-result-cdr) new-cdr)
+			(setf current-result-cdr new-cdr))))))))))
+
+(defun list* (&rest rest)
+  (let ((result-list nil)
+	(current-cdr))
+    (do* ((cdr rest (cdr cdr))
+	  (car (car cdr) (car cdr)))
+	 ((null (cdr cdr))
+	  (setf (cdr current-cdr) car)
+	  result-list)
+      (let ((new-cdr (cons car nil)))
+	(if (null result-list)
+	    (progn
+	      (setf result-list new-cdr)
+	      (setf current-cdr new-cdr))
+	    (progn
+	      (setf (cdr current-cdr) new-cdr)
+	      (setf current-cdr new-cdr)))))))

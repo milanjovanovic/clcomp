@@ -94,22 +94,24 @@
   (let ((f nil))
     (dolist (b bindings)
       (push (list 'setf (first b) (third b)) f))
-    (cons 'progn f)))
+    (cons 'progn (reverse f))))
 
 (defun macro-do-parse-bindings (bindings)
   (let ((b nil))
     (dolist (bin bindings)
       (push (list (first bin) (second bin)) b))
-    b))
+    (reverse b)))
 
+;; FIXME, bug when second binding form is missing
 (defun macro-do (form)
-  (let ((bindings (second form))
+  (let ((is-do* (eq (first form) 'do*))
+	(bindings (second form))
 	(test-form (third form))
 	(step-form (cdddr form))
 	(test-tag (gensym "TEST-TAG"))
 	(step-tag (gensym "STEP-TAG")))
     (list 'block nil
-	  (list 'let (macro-do-parse-bindings bindings)
+	  (list (if is-do* 'let* 'let) (macro-do-parse-bindings bindings)
 		(list 'tagbody
 		      (list 'go test-tag)
 		      step-tag
@@ -117,9 +119,15 @@
 		      (macro-do-parse-step-setq-form bindings)
 		      test-tag
 		      (list 'if (first test-form)
-			    (list 'return (second test-form))
+			    (list 'return (cons 'progn (cdr test-form)))
 			    (list 'go step-tag)))))))
 (setf (gethash 'do *macros*) 'macro-do)
+(setf (gethash 'do* *macros*) 'macro-do)
+
+
+;; FIXME
+(defun macro-cond (form)
+  form)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
