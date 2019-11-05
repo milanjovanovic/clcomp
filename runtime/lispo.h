@@ -20,7 +20,6 @@ typedef uintptr_t lispobj;
 #define SYMBOL_TAG 0x5 //#b101
 #define POINTER_TAG 0x7 // #b111
 
-// 0x5  free 
 // 0x6  free
 
 enum base_lisp_type {FIXNUM, CHAR, CONS, FUNCTION, POINTER};
@@ -51,6 +50,7 @@ struct symbol {
   lispobj name;
   lispobj fun;
   lispobj value;
+  lispobj plist;
 };
 
 struct lisp_code {

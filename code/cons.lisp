@@ -115,18 +115,7 @@
 			(setf current-result-cdr new-cdr))))))))))
 
 (defun list* (&rest rest)
-  (let ((result-list nil)
-	(current-cdr))
-    (do* ((cdr rest (cdr cdr))
-	  (car (car cdr) (car cdr)))
-	 ((null (cdr cdr))
-	  (setf (cdr current-cdr) car)
-	  result-list)
-      (let ((new-cdr (cons car nil)))
-	(if (null result-list)
-	    (progn
-	      (setf result-list new-cdr)
-	      (setf current-cdr new-cdr))
-	    (progn
-	      (setf (cdr current-cdr) new-cdr)
-	      (setf current-cdr new-cdr)))))))
+  (do ((cdr rest (cdr cdr)))
+       ((null (cddr cdr))
+	(setf (cdr cdr) (cadr cdr))
+	rest)))

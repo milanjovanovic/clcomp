@@ -18,6 +18,10 @@
       (setf index (+ 1 index)))
     array))
 
+(defun array-total-size (array)
+  (declare (inline array-total-size))
+  (array-total-size array))
+
 (defun make-string (size initial-content)
   (declare (notinline allocate-array setf-aref))
   (let ((array (allocate-array size (%compile-constant 2)))

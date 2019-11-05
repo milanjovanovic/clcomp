@@ -93,7 +93,8 @@
 (defun macro-do-parse-step-setq-form (bindings)
   (let ((f nil))
     (dolist (b bindings)
-      (push (list 'setf (first b) (third b)) f))
+      (when (third b)
+	(push (list 'setf (first b) (third b)) f)))
     (cons 'progn (reverse f))))
 
 (defun macro-do-parse-bindings (bindings)
