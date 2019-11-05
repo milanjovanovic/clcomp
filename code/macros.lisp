@@ -69,11 +69,12 @@
 		       (cdddr form)))))
 (setf (gethash 'and *macros*) 'macro-and)
 
+;;; FIXME
 (defun macro-typecase (form)
   (declare (ignore form))
   "FIXME")
 
-;;; this handle simple form of defstrict
+;;; FIXME
 (defun macro-defstruct (form)
   form)
 
@@ -88,6 +89,37 @@
   (list 'if (second form)
 	(third form)))
 (setf (gethash 'when *macros*) 'macro-when)
+
+(defun macro-do-parse-step-setq-form (bindings)
+  (let ((f nil))
+    (dolist (b bindings)
+      (push (list 'setf (first b) (third b)) f))
+    (cons 'progn f)))
+
+(defun macro-do-parse-bindings (bindings)
+  (let ((b nil))
+    (dolist (bin bindings)
+      (push (list (first bin) (second bin)) b))
+    b))
+
+(defun macro-do (form)
+  (let ((bindings (second form))
+	(test-form (third form))
+	(step-form (cdddr form))
+	(test-tag (gensym "TEST-TAG"))
+	(step-tag (gensym "STEP-TAG")))
+    (list 'block nil
+	  (list 'let (macro-do-parse-bindings bindings)
+		(list 'tagbody
+		      (list 'go test-tag)
+		      step-tag
+		      (cons 'progn step-form)
+		      (macro-do-parse-step-setq-form bindings)
+		      test-tag
+		      (list 'if (first test-form)
+			    (list 'return (second test-form))
+			    (list 'go step-tag)))))))
+(setf (gethash 'do *macros*) 'macro-do)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
