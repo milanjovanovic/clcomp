@@ -220,6 +220,7 @@
 
 (defun make-fun-params-ir (component arg-locations)
   (let ((arguments-count (length arg-locations)))
+    (add-ir component (list (list 'params-count arguments-count)))
     (let ((counter 1))
       (dolist (arg-loc arg-locations)
 	(add-ir component (list (list 'load-param
@@ -227,8 +228,7 @@
 							   :param-number counter
 							   :arguments-count arguments-count)
 				      arg-loc)))
-	(incf counter))
-      (add-ir component (list (list 'params-count arguments-count))))))
+	(incf counter)))))
 
 
 (defun get-ir-used-location (ir)
