@@ -99,6 +99,7 @@
       (when var-sym
 	(return-from get-var-ir-symbol var-sym))))
   ;; FIXME, unboud vars threat as special vars
+
   (error (concatenate 'string "Missing lexical variable " (symbol-name (lexical-var-node-name var-node)))))
 
 
@@ -183,7 +184,6 @@
 (defun make-vop-ir (component ret-location arg-locations vop-name)
   (add-ir component (list (list 'vop vop-name ret-location arg-locations))))
 
-
 (defun make-return-ir (component location)
   (add-ir component (list (list 'load (create-lambda-return-location) location))))
 
@@ -220,7 +220,6 @@
 
 (defun make-fun-params-ir (component arg-locations)
   (let ((arguments-count (length arg-locations)))
-    (add-ir component (list (list 'params-count arguments-count)))
     (let ((counter 1))
       (dolist (arg-loc arg-locations)
 	(add-ir component (list (list 'load-param
@@ -228,7 +227,8 @@
 							   :param-number counter
 							   :arguments-count arguments-count)
 				      arg-loc)))
-	(incf counter)))))
+	(incf counter))
+      (add-ir component (list (list 'params-count arguments-count))))))
 
 
 (defun get-ir-used-location (ir)

@@ -126,9 +126,13 @@
 (setf (gethash 'do* *macros*) 'macro-do)
 
 
-;; FIXME
 (defun macro-cond (form)
-  form)
+  (let ((clauses (cdr form)))
+    (list 'if (first (first clauses))
+	  (second (first clauses))
+	  (when (cdr clauses)
+	    (cons 'cond  (cdr clauses))))))
+(setf (gethash 'cond *macros*) 'macro-cond)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

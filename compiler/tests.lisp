@@ -17,6 +17,7 @@
    (list (make-instruction :add :rcx (@ 10000)) '(#x48 #x03 #x0C #x25 #x10 #x27 #x00 #x00))
    ;; MOV
    (list (make-instruction :mov :RAX :RCX) '(#x48 #x89 #xC8))
+   (list (make-instruction :mov :R8 :R14) '(#x4D #x89 #xF0))
    (list (make-instruction :mov (@ nil :RAX 2 nil) :RCX) '(#x48 #x89 #x0C #x45 #x00 #x00 #x00 #x00))
    (list (make-instruction :mov (@ :RAX 2) :RCX) '(#x48 #x89 #x0C #x45 #x00 #x00 #x00 #x00))
    (list (make-instruction :mov (@ :R11) :RAX) '(#x49 #x89 #x03))
@@ -92,11 +93,36 @@
    
    ;; MICS
    (list (make-instruction :ret) '(#xc3))
+
+   (list (make-instruction :neg :rax) '(#x48 #xf7 #xd8))
+   (list (make-instruction :neg :rcx) '(#x48 #xf7 #xd9))
+   (list (make-instruction :neg :r12) '(#x49 #xf7 #xdc))
+   (list (make-instruction :neg :r14) '(#x49 #xf7 #xde))
+   
+   ;; SHIFTING
+   (list (make-instruction :shl :RAX :CL) '(#x48 #xD3 #xE0))
+   (list (make-instruction :shl :R12 :CL) '(#x49 #xd3 #xe4))
+   
+   (list (make-instruction :shr :RAX :CL) '(#x48 #xd3 #xe8))
+   (list (make-instruction :shr :R12 :CL) '(#x49 #xd3 #xec))
+   (list (make-instruction :shr :R14 :CL) '(#x49 #xd3 #xee))
+   
+   (list (make-instruction :sar :RAX :CL) '(#x48 #xd3 #xf8))
+   (list (make-instruction :sar :R12 :CL) '(#x49 #xd3 #xfc))
+   (list (make-instruction :sar :RCX :CL) '(#x48 #xd3 #xf9))
+   (list (make-instruction :sar :R14 :CL) '(#x49 #xd3 #xfe))
    ))
 
 (defun run-instruction-tests ()
-  (loop for (instruction expected) in *tests*
-	collect (let ((res (assemble-instruction instruction)))
-		  (if (equal res expected)
-		      (list :OK instruction)
-		      (list :ERROR instruction :res res :expected expected)))))
+  (let ((errors nil)
+	(ok nil))
+    (loop for (instruction expected) in *tests*
+	  do (let ((res (assemble-instruction instruction)))
+	       (if (equal res expected)
+		   (push (list :OK instruction) ok)
+		   (progn
+		     (push (list :ERROR instruction :res res :expected expected) errors)))))
+    (print ok)
+    (when errors
+      (format t "~%~%We have errors:~%~%")
+      (print errors))))

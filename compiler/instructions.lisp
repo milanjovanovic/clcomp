@@ -40,6 +40,9 @@
 		      nil #x48 #x29 nil)
 
 
+(define-inst-template :neg ((:reg64 :reg32)) ()
+		      nil #x48 #xF7 #x18)
+
 ;;; MOV
 (define-inst-template :mov (:reg64 :reg64) ()
 		      nil #x48 #x89 nil)
@@ -180,7 +183,10 @@
 		      #x0f nil #x87 nil)
 
 (define-inst-template :jrcxz (:imm8) ()
-		      #xE3 nil nil nil)
+		      nil nil #xE3 nil)
+
+(define-inst-template :jns (:imm8) ()
+		      nil nil #x79 nil)
 
 ;; shift
 
@@ -192,6 +198,15 @@
 
 (define-inst-template :sar (:reg64 :imm8) ()
 		      nil #x48 #xC1 #x38)
+
+(define-inst-template :shl (:reg64 :cl) ()
+		      nil #x48 #xD3 #x20)
+
+(define-inst-template :shr (:reg64 :cl) ()
+		      nil #x48 #xD3 #x28)
+
+(define-inst-template :sar (:reg64 :cl) ()
+		      nil #x48 #xD3 #x38)
 
 
 (define-inst-template :ret () ()

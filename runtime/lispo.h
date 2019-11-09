@@ -46,7 +46,6 @@ struct array {
 #define CHAR_ARRAY_TAG 0x2
 
 struct symbol {
-  lispobj tag;
   lispobj name;
   lispobj fun;
   lispobj value;

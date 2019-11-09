@@ -90,6 +90,9 @@
       (32 :reg32)
       (64 :reg64))))
 
+(defun is-64bit (register-operand)
+  (eq :reg64 (register-type register-operand)))
+
 (defun register-operand? (template-operand)
   (find template-operand *tmpl-reg-operands*))
 
@@ -261,7 +264,7 @@
 	 ((immediate-operand? type)
 	  (and (typep operand 'number)
 	       (imm-is-of-type operand type)))
-	 (t nil))
+	 (t (eq type operand))) ; this matches literal register in template
    type))
 
 ;;; If template operand is list of more than one type find the one that best match actual operand
@@ -504,7 +507,10 @@
   (cond ((register-operand? template-operand)
 	 (when (extended-register? operand)
 	   (setf rex (rex #b0 #b0 #b0 #b0))
-	   (setf (ldb *rex.b.byte* rex) #b1))
+	   (setf (ldb *rex.b.byte* rex) #b1)
+	   (when (and (not (contain-flag '+r flags))
+		      (eq :reg64 template-operand))
+	     (setf (ldb *rex.w.byte* rex) #b1)))
 	 (if (contain-flag '+r flags)
 	     (setf (ldb (byte 3 0) opcode) (get-register-bits operand))
 	     (progn
