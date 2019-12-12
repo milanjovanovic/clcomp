@@ -58,6 +58,13 @@ int is_fun(lispobj obj) {
   return (obj & MASK) == FUNCTION_TAG ? 1 : 0;
 }
 
+int is_symbol(lispobj obj) {
+  return (obj & MASK) == SYMBOL_TAG ? 1 : 0;
+}
+
+
+
+
 int is_simple_array(lispobj obj) {
 
   if(!is_pointer(obj)) {
@@ -92,6 +99,8 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
     return CONS;
   } else if (is_fun(obj)) {
     return FUNCTION;
+  } else if (is_symbol(obj)) {
+    return SYMBOL;
   } else {
     return -1;
   }
@@ -196,6 +205,11 @@ void print_lisp_pointer(lispobj obj) {
   }
 }
 
+void print_lisp_symbol(lispobj obj) {
+  printf("#:");
+  print_lisp_string(symbol_name(obj));
+}
+
 void print_lisp(lispobj obj) {
 
   if(obj == LISP_NIL) {
@@ -226,6 +240,9 @@ void print_lisp(lispobj obj) {
       break;
     case POINTER :
       print_lisp_pointer(obj);
+      break;
+    case SYMBOL_TAG :
+      print_lisp_symbol(obj);
       break;
     default :
       printf("UNKNOWN PRINT: %d", type);

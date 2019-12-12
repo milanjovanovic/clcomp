@@ -31,6 +31,30 @@ lispobj cdr(lispobj lisp_cons) {
   return cons->cdr;
 }
 
+struct symbol *untag_symbol(lispobj cons) {
+  return (struct symbol *) untag_pointer(cons);
+}
+
+lispobj symbol_name(lispobj symbol) {
+  struct symbol *sym = untag_symbol(symbol);
+  return sym->name;
+}
+
+lispobj symbol_value(lispobj symbol) {
+  struct symbol *sym = untag_symbol(symbol);
+  return sym->value;
+}
+
+lispobj symbol_fun(lispobj symbol) {
+  struct symbol *sym = untag_symbol(symbol);
+  return sym->fun;
+}
+
+lispobj symbol_plist(lispobj symbol) {
+  struct symbol *sym = untag_symbol(symbol);
+  return sym->plist;
+}
+
 struct array *allocate_string(void **heap, char *cstring) {
 
   struct array *lisp_str = (struct array *) *heap;

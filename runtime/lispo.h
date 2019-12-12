@@ -22,7 +22,7 @@ typedef uintptr_t lispobj;
 
 // 0x6  free
 
-enum base_lisp_type {FIXNUM, CHAR, CONS, FUNCTION, POINTER};
+enum base_lisp_type {FIXNUM, CHAR, CONS, FUNCTION, POINTER, SYMBOL};
 enum pointer_lisp_type {STRING, UNKNOWN};
 
 #define CHAR_SHIFT 0x8
@@ -64,6 +64,11 @@ struct cons *untag_cons(lispobj cons);
 lispobj car(lispobj lisp_cons);
 lispobj cdr(lispobj lisp_cons);
 
+lispobj symbol_name(lispobj symbol);
+lispobj symbol_value(lispobj symbol);
+lispobj symbol_fun(lispobj symbol);
+lispobj symbol_name(lispobj symbol);
+
 
 struct array *allocate_string(void **heap, char *cstring);
 lispobj tag_array(struct array *array);
@@ -76,6 +81,8 @@ char untag_char(lispobj obj);
 
 lispobj tag_pointer(uintptr_t pointer);
 lispobj untag_pointer(lispobj obj);
+
+
 
 
 
