@@ -39,6 +39,14 @@
 (define-inst-template :sub ((:reg64 :addr) :reg64) ()
 		      nil #x48 #x29 nil)
 
+;; DEC/INC
+(define-inst-template :dec (:reg64) ()
+		      nil #x48 #xff #x8)
+
+#+nil
+(define-inst-template :inc (:reg64 :imm32) ()
+		      nil #x48 #xff )
+
 
 (define-inst-template :neg ((:reg64 :reg32)) ()
 		      nil #x48 #xF7 #x18)

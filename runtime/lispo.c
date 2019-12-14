@@ -45,9 +45,9 @@ lispobj symbol_value(lispobj symbol) {
   return sym->value;
 }
 
-lispobj symbol_fun(lispobj symbol) {
+lispobj symbol_function(lispobj symbol) {
   struct symbol *sym = untag_symbol(symbol);
-  return sym->fun;
+  return sym->function;
 }
 
 lispobj symbol_plist(lispobj symbol) {

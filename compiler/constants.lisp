@@ -13,7 +13,6 @@
 (defparameter *symbol-tag* 5)
 (defparameter *pointer-tag* 7)
 
-
 (defparameter *pointer-simple-array-tag* 1)
 (defparameter *pointer-string-tag* 2)
 
@@ -29,7 +28,7 @@
 						   (+ 1 *tag-size*)))))
 
 
-(defparameter *array-header-size* 3) ;; look at lispo.h
+(defparameter *array-header-size* 2) ;; look at lispo.h
 
 (defun fixnumize (num)
   (if (and (> num *most-negative-fixnum*)

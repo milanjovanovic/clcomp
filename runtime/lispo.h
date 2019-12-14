@@ -47,7 +47,7 @@ struct array {
 
 struct symbol {
   lispobj name;
-  lispobj fun;
+  lispobj function;
   lispobj value;
   lispobj plist;
 };
@@ -66,7 +66,7 @@ lispobj cdr(lispobj lisp_cons);
 
 lispobj symbol_name(lispobj symbol);
 lispobj symbol_value(lispobj symbol);
-lispobj symbol_fun(lispobj symbol);
+lispobj symbol_function(lispobj symbol);
 lispobj symbol_name(lispobj symbol);
 
 

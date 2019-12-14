@@ -30,3 +30,7 @@
       (setf-aref array index e)
       (setf index (+ 1 index)))
     array))
+
+(defun %copy-array (array)
+  (declare (inline %copy-array))
+  (%copy-array array))

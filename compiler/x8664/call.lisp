@@ -131,7 +131,7 @@
       (inst :mov (@ :r14 nil nil 8) :r12)
       (inst :lea :r12 (@ :r14 nil nil *list-tag*))
       (inst :lea :r14 (@ :r14 nil nil (* 2 *word-size*)))
-      (inst :sub *fun-number-of-arguments-reg* 1)
+      (inst :dec *fun-number-of-arguments-reg*)
       (inst :jump-fixup :jmp start)
 
       (inst :label zero-args)
@@ -147,7 +147,3 @@
   ;; (define-vop read (:res register) ())
 
   ;; (define-vop write (:res register) ((buf :register) (nbyte :register)))
-
-
-  
-

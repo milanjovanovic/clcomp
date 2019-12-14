@@ -10,7 +10,7 @@
 (defparameter *closure-env-reg* :RSI)
 (defparameter *heap-header-reg* :R15)
 (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
-(defparameter *sxcratch-regs* '(:R10 :R11))
+(defparameter *scratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
 (defparameter *preserved-regs* '(:R12 :R13 :R14))
 
@@ -978,4 +978,3 @@
     (let ((regs (hash-keys th)))
       (dolist (reg regs)
 	(test-reg-allocation reg (gethash reg th) intervals)))))
-

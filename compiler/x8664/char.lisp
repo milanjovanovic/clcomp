@@ -3,6 +3,9 @@
 (define-vop char-code (res :register) ((arg1 :register))
   (inst :lea res (@ arg1 nil nil (- *char-tag*))))
 
+(define-vop code-char (res :register) ((arg1 :register))
+  (inst :lea res (@ arg1 nil nil *char-tag*)))
+
 (define-vop characterp (res :register) ((arg :register))
   (let ((true-label (make-vop-label "true"))
 	(exit-label (make-vop-label "exit")))
