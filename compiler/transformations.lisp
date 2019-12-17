@@ -6,13 +6,15 @@
 ;;; FIXME, think some better way for source transformation
 ;;; for now to make compiler works we just want to transform function call to two arg version if any
 
-(defparameter *two-arg-transformation* '((+  two-args-+)
+(defparameter *two-arg-transformation* '((+ two-args-+)
 					 (- two-args--)
 					 (= two-args-=)
 					 (> two-args->)
 					 (< two-args-<)
 					 (>= two-args->=)
-					 (<= two-args-<=)))
+					 (<= two-args-<=)
+					 (char= two-args-char=)
+					 (char-equal two-args-char-equal)))
 
 (defun get-two-arg-version (fun)
   (second (assoc fun *two-arg-transformation*)))

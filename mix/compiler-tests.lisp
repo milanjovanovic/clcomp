@@ -4,6 +4,7 @@
   (rt-reset)
   (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
+  (clcomp-compile-file (format nil "~a/code/seq.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/arith.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/call.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/symbol.lisp" *clcomp-home*))

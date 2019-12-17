@@ -27,7 +27,7 @@
   (let ((true-label (make-vop-label "true-label"))
 	(exit-label (make-vop-label "exit-label")))
     (inst :lea *tmp-reg* (@ symbol nil nil (- *symbol-tag*)))
-    (inst :test *tmp-reg* *symbol-tag*)
+    (inst :test *tmp-reg* *mask*)
     (inst :jump-fixup :je true-label)
     (inst :mov res *nil*)
     (inst :jump-fixup :jmp exit-label)

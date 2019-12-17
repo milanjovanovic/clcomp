@@ -39,17 +39,28 @@
 (define-inst-template :sub ((:reg64 :addr) :reg64) ()
 		      nil #x48 #x29 nil)
 
-;; DEC/INC
+;;; DEC/INC
 (define-inst-template :dec (:reg64) ()
 		      nil #x48 #xff #x8)
 
-#+nil
-(define-inst-template :inc (:reg64 :imm32) ()
-		      nil #x48 #xff )
+(define-inst-template :dec (:reg32) ()
+		      nil nil #xff #x8)
 
+(define-inst-template :inc (:reg64) ()
+		      nil #x48 #xff #x0)
 
-(define-inst-template :neg ((:reg64 :reg32)) ()
+(define-inst-template :inc (:reg32) ()
+		      nil nil #xff #x0)
+
+(define-inst-template :neg (:reg64) ()
 		      nil #x48 #xF7 #x18)
+
+;;; LOGICAL
+(define-inst-template :xor ((:reg64 :addr) :reg64) ()
+		      nil #x48 #x31 nil)
+
+(define-inst-template :xor ((:reg64 :addr) :imm32) ()
+		      nil #x48 #x81 #x30)
 
 ;;; MOV
 (define-inst-template :mov (:reg64 :reg64) ()

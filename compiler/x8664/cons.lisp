@@ -84,7 +84,7 @@
   (let ((list-label (make-vop-label "is-list"))
 	(exit-label (make-vop-label "exit")))
     (inst :lea *tmp-reg* (@ arg nil nil (- *list-tag*)))
-    (inst :test *tmp-reg* *list-tag*)
+    (inst :test *tmp-reg* *mask*)
     (inst :jump-fixup :je list-label)
     (inst :mov res *nil*)
     (inst :jump-fixup :jmp exit-label)

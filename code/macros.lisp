@@ -260,6 +260,9 @@
 	     (list 'rplacd (clcomp-macroexpand (second where) env) (clcomp-macroexpand what env)))
 	    ((eq accessor 'aref)
 	     (list 'setf-aref (clcomp-macroexpand (second where) env) (clcomp-macroexpand (third where) env)
+		   (clcomp-macroexpand what env)))
+	    ((eq accessor 'char)
+	     (list 'setf-char (clcomp-macroexpand (second where) env) (clcomp-macroexpand (third where) env)
 		   (clcomp-macroexpand what env))))))))
 
 (defun clcomp-macroexpand-1 (macro-form)

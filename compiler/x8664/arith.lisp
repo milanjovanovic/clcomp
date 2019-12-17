@@ -52,3 +52,14 @@
     (inst :label equal-label)
     (inst :mov res *t*)
     (inst :label end-label)))
+
+(define-vop abs (res :register) ((arg1 :register))
+  (inst :mov *tmp-reg* arg1)
+  (inst :sar *tmp-reg* *tag-size*)
+  (inst :sar *tmp-reg* (- (* *word-size* 8) 1))
+  (inst :mov res arg1)
+  (inst :xor res *tmp-reg*)
+  (inst :sub res *tmp-reg*))
+
+(define-vop fixnum->fixnum-ash (res :register) ((arg1 :register) (arg2 :register))
+  )

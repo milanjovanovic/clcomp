@@ -48,7 +48,7 @@
   (let ((is-array (make-vop-label "is-array"))
 	(exit-label (make-vop-label "exit")))
     (inst :lea *tmp-reg* (@ arg nil nil (- *pointer-tag*)))
-    (inst :test *tmp-reg* *pointer-tag*)
+    (inst :test *tmp-reg* *mask*)
     (inst :jump-fixup :je is-array)
     (inst :mov res *nil*)
     (inst :jump-fixup :jmp exit-label)
