@@ -1,26 +1,5 @@
 (in-package :clcomp)
 
-#+nil(define-vop %alloc-symbol (res :register) ((name :register))
-       (inst :mov *tmp-reg* (@ *heap-header-reg*))
-       (inst :mov res *tmp-reg*)
-       (inst :add *tmp-reg* 4)
-       (inst :mov *tmp-reg* (@ *heap-header-reg*) )
-       (inst :mov (@ res) SYMBOL_TAG)
-       (inst :mov (@ res nil nil *word-size*) name)
-       (inst :mov (@ res nil nil (* 2 *word-size*)) *nil*)
-       (inst :mov (@ res nil nil (* 3 *word-size*)) *nil*)
-       (inst :add res *poin)
-  
-  
-       (inst :add *temp-reg* 4)
-       (inst :mov res *tmp-reg*)
-       (inst :lea *tmp-reg* (@ *tmp-reg* arg *word-size* (* *word-size* *array-header-size*)))
-       (inst :mov (@ *heap-header-reg*) *tmp-reg*)
-       (inst :mov (@ res nil nil nil) *simple-array-tag*)
-       (inst :shl arg *tag-size*)
-       (inst :mov (@ res nil nil *word-size*) arg)
-       (inst :add res *pointer-tag*))
-
 (define-vop %error (res :register) ((msg :register))
   (inst :mov :RAX 33560352)
   (dolist (reg *c-call-save-registers*)
