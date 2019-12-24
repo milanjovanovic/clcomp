@@ -106,9 +106,6 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
   }
 }
 
-
-
-
 void print_lisp_cons_cdr(lispobj obj) {
 
   lispobj _car = car(obj);
@@ -158,7 +155,7 @@ void print_lisp_cons(lispobj obj) {
   }
 }
 
-void print_lisp_string(lispobj obj) {
+void print_lisp_string(lispobj obj, int quote) {
   
   struct array *ar = (struct array *) untag_pointer(obj);
   lispobj size = ar->size;
@@ -166,13 +163,16 @@ void print_lisp_string(lispobj obj) {
 
   lispobj *first = &ar->elements;
 
-  printf("\"");
+  if (quote)
+    printf("\"");
 
   for (long index = 0; index < array_size; index++) {
-    print_lisp(*(first + index));
+    printf("%c", untag_char(*(first + index)));
+    //    print_lisp(*(first + index));
   }
-
-  printf("\"");
+  
+  if (quote)
+    printf("\"");
 }
 
 void print_lisp_array(lispobj obj) {
@@ -194,12 +194,11 @@ void print_lisp_array(lispobj obj) {
    printf(")");
 }
 
-
 void print_lisp_pointer(lispobj obj) {
   if (is_simple_array(obj)) {
     print_lisp_array(obj);
   } else if (is_string(obj)) {
-    print_lisp_string(obj);
+    print_lisp_string(obj, 1);
   } else {
     printf("UNKNOWN POINTER");
   }
@@ -207,7 +206,7 @@ void print_lisp_pointer(lispobj obj) {
 
 void print_lisp_symbol(lispobj obj) {
   printf("#:");
-  print_lisp_string(symbol_name(obj));
+  print_lisp_string(symbol_name(obj), 0);
 }
 
 void print_lisp(lispobj obj) {
@@ -230,7 +229,7 @@ void print_lisp(lispobj obj) {
       printf("%lli", untag_fixnum(obj));
       break;
     case CHAR :
-      printf("%c", untag_char(obj));
+      printf("#\\%c", untag_char(obj));
       break;
     case CONS :
       print_lisp_cons(obj);
@@ -254,7 +253,7 @@ void print_lisp(lispobj obj) {
 
 void lisp_error(lispobj error_msg) {
   printf("LISP ERROR: ");
-  print_lisp_string(error_msg);
+  print_lisp_string(error_msg, 1);
   exit(1);
 }
 

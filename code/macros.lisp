@@ -2,7 +2,16 @@
 (declaim (optimize (speed 0) (safety 3) (debug 3)))
 
 (defparameter *macros* (make-hash-table))
-(defparameter *setf-expanders* (make-hash-table))
+(defparameter *defsetfs* nil)
+
+(defun macro-defsetf (form)
+  (list 'eval-when (list :execute)
+	(list 'push `(cons ',(second form) ',(third form)) '*defsetfs*)))
+(setf (gethash 'defsetf *macros*) 'macro-defsetf)
+
+(defun generate-macro-foo (a b)
+  (list 'eval-when (list :execute)
+	(list 'push `(cons ',a ',b) '*defsetfs*)))
 
 (defun macro-dotimes (form)
   (let ((limit (gensym "LIMIT-"))
@@ -74,9 +83,30 @@
   (declare (ignore form))
   "FIXME")
 
-;;; FIXME
+
+;;; only simple form for now (defstruct name a b c)
 (defun macro-defstruct (form)
-  form)
+  (let ((name (second form))
+	(slots (cddr form)))
+    (append (list 'progn
+		  (list '%defstruct name (length slots)))
+	    (let ((slot-form nil)
+		  (index 0))
+	      (dolist (slot slots)
+		(let ((reader-sym (intern (concatenate 'string (symbol-name name) "-" (symbol-name slot))) )
+		      (writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
+		  (push (list 'defun reader-sym
+			      (list 'instance)
+			      (list 'aref 'instance index))
+			slot-form)
+		  (push (list 'defun writer-sym
+			      (list 'instance 'value)
+			      (list 'setf (list 'aref 'instance index) 'value))
+			slot-form)
+		  (push (list 'defsetf reader-sym writer-sym) slot-form))
+		(setf index (+ 1 index)))
+	      (reverse slot-form)))))
+(setf (gethash 'defstruct *macros*) 'macro-defstruct)
 
 (defun macro-unless (form)
   (list 'if (second form)
@@ -133,7 +163,6 @@
 	  (when (cdr clauses)
 	    (cons 'cond  (cdr clauses))))))
 (setf (gethash 'cond *macros*) 'macro-cond)
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -277,6 +306,19 @@
       (decf i))
     (list 'make-string (length string) (cons 'list  f))))
 
+
+;;; QUOTE expanding
+;;; we are moving INTERN to runtime so we can bootstrap READER
+(defun clcomp-macroexpand-quote-obj (obj)
+  (if (consp obj)
+      (cons 'list  (mapcar 'clcomp-macroexpand-quote-obj obj))
+      (cond ((stringp obj) (clcomp-macroexpand-string obj))
+	    ((symbolp obj) (list 'intern (clcomp-macroexpand-string (symbol-name obj))))
+	    (t obj))))
+
+(defun clcomp-macroexpand-quote-form (form)
+  (cons 'list (mapcar #'clcomp-macroexpand-quote-obj form)))
+
 (defun clcomp-macroexpand (form &optional env)
   (unless env
     (setf env (make-macros-env :blocks (make-hash-table :test 'equalp))))
@@ -297,4 +339,7 @@
 		(eval-when (%clcomp-macroexpand-eval-when form env))
 		(lambda (%clcomp-macroexpand-lambda form env))
 		(setf (%clcomp-macroexpand-setf form env))
-		(otherwise (%clcomp-macroexpand-all form env))))))))
+		;; FIXME, if lambda form is first need to macroexpand
+		(quote (clcomp-macroexpand-quote-form (second form)))
+		(otherwise (cons first
+				 (%clcomp-macroexpand-all (rest form) env)))))))))

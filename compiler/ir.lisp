@@ -175,7 +175,10 @@
 
 ;;; FIXME, this is wrong
 (defun make-quoted-ir (component to from)
-  (add-ir component (list (list 'load-quoted to from))))
+  (declare (ignorable component to from))
+  (error "make-quoter-ir")
+  ;; (add-ir component (list (list 'load-quoted to from)))
+  )
 
 (defun make-call-ir (component location fun arguments-count)
   (push (make-fun-rip-relative :name fun) (ir-component-rips component))

@@ -61,5 +61,13 @@
   (inst :xor res *tmp-reg*)
   (inst :sub res *tmp-reg*))
 
+(define-vop two-args-logxor (res :register) ((arg1 :register)) (arg2a :register)
+  (inst :mov res arg1)
+  (inst :xor res arg2))
+
+(define-vop two-args-logand (res :register) ((arg1 :register) (arg2 :register))
+  (inst :mov res arg1)
+  (inst :and res arg2))
+
 (define-vop fixnum->fixnum-ash (res :register) ((arg1 :register) (arg2 :register))
   )

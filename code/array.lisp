@@ -85,3 +85,17 @@
 			      (char s2 index))
 	    (return-from string-equal nil)))
 	t)))
+
+;;; FIXME, implement this with REPLACE
+(defun concatenate (type &rest strings)
+  (let ((size 0)
+	(current-index 0))
+    (dolist (s strings)
+      (setf size (+ size (length s))))
+    (let ((rstring (make-string size nil)))
+      (dolist (s strings)
+	(dotimes (i (length s))
+	  (setf (char rstring current-index)
+		(char s i))
+	  (setf current-index (+ current-index 1))))
+      rstring)))

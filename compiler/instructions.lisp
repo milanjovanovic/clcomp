@@ -62,6 +62,12 @@
 (define-inst-template :xor ((:reg64 :addr) :imm32) ()
 		      nil #x48 #x81 #x30)
 
+(define-inst-template :and ((:reg64 :addr) :imm32) ()
+		      nil #x48 #x81 #x20)
+
+(define-inst-template :and ((:reg64 :addr) :reg64) ()
+		      nil #x48 #x31 nil)
+
 ;;; MOV
 (define-inst-template :mov (:reg64 :reg64) ()
 		      nil #x48 #x89 nil)
