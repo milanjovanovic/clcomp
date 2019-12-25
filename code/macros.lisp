@@ -5,13 +5,9 @@
 (defparameter *defsetfs* nil)
 
 (defun macro-defsetf (form)
-  (list 'eval-when (list :execute)
+  (list 'eval-when (list :compile-toplevel :execute)
 	(list 'push `(cons ',(second form) ',(third form)) '*defsetfs*)))
 (setf (gethash 'defsetf *macros*) 'macro-defsetf)
-
-(defun generate-macro-foo (a b)
-  (list 'eval-when (list :execute)
-	(list 'push `(cons ',a ',b) '*defsetfs*)))
 
 (defun macro-dotimes (form)
   (let ((limit (gensym "LIMIT-"))
@@ -86,10 +82,13 @@
 
 ;;; only simple form for now (defstruct name a b c)
 (defun macro-defstruct (form)
-  (let ((name (second form))
-	(slots (cddr form)))
+  (let* ((name (second form))
+	 (slots (cddr form))
+	 (constructor-sym (intern (concatenate 'string "MAKE-" (symbol-name name)))))
     (append (list 'progn
-		  (list '%defstruct name (length slots)))
+		  (list '%defstruct name (length slots))
+		  (list 'defun constructor-sym slots
+			(list 'make-array (length slots) (cons 'list slots))))
 	    (let ((slot-form nil)
 		  (index 0))
 	      (dolist (slot slots)
@@ -316,9 +315,6 @@
 	    ((symbolp obj) (list 'intern (clcomp-macroexpand-string (symbol-name obj))))
 	    (t obj))))
 
-(defun clcomp-macroexpand-quote-form (form)
-  (cons 'list (mapcar #'clcomp-macroexpand-quote-obj form)))
-
 (defun clcomp-macroexpand (form &optional env)
   (unless env
     (setf env (make-macros-env :blocks (make-hash-table :test 'equalp))))
@@ -340,6 +336,6 @@
 		(lambda (%clcomp-macroexpand-lambda form env))
 		(setf (%clcomp-macroexpand-setf form env))
 		;; FIXME, if lambda form is first need to macroexpand
-		(quote (clcomp-macroexpand-quote-form (second form)))
+		(quote (clcomp-macroexpand-quote-obj (second form)))
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))
