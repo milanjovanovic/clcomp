@@ -317,8 +317,10 @@ void init_runtime() {
   heap_header = (lispobj *) current_heap;
 
   // increase heap for header size
-  *heap_header = (lispobj) (heap_header + 2);
+  *heap_header = (lispobj) (heap_header + 4);
   *(heap_header+1) = (lispobj) heap_end;
+  *(heap_header+2) = (lispobj) (heap_header + 4);
+  *(heap_header+3) = LISP_NIL;
 
   printf("HEAP_HEADER_START: %p\n", (void *) (*heap_header));
   printf("HEAP_HEADER_END: %p\n", (void *) (*(heap_header+1)));
@@ -356,7 +358,7 @@ struct lisp_code load_test_code(char *file) {
 lispobj run_test(char *test_file) {
   
   struct lisp_code lcode = load_test_code(test_file);
-  uintptr_t code_address = (uintptr_t) *heap_header;
+  //  uintptr_t code_address = (uintptr_t) *heap_header;
   
   load_code(lcode.code, lcode.code_size);
   free(lcode.code);

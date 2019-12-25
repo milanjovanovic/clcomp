@@ -1,5 +1,12 @@
 (in-package :clcomp)
 
+(define-vop %get-env (res :register) ()
+  (inst :mov res (@ *heap-header-reg* nil nil (* 8 3))))
+
+(define-vop %set-env (res :register) ((arg :register))
+  (inst :mov (@ *heap-header-reg* nil nil (* 8 3)) arg)
+  (inst :mov res arg))
+
 (define-vop make-symbol (res :register) ((name :register))
   (inst :mov *tmp-reg* (@ *heap-header-reg*))
   (inst :mov res *tmp-reg*)

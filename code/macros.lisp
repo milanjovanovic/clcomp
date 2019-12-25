@@ -4,6 +4,14 @@
 (defparameter *macros* (make-hash-table))
 (defparameter *defsetfs* nil)
 
+
+(defun macro-defparameter (form)
+  (list 'progn
+	(list 'eval-when (list ':compile-toplevel)
+	      (list '%compiler-defparameter (list 'quote (second form))))
+	(list '%defparameter (list 'quote (second form)) (third form))))
+(setf (gethash 'defparameter *macros*) 'macro-defparameter)
+
 (defun macro-defsetf (form)
   (list 'eval-when (list :compile-toplevel :execute)
 	(list 'push `(cons ',(second form) ',(third form)) '*defsetfs*)))
@@ -246,7 +254,7 @@
 
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)
-  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun (second form)))
+  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun (clcomp-macroexpand (list 'quote (second form)))))
 	(list '%defun (second form)
 	      (clcomp-macroexpand (%parse-defun-to-lambda form) env))))
 
@@ -339,3 +347,5 @@
 		(quote (clcomp-macroexpand-quote-obj (second form)))
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))
+
+

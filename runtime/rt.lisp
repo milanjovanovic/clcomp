@@ -1,6 +1,6 @@
 (in-package #:clcomp)
 
-(defparameter *runtime-heap-start* #x200000010)
+(defparameter *runtime-heap-start* #x200000020)
 (defparameter *compilation-start-address* *runtime-heap-start*)
 (defparameter *rt-funs* (make-hash-table))
 
@@ -80,6 +80,7 @@
   (let ((*debug* nil))
     (rt-reset)
     (clcomp-compile-file (format nil "~a/code/objects.lisp" *clcomp-home*))
+    (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/seq.lisp" *clcomp-home*))
