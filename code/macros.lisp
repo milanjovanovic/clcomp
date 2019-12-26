@@ -46,7 +46,7 @@
 			    (list vsym (list 'car list-cdr)))
 		(list 'tagbody tag1
 		      (list 'progn
-			    (list 'if (list 'null vsym)
+			    (list 'if (list 'null list-cdr)
 				  (list 'return-from nil nil))
 			    (cons 'progn (cddr form))
 			    (list 'setf list-cdr (list 'cdr list-cdr))

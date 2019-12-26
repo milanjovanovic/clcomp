@@ -1,3 +1,7 @@
+(defun characterp (x)
+  (declare (inline characterp))
+  (characterp x))
+
 (defun char-code (char)
   (declare (inline char-code))
   (char-code char))
@@ -27,6 +31,7 @@
 	    (return-from char/= nil)))))))
 
 (defun two-args-char-equal (c1 c2)
+  (declare (inline eq))
   (if (eq c1 c2)
       t
       (let ((cd1 (char-code c1))

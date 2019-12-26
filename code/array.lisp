@@ -32,8 +32,6 @@
 
 
 ;;; STRING
-;;; FIXME, doesn't work when initial-content is list of NIL's
-;;; Maybe DOLIST expansion is wrong
 (defun make-string (size initial-content)
   (declare (notinline allocate-array setf-aref))
   (let ((array (allocate-array size (%compile-constant 2)))

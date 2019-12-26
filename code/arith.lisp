@@ -1,3 +1,7 @@
+(defun fixnump (x)
+  (declare (inline fixnump))
+  (fixnump x))
+
 (defun two-args-+ (a b)
   (declare (inline two-args-+))
   (two-args-+ a b))

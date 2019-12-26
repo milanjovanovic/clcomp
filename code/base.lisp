@@ -1,3 +1,8 @@
+(defun type-of (x)
+  (cond ((fixnump x) 'fixnum)
+	((characterp x) 'character)
+	(t 'unknown)))
+
 (defun eq (x y)
   (declare (inline eq))
   (eq x y))
@@ -15,4 +20,7 @@
   "FIXME")
 
 (defun equalp (x y)
+  "FIXME")
+
+(defun sxhash (x)
   "FIXME")

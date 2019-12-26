@@ -79,7 +79,7 @@
 (defun compile-and-dump (form)
   (let ((*debug* nil))
     (rt-reset)
-    (clcomp-compile-file (format nil "~a/code/objects.lisp" *clcomp-home*))
+    (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
