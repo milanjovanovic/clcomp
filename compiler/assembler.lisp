@@ -35,8 +35,8 @@
     (and extend-bit (= 1 extend-bit))))
 
 (defun ea-has-extended-register? (effective-addres)
-  (or (extended-register? (first effective-addres))
-      (extended-register? (second effective-addres))))
+  (or (extended-register? (second effective-addres))
+      (extended-register? (third effective-addres))))
 
 (defregister '(:rax :eax :ax :al) #b000 #b0)
 (defregister '(:rcx :ecx :cx :cl) #b001 #b0)
@@ -115,6 +115,23 @@
     (:imm64 64)
     ;; FIXME
     (t 128)))
+
+(defun address-bits (address)
+  (case address
+    (:addr8 8)
+    (:addr16 16)
+    (:addr32 32)
+    (:addr64 64)))
+
+(defun nbyte-bits (size)
+  (ecase size
+    (:byte  8)
+    (:word  16)
+    (:dword 32)
+    (:qword 64)))
+
+(defun is-nbyte-descriptor (what)
+  (member what '(:byte :word :dword :qword)))
 
 (defun imm-is-of-type (immediate type)
   (let ((exact-type (immediate-type immediate)))
@@ -249,7 +266,7 @@
   (find flag flags))
 
 (defun op-address? (operand)
-  (when (listp operand) operand))
+  (when (consp operand) operand))
 
 (defun tmpl-op-address? (template-operand)
   (or (eq template-operand :addr)))
@@ -259,8 +276,13 @@
    (cond ((register-operand? type)
 	  (eq (register-type operand) type))
 	 ((eq type :addr)
+	  (and (consp operand)
+	       (eq (first operand) :qword)))
+	 ((member type '(:addr8 :addr16 :addr32 :addr64))
 	  (and (typep operand 'list)
-	       (= (length operand) 4)))
+	       (= (length operand) 5)
+	       (= (address-bits type)
+		  (nbyte-bits (first operand)))))
 	 ((immediate-operand? type)
 	  (and (typep operand 'number)
 	       (imm-is-of-type operand type)))
@@ -295,7 +317,7 @@
 	 (if (is-register operand)
 	     0
 	     10))
-	((eq template-operand :addr)
+	((member template-operand '(:addr :addr64 :addr32 :addr16 :addr8))
 	 (if (op-address? operand)
 	     0
 	     10))
@@ -386,8 +408,8 @@
 	(list *modrm.reg.position* *modrm.rm.position*))))
 
 (defun encode-sib (rex sib effective-addr-operand)
-  (destructuring-bind (base index scale displacement) effective-addr-operand
-    (declare (ignore displacement))
+  (destructuring-bind (size base index scale displacement) effective-addr-operand
+    (declare (ignore displacement size))
     (if base
 	(progn
 	  (setf (ldb *sib.base.byte* sib) (get-register-bits base))
@@ -405,7 +427,8 @@
 
 (defun encode-effective-memory-address (rex modrm addr-operand)
   (let ((sib nil))
-    (destructuring-bind (base index scale displacement) addr-operand
+    (destructuring-bind (size base index scale displacement) addr-operand
+      (declare (ignorable size))
       ;; special case for rbp and r13
       ;; Table 2-5. Special Cases of REX Encodings
       (when (and (rbp-or-r13 base) (null displacement))
@@ -599,13 +622,24 @@
     (cond ((is-register first) (list first nil nil nil))
 	  ((typep first 'number) (list nil nil nil first)))))
 
+(defun maybe-insert-addr-size (addr)
+  (if (and (consp addr)
+	   (< (length addr) 5)
+	   (not (is-nbyte-descriptor (first addr))))
+      (cons :qword addr)
+      addr))
+
 (defun reformat-operand (addr)
   (if (listp addr)
-      (let ((size (length addr)))
-	(cond ((= 4 size) addr)
-	      ((= 3 size) (reformat-3size-addr addr))
-	      ((= 2 size) (reformat-2size-addr addr))
-	      ((= 1 size) (reformat-1size-addr addr))
+      (let* ((addr (maybe-insert-addr-size addr))
+	     (size (length addr)))
+	(cond ((= 5 size) addr)
+	      ((= 4 size) (cons (first addr)
+				(reformat-3size-addr (rest addr))))
+	      ((= 3 size) (cons (first addr)
+				(reformat-2size-addr (rest addr))))
+	      ((= 2 size) (cons (first addr)
+				(reformat-1size-addr (rest addr))))	      
 	      (t (error "Bad addr format"))))
       addr))
 
