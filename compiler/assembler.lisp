@@ -96,7 +96,16 @@
 (defun register-operand? (template-operand)
   (find template-operand *tmpl-reg-operands*))
 
-(defparameter *tmpl-imm-operands* '(:imm8 :imm16 :imm32 :imm64))
+(defparameter *tmpl-imm-operands* '(:imm8 :imm16 :imm32 :imm64
+				    :uimm8 :uimm16 :uimm32 :uim64))
+
+(defun unsigned-immediate-template-p (template)
+  (member template '(:uimm8 :uimm16 :uimm32 :uim64) ))
+
+(defun get-immediate-type (number unsigned)
+  (if unsigned
+      (unsigned-number-type number)
+      (signed-number-type number)))
 
 (defun immediate-type (number)
   (let ((type (signed-number-type number)))
@@ -108,13 +117,11 @@
       (t :too-large))))
 
 (defun immediate-bits (type)
-  (case type
-    (:imm8 8)
-    (:imm16 16)
-    (:imm32 32)
-    (:imm64 64)
-    ;; FIXME
-    (t 128)))
+  (ecase type
+    ((:uimm8 :imm8) 8)
+    ((:uimm16 :imm16) 16)
+    ((:uimm32 :imm32) 32)
+    ((:uimm64 :imm64) 64)))
 
 (defun address-bits (address)
   (case address
@@ -125,22 +132,21 @@
 
 (defun nbyte-bits (size)
   (ecase size
-    (:byte  8)
-    (:word  16)
-    (:dword 32)
-    (:qword 64)))
+    ((byte :byte)  8)
+    ((word :word)  16)
+    ((dword :dword) 32)
+    ((qword :qword) 64)))
 
 (defun is-nbyte-descriptor (what)
   (member what '(:byte :word :dword :qword)))
 
 (defun imm-is-of-type (immediate type)
-  (let ((exact-type (immediate-type immediate)))
-    (<= (immediate-bits exact-type)
+  (let ((unsigned-template (unsigned-immediate-template-p type)))
+    (<= (nbyte-bits (get-immediate-type immediate unsigned-template))
 	(immediate-bits type))))
 
 (defun immediate-operand? (template-operand)
   (find template-operand *tmpl-imm-operands*))
-
 
 ;;; basic encoding details
 
@@ -271,6 +277,12 @@
 (defun tmpl-op-address? (template-operand)
   (or (eq template-operand :addr)))
 
+(defun match-immediate-type (type operand)
+  (and (numberp operand)
+       (if (member type '(:imm8 :imm16 :imm32 :imm64))
+	   (imm-is-of-type operand type)
+	   (imm-is-of-type operand type))))
+
 (defun match-type (type operand)
   (and
    (cond ((register-operand? type)
@@ -322,8 +334,9 @@
 	     0
 	     10))
 	((immediate-operand? template-operand)
-	 (- (immediate-bits template-operand)
-	    (immediate-bits (immediate-type operand))))))
+	 (let ((unsigned-template (unsigned-immediate-template-p template-operand)))
+	   (- (immediate-bits template-operand)
+	      (nbyte-bits (get-immediate-type operand unsigned-template)))))))
 
 (defun match-any-of-template-operands (template-operand operand)
   (dolist (template-type template-operand)
@@ -468,7 +481,7 @@
 		 (setf (ldb (rex-ext-byte *modrm.rm.position*) rex) #b1))
 	       (list rex modrm sib displacement))))
 	
-	;; we have displacement
+	;; we have displacement, displacement is signed
 	(t (let ((displacement-type (signed-number-type displacement)))
 	     (cond ((eq displacement-type 'byte)
 		    ;; one byte displacement

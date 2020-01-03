@@ -1,8 +1,8 @@
 (in-package #:clcomp)
 
 (defun print-bits (n size)
-  (format t "~B" (ldb (byte size 0) n)))
-
+  (format t (format nil "~~~D,'0B" size) (ldb (byte size 0) n))
+  (values))
 
 (defun byte-hex (a)
   (format nil "~2,'0x" a))
@@ -14,12 +14,19 @@
 
 (defparameter *byte-min* (- (expt 2 7)))
 (defparameter *byte-max* (- (expt 2 7) 1))
+(defparameter *unsigned-byte-max* (- (expt 2 8) 1))
+
 (defparameter *word-min* (- (expt 2 15)))
 (defparameter *word-max* (- (expt 2 15) 1))
+(defparameter *unsigned-word-max* (- (expt 2 16) 1))
+
 (defparameter *dword-min* (- (expt 2 31)))
 (defparameter *dword-max* (- (expt 2 31) 1))
+(defparameter *unsigned-dword-max* (- (expt 2 32) 1))
+
 (defparameter *qword-min* (- (expt 2 63)))
 (defparameter *qword-max* (- (expt 2 63) 1))
+(defparameter *unsigned-qword-max* (- (expt 2 64) 1))
 
 (defun byte-as-byte-list (byte)
   (list byte))
@@ -76,7 +83,7 @@
   (mapcar (lambda (x) (format nil "#x~2,'0x" x))
 	  instructions))
 
-;;; we are checking all immediates as there are all signed so we can't assemble big unsigned integer as it is negative number 
+;;; we are checking all immediates as there are all signed so we can't assemble big unsigned integer as it is negative number
 (defun signed-number-type (number)
   (cond ((and (>= number *byte-min*)
 	      (<=  number *byte-max*))
@@ -91,6 +98,19 @@
 	      (<= number *qword-max*))
 	 'qword)
 	(t (error  "Number is to large"))))
+
+(defun unsigned-number-type (number)
+  (unless (plusp number)
+    (error "Number is not positive !!!"))
+  (cond ((<= number *unsigned-byte-max*)
+	 'byte)
+	((<= number *unsigned-word-max*)
+	 'word)
+	((<= number *unsigned-dword-max*)
+	 'dword)
+	((<= number *unsigned-qword-max*)
+	 'qword)
+	(t (error "Number is to large "))))
 
 (defun opcode-d-bit (opcode)
   (logbitp 1 opcode))

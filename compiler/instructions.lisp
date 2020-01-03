@@ -127,6 +127,9 @@
 (define-inst-template :cmp (:reg64 :imm8) ()
 		      nil #x48 #x83 #x38)
 
+(define-inst-template :cmp (:addr8 :uimm8) ()
+		      nil nil #x80 #x38)
+
 ;;; TEST
 (define-inst-template :test (:reg64 :reg64) ()
 		      nil #x48 #x85 nil)
@@ -180,7 +183,8 @@
 (define-inst-template :jmp (:imm8) ()
 		      nil nil #xeb nil)
 
-
+;;; FIXME, we are calculating assembling with every-jump-instruction=5 bytes
+;;; maybe instructions below will brake that ?!?!
 (define-inst-template :jl (:imm32) ()
 		      #x0f nil #x8C nil)
 
@@ -207,11 +211,14 @@
 (define-inst-template :jnbe (:imm32) ()
 		      #x0f nil #x87 nil)
 
-(define-inst-template :jrcxz (:imm8) ()
-		      nil nil #xE3 nil)
+;; (define-inst-template :jrcxz (:imm8) ()
+;; 		      nil nil #xE3 nil)
 
-(define-inst-template :jns (:imm8) ()
-		      nil nil #x79 nil)
+;; (define-inst-template :jns (:imm8) ()
+;; 		      nil nil #x79 nil)
+
+(define-inst-template :jnb (:imm32) ()
+		      #x0f nil #x83 nil)
 
 ;; shift
 
