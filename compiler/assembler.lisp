@@ -427,12 +427,14 @@
 	(progn
 	  (setf (ldb *sib.base.byte* sib) (get-register-bits base))
 	  (when (extended-register? base)
+	    (setf rex (or rex #x40))
 	    (setf (ldb *rex.b.byte* rex) #b1)))
 	(setf (ldb *sib.base.byte* sib) #b101))
     (if index
 	(progn
 	  (setf (ldb *sib.index.byte* sib) (get-register-bits index))
 	  (when (extended-register? index)
+	    (setf rex (or rex #x40))
 	    (setf (ldb *rex.x.byte* rex) #b1)))
 	(setf (ldb *sib.index.byte* sib) #b100))
     (setf (ldb *sib.scale.byte* sib) (get-scale-bits scale))
