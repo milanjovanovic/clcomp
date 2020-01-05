@@ -71,20 +71,25 @@ int is_simple_array(lispobj obj) {
     return 0;
   }
 
-  lispobj *tag = (lispobj *) untag_pointer(obj);
+  lispobj ptr = untag_pointer(obj);
 
-  return (*tag & 0xFF) == SIMPLE_ARRAY_TAG ? 1 : 0;
+  unsigned char extended_tag = (unsigned char) *((unsigned char*) ptr);
+
+  return (extended_tag >= EXTENDED_TAG_SIMPLE_ARRAY);
 }
 
 int is_string(lispobj obj) {
+  
   if(!is_pointer(obj)) {
     return 0;
   }
 
-  lispobj *tag = (lispobj *) untag_pointer(obj);
+  lispobj ptr = untag_pointer(obj);
 
-  return (*tag & 0xFF) == CHAR_ARRAY_TAG ? 1 : 0;
-   
+  unsigned char extended_tag = (unsigned char) *((unsigned char*) ptr);
+
+  return (extended_tag == EXTENDED_TAG_STRING);
+
 }
 
 enum base_lisp_type get_lisp_type(lispobj obj) {
@@ -195,15 +200,18 @@ void print_lisp_array(lispobj obj) {
 }
 
 void print_lisp_pointer(lispobj obj) {
+  printf("IN POINTER\n");
   if (is_simple_array(obj)) {
-    print_lisp_array(obj);
-  } else if (is_string(obj)) {
-    print_lisp_string(obj, 1);
+    if (is_string(obj)) {
+      print_lisp_string(obj, 1);
+    } else {
+      print_lisp_array(obj);
+    }
   } else {
     printf("UNKNOWN POINTER");
   }
 }
-
+  
 void print_lisp_symbol(lispobj obj) {
   printf("#:");
   print_lisp_string(symbol_name(obj), 0);
@@ -420,17 +428,3 @@ int from_lisp_test() {
   printf("this is test\n");
   return(80);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -7,16 +7,27 @@
 (defparameter *mask* 7)
 
 (defparameter *fixnum-tag* 0)
+(defparameter *pointer-tag* 1)
 (defparameter *list-tag* 2)
 (defparameter *function-tag* 3)
 (defparameter *char-tag* 4)
 (defparameter *symbol-tag* 5)
-(defparameter *pointer-tag* 7)
+(defparameter *single-float-tag* 6)
 
-(defparameter *pointer-simple-array-tag* 1)
-(defparameter *pointer-string-tag* 2)
+(defparameter *exteneded-tag-size* 8)
+(defparameter *extended-tag-mask* 255)
 
-;;; tag 5 and 6 are free
+
+(defparameter *extended-tags*
+  '((simple-array 209)
+    (string 217)))
+
+(defparameter *largest-extended-tag* 249)
+
+(defun get-extended-tag (what)
+  (second (assoc what *extended-tags*)))
+
+;;; tag 1 is free ??
 
 (defparameter *nil* 536870914)
 (defparameter *t* 536870927)
@@ -28,7 +39,7 @@
 						   (+ 1 *tag-size*)))))
 
 
-(defparameter *array-header-size* 2) ;; look at lispo.h
+(defparameter *array-header-size* 4) ;; look at lispo.h
 
 (defun fixnumize (num)
   (if (and (> num *most-negative-fixnum*)

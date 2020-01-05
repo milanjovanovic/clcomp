@@ -55,12 +55,19 @@ lispobj symbol_plist(lispobj symbol) {
   return sym->plist;
 }
 
+int is_symbol_interned(lispobj symbol, lispobj env_array) {
+  // FIXME
+  struct array *env = (struct array *) env_array;
+  return 0;
+}
+
 struct array *allocate_string(void **heap, char *cstring) {
 
   struct array *lisp_str = (struct array *) *heap;
   int cstr_size = strlen(cstring);
 
-  lisp_str->tag = CHAR_ARRAY_TAG;
+  //  FIXME
+  //  lisp_str->tag = EXTENDED_TAG_STRING;
   lisp_str->size = cstr_size;
   
   *heap += sizeof(struct array);

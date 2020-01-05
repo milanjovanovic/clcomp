@@ -3,6 +3,7 @@
 (defun dump-core (file form)
   (rt-reset)
   (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
+  (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/seq.lisp" *clcomp-home*))

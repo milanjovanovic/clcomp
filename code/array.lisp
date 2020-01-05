@@ -1,10 +1,11 @@
 (defun arrayp (o)
-  (declare (inline arrayp))
-  (arrayp o))
+  (declare (inline %pointerp arrayp))
+  (and (%pointerp o)
+       (arrayp o)))
 
-(defun allocate-array (size tag)
+(defun allocate-array (size)
   (declare (inline allocate-array))
-  (allocate-array size tag))
+  (allocate-array size))
 
 (defun aref (array index)
   (declare (inline aref))
@@ -14,12 +15,26 @@
   (declare (inline setf-aref))
   (setf-aref array index value))
 
-(defun make-array (size initial-content)
-  (let ((array (allocate-array size (%compile-constant 1)))
-	(index 0))
-    (dolist (e initial-content)
-      (setf-aref array index e)
-      (setf index (+ 1 index)))
+(defun %array-type (array)
+  (declare (inline %array-type))
+  (%array-type array))
+
+(defun make-array (dimension element-type initial-element initial-contents)
+  (declare (inline %set-array-type %set-array-element-type %set-array-tag debug
+		   %set-simple-array-tag))
+  (let ((array (allocate-array dimension)))
+    (%set-array-type array (list 'simple-array element-type (list dimension)))
+    (%set-array-element-type array element-type)
+    (%set-simple-array-tag array) ; FIXME, for now use VOP here, when we implement dynamic binding
+					;  we can just use (get-extended-tag 'simple-array here)
+    
+    (if initial-contents
+	(let ((index 0))
+	  (dolist (e initial-contents)
+	    (setf-aref array index e)
+	    (setf index (+ 1 index))))
+	(dotimes (i dimension)
+	  (setf-aref array i initial-element)))
     array))
 
 (defun array-total-size (array)
@@ -30,13 +45,21 @@
   (declare (inline %copy-array))
   (%copy-array array))
 
-
 ;;; STRING
-(defun make-string (size initial-content)
-  (declare (notinline allocate-array setf-aref))
-  (let ((array (allocate-array size (%compile-constant 2)))
+
+(defun stringp (o)
+  (declare (inline stringp))
+  (stringp o))
+
+(defun make-string (size initial-contents)
+  (declare (inline %set-array-type %set-array-element-type %set-array-tag debug %set-string-tag))
+  (let ((array (allocate-array size))
 	(index 0))
-    (dolist (e initial-content)
+    ;; FIXME, for now we can't use symbols in MAKE-STRING becase symbols also expand to MAKE-STRING
+    ;; (%set-array-type array (list 'simple-array 'character (list size)))
+    ;; (%set-array-element-type array 'character)
+    (%set-string-tag array)
+    (dolist (e initial-contents)
       (setf-aref array index e)
       (setf index (+ 1 index)))
     array))

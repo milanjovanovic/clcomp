@@ -14,13 +14,17 @@ typedef uintptr_t lispobj;
 #define CLEAR_TAG_MASK 0xfffffffffffffff8
 
 #define FIXNUM_TAG 0x0 // #b000
+#define POINTER_TAG 0x1 // #b001
 #define CONS_TAG 0x2 // #/* b010 */
 #define FUNCTION_TAG 0x3 // #b011
 #define CHAR_TAG 0x4 // #b100
 #define SYMBOL_TAG 0x5 //#b101
-#define POINTER_TAG 0x7 // #b111
+#define SINGLE_FLOAT_TAG 0x6 //#b110
 
-// 0x6  free
+#define EXTENDED_TAG_SIMPLE_ARRAY 0xD1
+#define EXTENDED_TAG_STRING 0xD9
+
+// tag 0x7 is free
 
 enum base_lisp_type {FIXNUM, CHAR, CONS, FUNCTION, POINTER, SYMBOL};
 enum pointer_lisp_type {STRING, UNKNOWN};
@@ -35,15 +39,13 @@ struct cons {
 #define CAR_OFFSET -2
 #define CDR_OFFSET 6
 
-#define SIMPLE_ARRAY_TAG 0x1
-
 struct array {
   lispobj tag;
   lispobj size;
+  lispobj type;
+  lispobj etype;
   lispobj elements;
 };
-
-#define CHAR_ARRAY_TAG 0x2
 
 struct symbol {
   lispobj name;
@@ -81,8 +83,3 @@ char untag_char(lispobj obj);
 
 lispobj tag_pointer(uintptr_t pointer);
 lispobj untag_pointer(lispobj obj);
-
-
-
-
-

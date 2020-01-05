@@ -7,7 +7,7 @@
   (%set-env env))
 
 (defun %get-global-symbols ()
-  (aref (%get-env) 0))
+  (car (%get-env)))
 
 (defun %get-global-interned-symbol (symbol-name)
   (dolist (cons (%get-global-symbols))
@@ -17,11 +17,9 @@
 	(return-from %get-global-interned-symbol symbol)))))
 
 (defun %add-to-interned-symbols (symbol)
-  (setf (aref (%get-env) 0)
+  (setf (car (%get-env))
 	(cons (cons (symbol-name symbol) symbol)
-	      (aref (%get-env) 0))))
+	      (car (%get-env)))))
 
 (defun %initialize-env ()
-  (let ((env (make-array 1 nil)))
-    (setf (aref env 0) nil)
-    (%set-env env)))
+  (%set-env (list nil nil)))

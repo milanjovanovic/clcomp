@@ -82,11 +82,6 @@
 		       (cdddr form)))))
 (setf (gethash 'and *macros*) 'macro-and)
 
-;;; FIXME
-(defun macro-typecase (form)
-  (declare (ignore form))
-  "FIXME")
-
 
 ;;; only simple form for now (defstruct name a b c)
 (defun macro-defstruct (form)
@@ -162,14 +157,20 @@
 (setf (gethash 'do *macros*) 'macro-do)
 (setf (gethash 'do* *macros*) 'macro-do)
 
-
 (defun macro-cond (form)
   (let ((clauses (cdr form)))
     (list 'if (first (first clauses))
-	  (second (first clauses))
+	  (cons 'progn (cdr (first clauses)))
 	  (when (cdr clauses)
 	    (cons 'cond  (cdr clauses))))))
 (setf (gethash 'cond *macros*) 'macro-cond)
+
+
+(defun macro-typecase (form)
+  )
+
+
+(defun macro-case (form))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
