@@ -166,11 +166,11 @@
 (setf (gethash 'cond *macros*) 'macro-cond)
 
 
-(defun macro-typecase (form)
-  )
+
+;;(defun macro-typecase (form))
 
 
-(defun macro-case (form))
+;;(defun macro-case (form))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -269,19 +269,73 @@
   (eq 'declare (and (listp (third form))
 		    (first (third form)))))
 
+
+;;; 
+;;; &KEY implementation, rewrite lambda list so when there is &key we rewrite it with &REST
+;;; and then bind key variables with LET
+;; FIXME, this is easiest and slowest solution for now
+;; at least generate code that will resolve arguments in one iteration over &REST
+
+(defun %lambda-list-&key-keywords (lambda-list)
+  (do ((lambda-list lambda-list (cdr lambda-list)))
+      ((or (eq (car lambda-list) '&key)
+	   (null lambda-list))
+       (cdr lambda-list))))
+
+(defun %lambda-list-get-&rest-var (lambda-list)
+  (do* ((ll lambda-list (cdr ll))
+	(lc (car ll) (car ll)))
+       ((or (eq lc '&rest)
+	    (null ll))
+	(car (cdr ll)))))
+
+(defun %rerarange-lambda-list (lambda-list)
+  (let ((new-lambda-list nil))
+    (do* ((ll lambda-list (cdr ll))
+	  (lc (car ll) (car ll)))
+	 (nil)
+      (cond ((eq '&rest lc)
+	     (let ((rest-sym (car (cdr ll))))
+	       (return (reverse (cons rest-sym (cons '&rest new-lambda-list))))))
+	    ((eq '&key lc)
+	     (return (reverse (cons (gensym "rest-arg") (cons '&rest new-lambda-list)))))
+	    (t (push lc new-lambda-list))))))
+
+(defun %key-args-let-form (rest-var key-keywords)
+  (list 'let
+	(let ((b nil))
+	  (dolist (k key-keywords)
+	    (if (atom k)
+		(push (list k (list 'getf rest-var (list 'quote k))) b)
+		(push (list (first k)
+			    (list 'or
+				  (list 'getf rest-var (list 'quote (first k)))
+				  (second k))) b)))
+	  b)))
+
 (defun %clcomp-macroexpand-lambda (form env)
-  (let ((has-declarations (%lambda-has-declarations form)))
-    (list 'lambda (second form)
+  (let* ((has-declarations (%lambda-has-declarations form))
+	 (key-keywords (%lambda-list-&key-keywords (second form)))
+	 (rearanged-llist (and key-keywords (%rerarange-lambda-list (second form))))
+	 (rest-var (%lambda-list-get-&rest-var rearanged-llist))
+	 (key-args-let-form (and key-keywords (%key-args-let-form rest-var key-keywords))))
+    (list 'lambda
+	  (if key-keywords
+	      rearanged-llist
+	      (second form))
 	  (if has-declarations (third form) (list 'declare))
-	  (if (> (length (cddr form)) 1)
-	      (clcomp-macroexpand (cons 'progn (if has-declarations
-						   (cdddr form)
-						   (cddr form)))
-				  env)
-	      (clcomp-macroexpand (first (if has-declarations
-					     (cdddr form)
-					     (cddr form)))
-				  env)))))
+	  (clcomp-macroexpand
+	   (let ((body (if (> (length (cddr form)) 1)
+			   (cons 'progn
+				 (if has-declarations
+				     (cdddr form)
+				     (cddr form)))
+			   (first (if has-declarations
+				      (cdddr form)
+				      (cddr form))))))
+	     (if key-keywords
+		 (append key-args-let-form (list body))
+		 body)) env))))
 
 ;; FIXME, implement setf macro expanders
 (defun %clcomp-macroexpand-setf (form env)

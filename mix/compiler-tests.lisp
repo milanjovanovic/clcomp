@@ -150,18 +150,6 @@
 					 (eq 'bla symbol)
 					 (eq 'fixnum (type-of 10))))))
 
-(define-compiler-test "mix-1" t (lambda ()
-				  (%initialize-env)
-				  (let ((symbol 'bla))
-				    (and (eq 'foo 'foo)
-					 (not (eq 'foo 'bar))
-					 (eq 'bla symbol)
-					 (eq 'fixnum (type-of 10))))))
-
-
-
-
-
 
 (defun generate-all-test-cores ()
   (let ((*debug* nil))
@@ -169,5 +157,3 @@
 	       (declare (ignore k))
 	       (funcall v))
 	     *compiler-tests*)))
-
-

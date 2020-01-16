@@ -19,13 +19,13 @@
   (declare (inline listp car))
   (if (listp cons)
       (car cons)
-      (error "Arguments is not of type LIST")))
+      (error "CAR: Arguments is not of type LIST")))
 
 (defun cdr (cons)
   (declare (inline cdr))
   (if (listp cons)
       (cdr cons)
-      (error "Arguments is not of type LIST")))
+      (error "CDR: Arguments is not of type LIST")))
 
 (defun caar (cons)
   (car (car cons)))
@@ -119,3 +119,19 @@
        ((null (cddr cdr))
 	(setf (cdr cdr) (cadr cdr))
 	rest)))
+
+(defun nthcdr (n list)
+  (do ((l list (cdr l))
+       (index 0 (+ 1 index)))
+      ((or (null l)
+	   (= index n))
+       l)))
+
+(defun nth (n list)
+  (car (nthcdr n list)))
+
+(defun getf (place indicator)
+  (do ((place place (cddr place)))
+      ((or (eq (car place) indicator)
+	   (null place))
+       (cadr place))))
