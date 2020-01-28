@@ -150,6 +150,49 @@
 					 (eq 'bla symbol)
 					 (eq 'fixnum (type-of 10))))))
 
+(define-compiler-test "equality-1" t (lambda ()
+				       (%initialize-env)
+				       (equal (list 1 2 3 4)
+					      (list 1 2 3 4))))
+
+(define-compiler-test "equality-2" nil (lambda ()
+				       (%initialize-env)
+				       (equal (list 1 2 3 4)
+					      (list 1 2 3))))
+
+(define-compiler-test "equality-3" t (lambda ()
+				       (%initialize-env)
+				       (equalp "bla" "BLA")))
+
+(define-compiler-test "equality-4" t (lambda ()
+				       (%initialize-env)
+				       (equalp (list "bla") (list "BLA"))))
+
+(define-compiler-test "equality-4" nil (lambda ()
+					 (%initialize-env)
+					 (equal (list "bla") (list "BLA"))))
+
+(define-compiler-test "equality-5" t (lambda ()
+				       (%initialize-env)
+				       (equalp #\a #\A)))
+
+
+(define-compiler-test "equality-6" t (lambda ()
+				       (%initialize-env)
+				       (let ((x 'foo)
+					     (y 'foo))
+					 (and (eq x y)
+					      (eql x y)
+					      (equal x y)
+					      (equalp x y)
+					      (equal (list x) (list y))
+					      (equalp (list x x ) (list y y))))))
+
+
+
+
+
+
 
 (defun generate-all-test-cores ()
   (let ((*debug* nil))

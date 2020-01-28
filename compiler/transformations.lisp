@@ -14,7 +14,9 @@
 					 (>= two-args->=)
 					 (<= two-args-<=)
 					 (char= two-args-char=)
-					 (char-equal two-args-char-equal)))
+					 (char-equal two-args-char-equal)
+					 (logxor two-args-logxor)
+					 (logand two-args-logand)))
 
 (defun get-two-arg-version (fun)
   (second (assoc fun *two-arg-transformation*)))

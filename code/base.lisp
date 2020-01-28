@@ -1,5 +1,5 @@
 (defun funcall (fun &rest args)
-  (apply fun args))
+  "FIXME")
 
 (defun apply (fun arg &rest args)
   "FIXME")
@@ -23,28 +23,41 @@
   (declare (inline eq))
   (eq x y))
 
+;; FIXME, after bignum/floats implementation this need to be changed
+(defun eql (x y)
+  (declare (inline eq))
+  (eq x y))
+
 (defun not (object)
   (if object
       nil
       t))
 
-;;; FIXME
-;; (defun eql (x y)
-;;   (let ((xt (type-of x))
-;; 	(xy (type-of y)))
-;;     (if (eq xt xy)
-;; 	(case xt
-;; 	  ((fixnum character symbol)))
-;; 	nil)))
-
+;;; FIXME, ARRAY
 (defun equal (x y)
-  "FIXME")
+  (or (eq x y)
+      (cond ((and (consp x) (consp y))
+	     (and (equal (car x) (car y))
+		  (equal (cdr x) (cdr y))))
+	    ((and (stringp x) (stringp y))
+	     (string= x y)))))
 
+;;; FIXME, ARRAY
 (defun equalp (x y)
-  "FIXME")
+  (or (eq x y)
+      (cond ((and (consp x) (consp y))
+	     (and (equalp (car x) (car y))
+		  (equalp (cdr x) (cdr y))))
+	    ((and (stringp x) (stringp y))
+	     (string-equal x y))
+	    ((and (characterp x) (characterp y))
+	     (char-equal x y)))))
 
-(defun sxhash (x)
-  "FIXME")
+;; (defun sxhash (x)
+;;   (cond ((fixnum x) x)
+;; 	((stringp x) "")
+;; 	((characterp x) "")
+;; 	((symbolp x) symbol)))
 
 
 

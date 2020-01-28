@@ -61,7 +61,7 @@
   (inst :xor res *tmp-reg*)
   (inst :sub res *tmp-reg*))
 
-(define-vop two-args-logxor (res :register) ((arg1 :register)) (arg2a :register)
+(define-vop two-args-logxor (res :register) ((arg1 :register) (arg2 :register))
   (inst :mov res arg1)
   (inst :xor res arg2))
 
@@ -69,5 +69,29 @@
   (inst :mov res arg1)
   (inst :and res arg2))
 
-(define-vop fixnum->fixnum-ash (res :register) ((arg1 :register) (arg2 :register))
+(define-vop %fixnum->fixnum-shift-left (res :register) ((arg1 :register) (arg2 :register))
+  (inst :push :RCX)
+  (inst :mov res arg1)
+  (inst :mov :RCX arg2)
+  (inst :shr :RCX *tag-size*)
+  (inst :shl res :CL)
+  (inst :pop :RCX))
+
+(define-vop %fixnum-shift-right (res :register) ((arg1 :register) (arg2 :register))
+  (inst :push :RCX)
+  (inst :mov res arg1)
+  (inst :mov :RCX arg2)
+  (inst :shr :RCX *tag-size*)
+  (inst :sar res :CL)
+  (inst :and res -8)
+  (inst :pop :RCX))
+
+(define-vop %fixnum-larger-than-zero (res :register) ((arg1 :register))
+  (inst :test arg1 arg1)
+  )
+
+(define-vop %fixnum-less-than-zero (res :register) ((arg1 :register))
+  (inst :test arg1 arg1))
+
+#+nil(define-vop fixnum->fixnum-ash (res :register) ((arg1 :register) (arg2 :register))
   )
