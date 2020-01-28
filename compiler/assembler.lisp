@@ -93,7 +93,7 @@
 (defun is-64bit (register-operand)
   (eq :reg64 (register-type register-operand)))
 
-(defun register-operand? (template-operand)
+(defun register-template-operand? (template-operand)
   (find template-operand *tmpl-reg-operands*))
 
 (defparameter *tmpl-imm-operands* '(:imm8 :imm16 :imm32 :imm64
@@ -145,8 +145,11 @@
     (<= (nbyte-bits (get-immediate-type immediate unsigned-template))
 	(immediate-bits type))))
 
-(defun immediate-operand? (template-operand)
+(defun immediate-template-operand? (template-operand)
   (find template-operand *tmpl-imm-operands*))
+
+(defun immediate-operand? (operand)
+  (numberp operand))
 
 ;;; basic encoding details
 
@@ -275,7 +278,9 @@
   (when (consp operand) operand))
 
 (defun tmpl-op-address? (template-operand)
-  (or (eq template-operand :addr)))
+  (if (consp template-operand)
+      (intersection template-operand '(:addr8 :addr16 :addr32 :addr64 :addr))
+      (member template-operand '(:addr8 :addr16 :addr32 :addr64 :addr))))
 
 (defun match-immediate-type (type operand)
   (and (numberp operand)
@@ -285,7 +290,7 @@
 
 (defun match-type (type operand)
   (and
-   (cond ((register-operand? type)
+   (cond ((register-template-operand? type)
 	  (eq (register-type operand) type))
 	 ((eq type :addr)
 	  (and (consp operand)
@@ -295,7 +300,7 @@
 	       (= (length operand) 5)
 	       (= (address-bits type)
 		  (nbyte-bits (first operand)))))
-	 ((immediate-operand? type)
+	 ((immediate-template-operand? type)
 	  (and (typep operand 'number)
 	       (imm-is-of-type operand type)))
 	 (t (eq type operand))) ; this matches literal register in template
@@ -325,7 +330,8 @@
   (cond ((and (null template-operand)
 	      (null operand))
 	 0)
-	((register-operand? template-operand)
+	((or (register-template-operand? template-operand)
+	     (is-register template-operand))
 	 (if (is-register operand)
 	     0
 	     10))
@@ -333,7 +339,7 @@
 	 (if (op-address? operand)
 	     0
 	     10))
-	((immediate-operand? template-operand)
+	((immediate-template-operand? template-operand)
 	 (let ((unsigned-template (unsigned-immediate-template-p template-operand)))
 	   (- (immediate-bits template-operand)
 	      (nbyte-bits (get-immediate-type operand unsigned-template)))))))
@@ -412,10 +418,10 @@
 	 (error (format nil "Unknown instruction ~A with arguments ~A" mnemonic operands))))))
 
 (defun get-modrm-operand-positions (template-source-operand template-dest-operand)
-  (let* ((source-is-address (tmpl-op-address? template-source-operand))
-	 (dest-is-address (tmpl-op-address? template-dest-operand)))
-    (if (or source-is-address dest-is-address)
-	(if source-is-address
+  (let* ((source-is-r/m (tmpl-op-address? template-source-operand))
+	 (dest-is-r/m (tmpl-op-address? template-dest-operand)))
+    (if (or source-is-r/m dest-is-r/m)
+	(if source-is-r/m
 	    (list *modrm.rm.position* *modrm.reg.position*)
 	    (list *modrm.reg.position* *modrm.rm.position*))
 	(list *modrm.reg.position* *modrm.rm.position*))))
@@ -512,13 +518,13 @@
 	(get-modrm-operand-positions template-source-operand template-dest-operand)
       (let ((rex-source-extend (rex-ext-byte source-operand-modrm-position))
 	    (rex-dest-extend (rex-ext-byte dest-operand-modrm-position)))
-	(cond ((register-operand? template-source-operand)
+	(cond ((register-template-operand? template-source-operand)
 	       (setf modrm (or modrm 0))
 	       (setf (ldb (byte *modrm.reg.rm.bits* source-operand-modrm-position) modrm) (get-register-bits source-operand))
 	       (when (extended-register? source-operand)
 		 (setf rex (or rex 0))
 		 (setf (ldb rex-source-extend rex) #b1))))
-	(cond ((register-operand? template-dest-operand)
+	(cond ((register-template-operand? template-dest-operand)
 	       (if (contain-flag '+r flags)
 		   (setf (ldb (byte 3 0) opcode) (get-register-bits dest-operand))
 		   (progn
@@ -527,9 +533,9 @@
 	       (when (extended-register? dest-operand)
 		 (setf rex (or rex 0))
 		 (setf (ldb rex-dest-extend rex) #b1))))
-	(cond ((immediate-operand? template-source-operand)
+	(cond ((immediate-template-operand? template-source-operand)
 	       (setf immediate (immediate-as-byte-list source-operand template-source-operand))))
-	(cond ((immediate-operand? template-dest-operand)
+	(cond ((immediate-template-operand? template-dest-operand)
 	       (setf immediate (immediate-as-byte-list dest-operand template-dest-operand))))
 	(let ((addr-operand (or (op-address? source-operand)
 				(op-address? dest-operand))))
@@ -542,7 +548,7 @@
 		(list opcode rex modrm nil nil immediate))))))))
 
 (defun encode-one-operand-mnemonic (prefixes rex opcode modrm operand template-operand flags)
-  (cond ((register-operand? template-operand)
+  (cond ((register-template-operand? template-operand)
 	 (when (extended-register? operand)
 	   (setf rex (rex #b0 #b0 #b0 #b0))
 	   (setf (ldb *rex.b.byte* rex) #b1)
@@ -561,7 +567,7 @@
 	   (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm operand)
 	     (let ((rex (if (ea-has-extended-register? operand) rex nil)))
 	       (list prefixes rex opcode modrm sib displacement nil)))))
-	((immediate-operand? template-operand)
+	((immediate-template-operand? template-operand)
 	 (list prefixes nil nil opcode nil nil (immediate-as-byte-list operand template-operand)))))
 
 (defun encode-one-operand-instruction (mnemonic operands)
@@ -575,7 +581,8 @@
 	 (template-modrm (inst-template-modrm template)))
     (destructuring-bind (prefixes rex opcode modrm sib displacement immediate)
 	(encode-one-operand-mnemonic template-prefixes template-rex template-opcode template-modrm operand template-operand template-flags)
-      (filter (append (list prefixes rex opcode modrm sib) (reverse displacement) (reverse immediate))
+      (filter (append (if (listp prefixes) prefixes (list prefixes))
+		      (list rex opcode modrm sib) (reverse displacement) (reverse immediate))
 	      nil))))
 
 
@@ -593,14 +600,15 @@
 	 (template-opcode-d-bit (opcode-d-bit template-opcode))) ; not using this currently
     (declare (ignore template-opcode-d-bit))
     (destructuring-bind (opcode rex modrm sib displacement immediate) (encode-operands template-rex
-										template-modrm
-										dest-operand
-										source-operand
-										template-dest-operand
-										template-source-operand
-										template-opcode
-										template-flags)
-      (filter (append (list template-prefixes rex opcode modrm sib) (reverse displacement) (reverse immediate))
+										       template-modrm
+										       dest-operand
+										       source-operand
+										       template-dest-operand
+										       template-source-operand
+										       template-opcode
+										       template-flags)
+      (filter (append (if (listp template-prefixes) template-prefixes (list template-prefixes))
+		      (list rex opcode modrm sib) (reverse displacement) (reverse immediate))
 	      nil))))
 
 (defun encode-no-operand-instruction (mnemonic operands)
