@@ -66,7 +66,7 @@
 		      nil #x48 #x81 #x20)
 
 (define-inst-template :and ((:reg64 :addr) :reg64) ()
-		      nil #x48 #x31 nil)
+		      nil #x48 #x21 nil)
 
 ;;; MOV
 (define-inst-template :mov (:reg64 :reg64) ()
@@ -101,6 +101,9 @@
 (define-inst-template :mov (:addr :imm32) ()
 		      nil #x48 #xc7 #x00)
 
+
+(define-inst-template :cmovs (:reg64 (:reg64 :addr64)) ()
+		      '(#x48 #x0f) nil #x48 nil)
 
 ;;; LEA
 (define-inst-template :lea (:reg64 :addr) ()
