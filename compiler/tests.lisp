@@ -85,6 +85,10 @@
    ;; POP
 
    ;; CALL
+   (list (make-instruction :call :RAX) '(#xff #xD0))
+   (list (make-instruction :call :RDX) '(#xff #xD2))
+   (list (make-instruction :call :R12) '(#x41 #xff #xD4))
+   (list (make-instruction :call :R14) '(#x41 #xff #xD6))
    (list (make-instruction :call (@ :RAX)) '(#xff #x10))
    (list (make-instruction :call (@ :R11)) '(#x41 #xFF #x13 ))
    (list (make-instruction :call (@ :R12)) '(#x41 #xFF #x14 #x24))
