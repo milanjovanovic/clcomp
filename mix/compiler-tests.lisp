@@ -188,6 +188,11 @@
 					      (equal (list x) (list y))
 					      (equalp (list x x ) (list y y))))))
 
+(define-compiler-test "math-1" t (lambda ()
+				   (%initialize-env)
+				   (and (= 64 (ash 1 6))
+					(= 1 (ash 64 -6)))))
+
 
 
 

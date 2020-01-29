@@ -107,5 +107,6 @@
       integer
       (if (plusp count)
 	  (%fixnum->fixnum-shift-left integer count)
-	  (%fixnum-shift-right integer count))))
+	  (%fixnum-shift-right integer (abs count)))))
+
 

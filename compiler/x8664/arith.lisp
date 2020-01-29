@@ -88,10 +88,12 @@
 
 (define-vop %fixnum-larger-than-zero (res :register) ((arg1 :register))
   (inst :test arg1 arg1)
-  )
+  (inst :mov res *nil*)
+  (inst :mov *tmp-reg* *t*)
+  (inst :cmovnle res *tmp-reg*))
 
 (define-vop %fixnum-less-than-zero (res :register) ((arg1 :register))
-  (inst :test arg1 arg1))
-
-#+nil(define-vop fixnum->fixnum-ash (res :register) ((arg1 :register) (arg2 :register))
-  )
+  (inst :test arg1 arg1)
+  (inst :mov res *nil*)
+  (inst :mov *tmp-reg* *t*)
+  (inst :cmovs res *tmp-reg*))

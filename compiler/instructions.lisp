@@ -105,6 +105,12 @@
 (define-inst-template :cmovs (:reg64 (:reg64 :addr64)) ()
 		      nil #x0f #x48 nil)
 
+(define-inst-template :cmovle (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4E nil)
+
+(define-inst-template :cmovnle (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4F nil)
+
 ;;; LEA
 (define-inst-template :lea (:reg64 :addr) ()
 		      nil nil #x8D nil)
