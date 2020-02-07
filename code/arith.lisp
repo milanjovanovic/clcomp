@@ -22,7 +22,7 @@
 	(dolist (i rest)
 	  (setf result (- result i)))
 	result)
-      -10))
+      num))
 
 (defun two-args-= (a b)
   (declare (inline two-args-=))

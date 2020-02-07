@@ -330,7 +330,7 @@
 
 ;; FIXME, for now we just check does number of arguments match with vop arguments count
 (defun does-vop-match (node vop)
-  (= (length (call-node-arguments node )) (length (vop-arguments vop ))))
+  (= (length (call-node-arguments node)) (length (vop-arguments vop))))
 
 (defun emit-call-or-vop (component node environments)
   (let ((fun (call-node-function node)))

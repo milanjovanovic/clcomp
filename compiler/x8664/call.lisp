@@ -140,7 +140,7 @@
       (inst :label zero-rest-args-label)
       (inst :mov :r13 (@ *heap-header-reg*))
       (inst :mov :r14 :r13)
-      (inst :lea :r13 (@ :r13 nil nil (* 2 *word-size*))) ;; 2 * *word-size* is for last fixed-arg CONS
+      (inst :lea :r13 (@ :r13 nil nil (* 2 *word-size*)))
       (inst :mov (@ *heap-header-reg*) :r13)
       (inst :mov :r12 *nil*)
 
