@@ -1,5 +1,9 @@
 (in-package :clcomp)
 
+(define-vop %raw (res :register) ((arg :register))
+  (inst :mov res arg)
+  (inst :and res (ash -1 3)))
+
 (define-vop eq (res :register) ((arg1 :register) (arg2 :register))
   (let ((true-label (make-vop-label "true"))
 	(exit-label (make-vop-label "exit")))

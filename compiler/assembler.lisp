@@ -38,6 +38,9 @@
   (or (extended-register? (second effective-addres))
       (extended-register? (third effective-addres))))
 
+(defun ea-address-size (ea)
+  (first ea))
+
 (defregister '(:rax :eax :ax :al) #b000 #b0)
 (defregister '(:rcx :ecx :cx :cl) #b001 #b0)
 (defregister '(:rdx :edx :dx :dl) #b010 #b0)
@@ -122,6 +125,13 @@
     ((:uimm16 :imm16) 16)
     ((:uimm32 :imm32) 32)
     ((:uimm64 :imm64) 64)))
+
+(defun register-template-to-byte (reg)
+  (case reg
+    (:reg8 :byte)
+    (:reg16 :word)
+    (:reg32 :dword)
+    (:reg64 :qword)))
 
 (defun address-bits (address)
   (case address
@@ -452,7 +462,7 @@
 (defun encode-effective-memory-address (rex modrm addr-operand)
   (let ((sib nil))
     (destructuring-bind (size base index scale displacement) addr-operand
-      (declare (ignorable size))
+      (declare (ignore size))
       ;; special case for rbp and r13
       ;; Table 2-5. Special Cases of REX Encodings
       (when (and (rbp-or-r13 base) (null displacement))
@@ -552,8 +562,13 @@
 	(let ((addr-operand (or (op-address? source-operand)
 				(op-address? dest-operand))))
 	  (if addr-operand
-	      (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm addr-operand)
-		(list opcode rex modrm sib displacement immediate))
+	      (progn
+		(when (and (eq (ea-address-size addr-operand) :qword)
+			   (not (contain-flag '+v64 flags)))
+		  (setf rex (or rex *rex*))
+		  (setf (ldb *rex.w.byte* rex) #b1))		
+	       (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm addr-operand)
+		 (list opcode rex modrm sib displacement immediate)))
 	      (progn
 		(when modrm
 		  (setf (ldb *modrm.mod.byte* modrm) #b11))
@@ -578,6 +593,9 @@
 	 (list prefixes rex opcode modrm nil nil nil))
 	((op-address? operand)
 	 (let ((rex (or rex (rex #b0 #b0 #b0 #b0))))
+	   (when (and (eq (ea-address-size operand) :qword)
+	   	      (not (contain-flag '+v64 flags)))
+	     (setf (ldb *rex.w.byte* rex) #b1))
 	   (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm operand)
 	     (let ((rex (if (ea-has-extended-register? operand) rex nil)))
 	       (list prefixes rex opcode modrm sib displacement nil)))))
@@ -670,11 +688,17 @@
     (cond ((is-register first) (list first nil nil nil))
 	  ((typep first 'number) (list nil nil nil first)))))
 
+(defun get-addr-type (addr)
+  (dolist (r addr)
+    (when (is-register r)
+      (return (register-template-to-byte (register-type r))))))
+
+;;; FIXME, check for register type, if not register set it to QWORD
 (defun maybe-insert-addr-size (addr)
   (if (and (consp addr)
 	   (< (length addr) 5)
 	   (not (is-nbyte-descriptor (first addr))))
-      (cons :qword addr)
+      (cons (or (get-addr-type addr) :qword) addr)
       addr))
 
 (defun reformat-operand (addr)

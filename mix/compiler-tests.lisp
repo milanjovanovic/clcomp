@@ -11,6 +11,7 @@
   (clcomp-compile-file (format nil "~a/code/call.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/symbol.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/char.lisp" *clcomp-home*))
+  (clcomp-compile-file (format nil "~a/code/tests.lisp" *clcomp-home*))
   (set-start-address)
   (clcomp-compile nil form)
   (rt-dump-binary file))
@@ -101,7 +102,7 @@
 
 
 ;;; ARRAY
-(define-compiler-test "array-test-1"t (lambda ()
+(define-compiler-test "array-test-1" t (lambda ()
 					(%initialize-env)
 					(let ((a (make-array 3 t nil  (cons 1 (cons 2 (cons 3 nil))))))
 					  (setf (aref a 1) 20)
@@ -149,6 +150,19 @@
 					 (not (eq 'foo 'bar))
 					 (eq 'bla symbol)
 					 (eq 'fixnum (type-of 10))))))
+
+
+(define-compiler-test "mix-2" t (lambda ()
+				  (%initialize-env)
+				  (and
+				   (equal (rest-fixed-0) (list nil))
+				   (equal (rest-fixed-0 1 2) (list (list 1 2)))
+				   (equal (rest-fixed-0 1 2 3 4 5 6) (list (list 1 2 3 4 5 6)))
+				   (equal (rest-fixed-4 1 2 3 4) (list 1 2 3 4 nil))
+				   (equal (rest-fixed-4 1 2 3 4 5 6) (list 1 2 3 4 (list 5 6)))
+				   (equal (rest-fixed-5 1 2 3 4 5) (list 1 2 3 4 5 nil))
+				   (equal (rest-fixed-5 1 2 3 4 5 6 7 8) (list 1 2 3 4 5 (list 6 7 8))))))
+
 
 (define-compiler-test "equality-1" t (lambda ()
 				       (%initialize-env)

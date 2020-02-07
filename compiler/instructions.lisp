@@ -14,7 +14,7 @@
 
 (define-inst-template :add (:reg64 :addr) ()
 		      nil nil #x03 nil)
-(define-inst-template :add (:reg32 :addr) ()
+(define-inst-template :add (:reg32 :addr32) ()
 		      #x67 nil #x03 nil)
 
 (define-inst-template :add (:reg64 :imm32) ()
@@ -62,6 +62,14 @@
 (define-inst-template :xor ((:reg64 :addr) :imm32) ()
 		      nil nil #x81 #x30)
 
+
+(define-inst-template :or ((:reg64 :addr) :imm32) ()
+		      nil nil #x81 #x08)
+
+(define-inst-template :or ((:reg64 :addr) :imm32) ()
+		      nil nil #x81 #x30)
+
+
 (define-inst-template :and ((:reg64 :addr) :imm32) ()
 		      nil nil #x81 #x20)
 
@@ -84,12 +92,12 @@
 
 (define-inst-template :mov (:addr :reg64) ()
 		      nil nil #x89 nil)
-(define-inst-template :mov (:addr :reg32) ()
+(define-inst-template :mov (:addr32 :reg32) ()
 		      #x67 nil #x89 nil)
 
 (define-inst-template :mov (:reg64 :addr) ()
 		      nil nil #x8b nil)
-(define-inst-template :mov (:reg32 :addr) ()
+(define-inst-template :mov (:reg32 :addr32) ()
 		      #x67 nil #x8b nil)
 
 (define-inst-template :mov (:reg64 :imm64) (+r)
@@ -98,8 +106,9 @@
 (define-inst-template :mov (:reg64 :imm32) ()
 		      nil nil #xc7 #x00)
 
-(define-inst-template :mov (:addr :imm32) ()
+(define-inst-template :mov ((:addr64 :addr32) :imm32) ()
 		      nil nil #xc7 #x00)
+
 
 
 (define-inst-template :cmovs (:reg64 (:reg64 :addr64)) ()
@@ -160,7 +169,7 @@
 (define-inst-template :push (:reg64) (+r +v64) 
 		      nil nil #x50 nil)
 
-(define-inst-template :push (:addr) ()
+(define-inst-template :push (:addr) (+v64)
 		      nil nil #xFF #x30)
 
 #+nil
@@ -176,7 +185,7 @@
 		      nil nil #x8F #x00)
 
 ;;; CALL
-(define-inst-template :call ((:reg64 :addr)) (+v64)
+(define-inst-template :call ((:reg64 :addr64)) (+v64)
 		      nil nil #xff #x10)
 
 ;; JMP
@@ -219,6 +228,12 @@
 
 (define-inst-template :jnbe (:imm32) ()
 		      #x0f nil #x87 nil)
+
+(define-inst-template :jge (:imm32) ()
+		      #x0f nil #x8D nil)
+
+(define-inst-template :jnl (:imm32) ()
+		      #x0f nil #x8D nil)
 
 ;; (define-inst-template :jrcxz (:imm8) ()
 ;; 		      nil nil #xE3 nil)

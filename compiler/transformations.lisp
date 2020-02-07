@@ -49,7 +49,7 @@
   (let ((nodes nil)
 	(rest-node nil))
     (dolist (argument arguments)
-      (cond ((eq '&rest argument) (setf rest-node t))
+      (cond ((eq '&compiler-rest argument) (setf rest-node t))
 	    (rest-node (push (make-lexical-var-node :name argument :form nil :rest t) nodes)
 		       (setf rest-node nil))
 	    (t (push (make-lexical-var-node :name argument :form nil) nodes))))

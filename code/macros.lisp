@@ -289,6 +289,14 @@
 	    (null ll))
 	(car (cdr ll)))))
 
+(defun %lambda-list-get-last-fixed-param (lambda-list)
+  (let ((k nil))
+    (dolist (p lambda-list)
+      (if (eq p '&rest)
+	  (when k
+	    (return-from %lambda-list-get-last-fixed-param k))
+	  (setf k p)))))
+
 (defun %rerarange-lambda-list (lambda-list)
   (let ((new-lambda-list nil))
     (do* ((ll lambda-list (cdr ll))
@@ -301,28 +309,35 @@
 	     (return (reverse (cons (gensym "rest-arg") (cons '&rest new-lambda-list)))))
 	    (t (push lc new-lambda-list))))))
 
-(defun %key-args-let-form (rest-var key-keywords)
-  (list 'let
-	(let ((b nil))
-	  (dolist (k key-keywords)
-	    (if (atom k)
-		(push (list k (list 'getf rest-var (list 'quote k))) b)
-		(push (list (first k)
-			    (list 'or
-				  (list 'getf rest-var (list 'quote (first k)))
-				  (second k))) b)))
-	  b)))
+(defun %rest-or-key-args-let-form (last-fixed-var rest-var key-keywords)
+  (let ((rest-var-sym (gensym "rest-var-sym-")))
+    (list 'let*
+	  (let ((b nil))
+	    (push (list rest-var-sym last-fixed-var) b)
+	    (when (not (eq last-fixed-var rest-var))
+	      (push (list last-fixed-var (list 'car rest-var-sym)) b)
+	      (push (list rest-var (list 'cdr rest-var-sym)) b))
+	    (dolist (k key-keywords)
+	      (if (atom k)
+		  (push (list k (list 'getf rest-var-sym (list 'quote k))) b)
+		  (push (list (first k)
+			      (list 'or
+				    (list 'getf rest-var-sym (list 'quote (first k)))
+				    (second k))) b)))
+	    (reverse b)))))
 
 (defun %clcomp-macroexpand-lambda (form env)
   (let* ((has-declarations (%lambda-has-declarations form))
 	 (key-keywords (%lambda-list-&key-keywords (second form)))
-	 (rearanged-llist (and key-keywords (%rerarange-lambda-list (second form))))
+	 (rearanged-llist (or (and key-keywords
+				   (%rerarange-lambda-list (second form)))
+			      (second form)))
 	 (rest-var (%lambda-list-get-&rest-var rearanged-llist))
-	 (key-args-let-form (and key-keywords (%key-args-let-form rest-var key-keywords))))
+	 (last-fixed-param (or (%lambda-list-get-last-fixed-param rearanged-llist) rest-var))
+	 (key-args-let-form (and (or key-keywords rest-var)
+				 (%rest-or-key-args-let-form last-fixed-param rest-var key-keywords))))
     (list 'lambda
-	  (if key-keywords
-	      rearanged-llist
-	      (second form))
+	  (substitute '&compiler-rest '&rest rearanged-llist)
 	  (if has-declarations (third form) (list 'declare))
 	  (clcomp-macroexpand
 	   (let ((body (if (> (length (cddr form)) 1)
@@ -333,7 +348,7 @@
 			   (first (if has-declarations
 				      (cdddr form)
 				      (cddr form))))))
-	     (if key-keywords
+	     (if rest-var
 		 (append key-args-let-form (list body))
 		 body)) env))))
 

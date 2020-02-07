@@ -21,7 +21,8 @@
       (let ((result num))
 	(dolist (i rest)
 	  (setf result (- result i)))
-	result)))
+	result)
+      -10))
 
 (defun two-args-= (a b)
   (declare (inline two-args-=))
@@ -87,6 +88,10 @@
   (declare (inline two-args-logand))
   (two-args-logand x y))
 
+(defun two-args-logior (x y)
+  (declare (inline two-args-logior))
+  (two-args-logior x y))
+
 (defun logxor (x y)
   (logxor x y))
 
@@ -110,3 +115,14 @@
 	  (%fixnum-shift-right integer (abs count)))))
 
 
+(defun byte (size position)
+  (cons size position))
+
+(defun ldb (bytespec integer)
+  (let ((size (car bytespec))
+	(start (cdr bytespec)))
+    (logand (ash integer (- start))
+	    (- (ash 1 size) 1))))
+
+;; (defun dpb (newbyte bytespec integer)
+;;   (logior (ash newbyte (cdr bytespec) integer)))

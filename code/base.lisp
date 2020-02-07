@@ -1,3 +1,7 @@
+(defun %raw (obj)
+  (declare (inline %raw))
+  (%raw obj))
+
 (defun funcall (fun &rest args)
   "FIXME")
 
@@ -58,17 +62,4 @@
 ;; 	((stringp x) "")
 ;; 	((characterp x) "")
 ;; 	((symbolp x) symbol)))
-
-
-
-
-
-
-
-
-
-
-
-
-
 
