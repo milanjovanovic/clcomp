@@ -215,10 +215,11 @@
       (add-ir component (list (list 'listify-args min-args))))))
 
 (defun make-lambda-arguments-ir (component arguments environments)
-  (let ((index 1))
+  (let ((index 1)
+	(number-of-arguments (length arguments)))
     (dolist (arg arguments)
       (add-var arg environments)
-      (add-ir component (list (list 'receive-param (get-var-ir-symbol arg environments) index)))
+      (add-ir component (list (list 'receive-param (get-var-ir-symbol arg environments) index number-of-arguments)))
       (incf index))))
 
 (defun make-fun-params-ir (component arg-locations)

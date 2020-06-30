@@ -39,6 +39,10 @@
 (defun make-vop-label (name)
   (gensym name))
 
+(defun inline-vop (vops &rest args)
+  (dolist (i (get-vop-code (get-vop vops) args))
+    (push i *segment-instructions*)))
+
 (defun get-vop-code (vop  args)
   (let ((*segment-instructions* nil))
     (apply (vop-fun vop) args)

@@ -2,11 +2,15 @@
   (declare (inline %raw))
   (%raw obj))
 
-(defun funcall (fun &rest args)
-  "FIXME")
-
 (defun apply (fun arg &rest args)
-  "FIXME")
+  (declare (inline %apply))
+  (cond ((null args)
+	 (%apply fun arg))
+	(t
+	 (%apply fun (cons arg args)))))
+
+(defun funcall (fun &rest args)
+  (apply fun args))
 
 (defun type-of (x)
   (if (null x)

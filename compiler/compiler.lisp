@@ -24,6 +24,8 @@
 
 (defparameter *dont-inline* nil)
 
+(defparameter *compile-or-load-time* nil)
+
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
 ;;;
@@ -63,9 +65,6 @@
 ;;; L4   RBP-56
 
 (defparameter *dummy-rip-value* (list #x90 #x90 #x90 #x90 #x90 #x90 #x90 #x90))
-
-;;; FIXME, is this right sequence ??
-(defparameter *error-trap* '((:byte #x0F) (:byte #x0B)))
 
 (defun make-nops (count)
   (let (nops)
@@ -131,12 +130,16 @@
 	(emit-ir-assembly translator
 			  (list
 			   (list :sub *stack-pointer-reg*
-				 (* *word-size* (if (oddp stack-size)
-						    stack-size
-						    (+ 1 stack-size)))))) ; 16 byte aligment
-	;; 16 byte aligment
-	(emit-ir-assembly translator
-			  (list (list :sub *stack-pointer-reg* *word-size*))))))
+				 (* *word-size* 
+				    ;; reverse stack arguments fix
+				    (if (oddp stack-size)
+				    		    stack-size
+				    		    (+ 1 stack-size))
+				    )))) ; 16 byte aligment
+	;; FIXME, remove aligment, reverse stack arguments parsing
+	 (emit-ir-assembly translator
+			   (list (list :sub *stack-pointer-reg* *word-size*)))
+	)))
 
 (defun maybe-deallocate-stack-space (translator allocation)
   (let ((stack-size (allocation-stack allocation)))
@@ -145,11 +148,16 @@
 			  (list
 			   (list :add *stack-pointer-reg*
 				 ;; 16 byte stack alligments
-				 (* *word-size* (if (oddp stack-size)
-						    stack-size
-						    (+ 1 stack-size))))))
-	(emit-ir-assembly translator
-			  (list (list :add *stack-pointer-reg* *word-size*))))))
+				 (* *word-size*
+				    ;; reverse stack arguments fix
+				    (if (oddp stack-size)
+				    		    stack-size
+				    		    (+ 1 stack-size))
+				    ))))
+	;; FIXME, remove aligment, reverse stack arguments parsing
+	 (emit-ir-assembly translator
+       		  (list (list :add *stack-pointer-reg* *word-size*)))
+	)))
 
 (defun translate-lambda-entry (translator allocation)
   (emit-ir-assembly translator
@@ -189,15 +197,18 @@
       (let ((stack-args (- arguments-count (length *fun-arguments-regs*))))
 	(emit-ir-assembly translator
 			  (list (list :sub *stack-pointer-reg*
-				      (* *word-size* (if (oddp stack-args)
-							 (+ 1 stack-args)
-							 stack-args)))))))))
+				      ;; FIXME BACK
+				      (* *word-size* 
+					 (if (oddp stack-args)
+					     (+ 1 stack-args)
+					     stack-args)
+					 ))))))))
 
-(defun translate-receive-param (param-location param-index translator allocation)
+(defun translate-receive-param (param-location param-index number-of-arguments translator allocation)
   (let ((storage (get-allocation-storage param-location allocation)))
     (when storage
       (emit-ir-assembly translator
-			(asm-storage-move storage (make-receive-param-storage param-index))))))
+			(asm-storage-move storage (make-receive-param-storage param-index number-of-arguments))))))
 
 (defun translate-load (ir translator allocation)
   (emit-ir-assembly translator
@@ -315,8 +326,7 @@
 		     (list :pop *base-pointer-reg*)
 		     (list :ret)
 		     (list :label :wrong-arg-count-label)))
-  (emit-ir-assembly translator
-		    *error-trap*))
+  (emit-ir-assembly translator (list (list :ud2))))
 
 (defun to-asm (ir translator allocation)
   (let ((mnemonic (first ir)))
@@ -332,7 +342,7 @@
       (arg-check (translate-arg-check ir translator))
       (arg-minimum-check (translate-arg-minimum-check ir translator))
       (params-count (translate-params-count ir translator))
-      (receive-param (translate-receive-param (second ir) (third ir) translator allocation))
+      (receive-param (translate-receive-param (second ir) (third ir) (fourth ir) translator allocation))
       (load (translate-load ir translator allocation))
       (load-param (translate-load-param ir translator allocation))
       (load-call (translate-load-call ir translator allocation))
@@ -703,23 +713,29 @@
 								      1)))))
     (memory-storage (@ (memory-storage-base storage) nil nil (memory-storage-offset storage)))))
 
-(defun make-receive-param-storage (param-number)
-  (if (> param-number (length *fun-arguments-regs*))
-      ;; we already did push RBP to stack and with return addres that's 2 slots so arguments are RBP+16, RBP+24 ...
-      (make-memory-storage :base *base-pointer-reg* :offset (* *word-size* (+ 2 (- param-number (length *fun-arguments-regs*) 1))))
-      (make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*))))
+(defun make-receive-param-storage (param-index number-of-arguments)
+  (let ((regs-args (length *fun-arguments-regs*)))
+    (if (> param-index regs-args)
+	;; we already did push RBP to stack and with return addres that's 2 slots so arguments are RBP+16, RBP+24 ...
+	(make-memory-storage :base *base-pointer-reg*
+			     :offset (+ (* 2 *word-size*)
+					(* *word-size* (- number-of-arguments param-index))))
+	(make-reg-storage :register (nth (- param-index 1) *fun-arguments-regs*)))))
 
-(defun get-param-storage (param-number)
+(defun get-param-storage (param-number arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*)))
     (if (> param-number arg-reg-count)
-	(make-memory-storage :base *stack-pointer-reg* :offset (* *word-size* (- param-number arg-reg-count 1)))
+	(make-memory-storage :base *stack-pointer-reg* :offset (* *word-size*
+								  (- arguments-count param-number))
+			     )
 	(make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*)))))
 
 (defun get-allocation-storage (location allocation)
   (let ((location-type (type-of location)))
     (case location-type
       (immediate-constant (make-constant-storage :constant (immediate-constant-constant location)))
-      (param-location (get-param-storage (param-location-param-number location)))
+      (param-location (get-param-storage (param-location-param-number location)
+					 (param-location-arguments-count location)))
       (ret-location (gethash (location-symbol location) (allocation-storage allocation))
        #+nil(or
 	     (gethash (location-symbol location) (allocation-storage allocation))
@@ -734,7 +750,7 @@
 
 
 (defstruct rip-location rip byte-offset)
-(defstruct compile-component code prefix-code start code-size subcomps rips rip-offsets byte-code) 
+(defstruct compile-component id code prefix-code start code-size subcomps rips rip-offsets byte-code)
 (defstruct compilation-unit compile-component start fixups code)
 
 (defun get-compilation-unit-code-size (compilation-unit)

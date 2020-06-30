@@ -271,3 +271,6 @@
 (define-inst-template :clc () ()
 		      nil nil #xf8 nil)
 
+(define-inst-template :ud2 () ()
+		      nil nil '(#x0f #x0b) nil)
+

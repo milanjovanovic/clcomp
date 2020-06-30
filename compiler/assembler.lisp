@@ -656,7 +656,9 @@
 
 (defun encode-no-operand-instruction (mnemonic operands)
   (let ((template (find-instruction-template mnemonic operands)))
-    (list (inst-template-opcode template))))
+    (if (consp (inst-template-opcode template))
+	(inst-template-opcode template)
+	(list (inst-template-opcode template)))))
 
 (defun reformat-3size-addr (addr)
   (let ((first (first addr))
