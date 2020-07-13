@@ -1,4 +1,5 @@
 (in-package #:clcomp)
+(declaim (optimize (speed 0) (debug 3)))
 
 (defparameter *runtime-heap-start* #x200000020)
 (defparameter *compilation-start-address* *runtime-heap-start*)
@@ -12,10 +13,20 @@
 
 (defparameter *clcomp-home* (namestring (ql:where-is-system "clcomp")))
 
-(defun rt-%defun (name compilation-unit)
+(defparameter *compilation-unit-local-rips* nil)
+(defparameter *compilation-unit-local-start-address* 0)
+(defparameter *compilation-unit-main-offset* 0)
+
+(defparameter *do-break* nil)
+
+(defun maybe-rt-%defun (name compilation-unit)
   ;; code loading will increase heap pointer
-  (setf (gethash name *rt-funs*) *compilation-start-address*)
+  (setf (compilation-unit-start compilation-unit) *compilation-start-address*)
+  (when name
+    (setf (gethash name *rt-funs*) (+ *compilation-start-address*
+				      (compile-component-start (compilation-unit-compile-component compilation-unit)))))
   (setf *compilation-start-address* (+ *compilation-start-address* (get-compilation-unit-code-size compilation-unit))))
+
 
 ;; FIXME
 ;; for now we are only resolving FUNCTION calls
@@ -25,8 +36,23 @@
 	 (fun-address (rt-get-fun-address name)))
     (unless fun-address
       (error (format nil "Unknown fun ~a" name)))
-    (format t "Name: ~a, Address: ~x~%" name fun-address)
+    (when *debug*
+      (format t "Name: ~a, Address: ~x~%" name fun-address))
     (let ((bytes (little-endian-64bit fun-address))
+	  (index offset))
+      (dolist (byte bytes)
+	(setf (aref unit-code-buffer index) byte)
+	(incf index)))))
+
+(defun resolve-local-fixup (fixup unit-code-buffer)
+  (let* ((name (component-rip-relative-name (rip-location-rip fixup)))
+	 (offset (rip-location-byte-offset fixup))
+	 (address (cdr (assoc name *compilation-unit-local-rips*))))
+    (unless address
+      (error (format nil "Unknown local RIP ~a" name)))
+    (when *debug*
+     (format t "Name: ~a, RIP Address: ~x~%" name address))
+    (let ((bytes (little-endian-64bit address))
 	  (index offset))
       (dolist (byte bytes)
 	(setf (aref unit-code-buffer index) byte)
@@ -35,9 +61,12 @@
 (defun resolve-fixups (unit)
   (let ((unit-code (get-compilation-unit-code-buffer unit))
 	(fixups (compilation-unit-fixups unit)))
+    ;; (when *do-break* (break))
     (if (listp fixups )
 	(dolist (fixup fixups)
-	  (resolve-fixup fixup unit-code))
+	  (if (fun-rip-relative-p (rip-location-rip fixup))
+	      (resolve-fixup fixup unit-code)
+	      (resolve-local-fixup fixup unit-code)))
 	(resolve-fixup fixups unit-code))
     unit-code))
 
@@ -47,19 +76,39 @@
       (format s "~a" (apply #'concatenate 'string (mapcar #'byte-hex (coerce buffer 'list)))))
     s))
 
+(defun process-compile-component (start-compile-component)
+  (dolist (subcomp (compile-component-subcomps start-compile-component))
+    (let ((rip (car subcomp))
+	  (compile-component (cdr subcomp)))
+      (process-compile-component compile-component)
+      (push (cons (rip-relative-location-location rip) *compilation-unit-local-start-address* ) *compilation-unit-local-rips*)
+      (incf *compilation-unit-local-start-address*
+	    (compile-component-code-size compile-component))
+      (incf *compilation-unit-main-offset*
+	    (compile-component-code-size compile-component)))))
+
+(defun write-compilation-unit-code (comp-unit file-stream)
+  (let ((*compilation-unit-local-rips* nil)
+	(*compilation-unit-local-start-address* (compilation-unit-start comp-unit)))
+    (process-compile-component (compilation-unit-compile-component comp-unit))
+    (let ((code-buffer (resolve-fixups comp-unit)))
+      
+      (write-sequence code-buffer file-stream))))
+
+(defun write-start-address (stream)
+  (dolist (c (immediate-as-byte-list *start-address* :imm64))
+    (write-byte c stream)))
+
 (defun rt-dump-binary (file)
-  (let (code-buffers)
-    (dolist (comp-unit (reverse (compilation-units *current-compilation*)))
-      ;; (print comp-unit)
-      (push (resolve-fixups comp-unit) code-buffers))
-    (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
-      (dolist (c (immediate-as-byte-list *start-address* :imm64))
-	(write-byte c f))
-      (when *debug*
-	(format t "~a~%" (print-hex-code code-buffers)))
-      (dolist (buffer (reverse code-buffers))
-	(write-sequence buffer f)))
-    (rt-reset)))
+  (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
+    (write-start-address f)
+    (do*
+     ((comps (reverse (compilation-units *current-compilation*)) (cdr comps))
+      (comp (car comps) (car comps)))
+     ((null comps) nil)
+      (let ((*do-break* (when (null (cdr comps)) t)))
+	(write-compilation-unit-code comp f)))))
+
 
 (defun rt-add-to-compilation (compilation-unit)
   (setf (compilation-units *current-compilation*)
@@ -68,8 +117,10 @@
 (defun rt-get-fun-address (name)
   (gethash name *rt-funs*))
 
-(defun set-start-address ()
-  (setf *start-address* *compilation-start-address*))
+(defun set-start-address (entry-compilation-unit)
+  (setf *start-address* (+ (- *compilation-start-address*
+			      (get-compilation-unit-code-size entry-compilation-unit))
+			   (compile-component-start (compilation-unit-compile-component entry-compilation-unit)))))
 
 (defun rt-reset ()
   (setf *current-compilation* (make-compilation :units nil))
@@ -90,12 +141,12 @@
     (clcomp-compile-file (format nil "~a/code/symbol.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/char.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/tests.lisp" *clcomp-home*))
-    (set-start-address)
-    (clcomp-compile nil form)
+    (set-start-address (clcomp-compile nil form))
     (maphash (lambda (k v)
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
     (rt-dump-binary "/tmp/core")))
+
 
 
 

@@ -751,7 +751,7 @@
 
 (defstruct rip-location rip byte-offset)
 (defstruct compile-component id code prefix-code start code-size subcomps rips rip-offsets byte-code)
-(defstruct compilation-unit compile-component start fixups code)
+(defstruct compilation-unit compile-component start fixups code main-offset)
 
 (defun get-compilation-unit-code-size (compilation-unit)
   (reduce (lambda (s c)
@@ -842,6 +842,7 @@
   assembly)
 
 (defun assemble-component (component)
+  (declare (optimize (debug 3)))
   (let ((main-code (assembly-pass-1 (peephole (resolve-assembly-jumps (compile-component-code component)))))
 	(subcomps (compile-component-subcomps component))
  	(rips (compile-component-rips component)))
@@ -863,8 +864,8 @@
 	  (dolist (rip-relative rips)
 	    (when (not (typep rip-relative 'component-rip-relative))
 	      (push *dummy-rip-value* pre-code)
-	      (push (list (get-rip-relative-name rip-relative) start-offset) rip-offsets))
-	    (decf start-offset))))
+	      (push (list (get-rip-relative-name rip-relative) start-offset) rip-offsets)
+	      (decf start-offset)))))
       (setf (compile-component-byte-code component)
 	    main-code)
       (setf (compile-component-prefix-code component)
@@ -909,6 +910,7 @@
 
 (defun link-compilation-component (compile-component start)
   (let ((current start))
+    ;; FIXME, this is bad
     (dolist (subcomp-pair (compile-component-subcomps compile-component))
       (setf current
 	    (+ current
@@ -929,6 +931,7 @@
     (append code (get-complete-component-code start-component))))
 
 (defun get-all-components-rips (start-component)
+  (declare (optimize (speed 0) (safety 3) (debug 3)))
   (let ((rips))
     (dolist (subcomp-pair (compile-component-subcomps start-component))
       (setf rips
@@ -965,8 +968,7 @@
 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
     (rt-add-to-compilation assembled-compile-unit)
-    (when name
-      (rt-%defun name assembled-compile-unit))
+    (maybe-rt-%defun name assembled-compile-unit)
     assembled-compile-unit))
 
 

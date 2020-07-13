@@ -11,6 +11,9 @@
       nil
       (listp thing)))
 
+(defun atom (thing)
+  (not (consp thing)))
+
 (defun cons (car cdr)
   (declare (inline cons))
   (cons car cdr))

@@ -180,8 +180,16 @@
   ;; (add-ir component (list (list 'load-quoted to from)))
   )
 
+(defun add-fun-rip-relative-location (fun ir-component)
+  (unless
+      (find fun (ir-component-rips ir-component)
+	    :test (lambda (f rip)
+		    (and (fun-rip-relative-p rip)
+			 (eq f (fun-rip-relative-name rip)))))
+    (push (make-fun-rip-relative :name fun) (ir-component-rips ir-component))))
+
 (defun make-call-ir (component location fun arguments-count)
-  (push (make-fun-rip-relative :name fun) (ir-component-rips component))
+  (add-fun-rip-relative-location fun component)
   (add-ir component (list (list 'load-call location 'call fun arguments-count))))
 
 (defun make-vop-ir (component ret-location arg-locations vop-name)

@@ -14,3 +14,7 @@
     (inst :label true-label)
     (inst :mov res *t*)
     (inst :label exit-label)))
+
+
+(define-vop bla (res :register) ((arg :register))
+  (inst :ud2))

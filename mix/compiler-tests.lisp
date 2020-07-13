@@ -12,8 +12,7 @@
   (clcomp-compile-file (format nil "~a/code/symbol.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/char.lisp" *clcomp-home*))
   (clcomp-compile-file (format nil "~a/code/tests.lisp" *clcomp-home*))
-  (set-start-address)
-  (clcomp-compile nil form)
+  (set-start-address (clcomp-compile nil form))
   (rt-dump-binary file))
 
 (defun make-core-file-name (name result)
@@ -207,11 +206,17 @@
 				   (and (= 64 (ash 1 6))
 					(= 1 (ash 64 -6)))))
 
+(define-compiler-test "funcall-1" t (lambda ()
+				     (%initialize-env)
+				     (equal (list 1 2 3)
+					    (funcall (lambda (a b c) (list a b c))
+						     1 2 3))))
 
-
-
-
-
+(define-compiler-test "apply-1" t (lambda ()
+				    (%initialize-env)
+				    (equal (list 1 2 3)
+					   (apply (lambda (a b c) (list a b c))
+						  1 (list 2 3)))))
 
 (defun generate-all-test-cores ()
   (let ((*debug* nil))

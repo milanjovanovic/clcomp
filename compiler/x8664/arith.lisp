@@ -69,6 +69,11 @@
   (inst :mov res arg1)
   (inst :and res arg2))
 
+(define-vop two-args-logior (res :register) ((arg1 :register) (arg2 :register))
+  (inst :mov res arg1)
+  ;; FIXME
+  (inst :and res arg2))
+
 (define-vop %fixnum->fixnum-shift-left (res :register) ((arg1 :register) (arg2 :register))
   (inst :push :RCX)
   (inst :mov res arg1)

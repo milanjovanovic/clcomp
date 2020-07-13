@@ -11,6 +11,8 @@
 #include <errno.h>
 #include "lispo.h"
 #include <dirent.h>
+#include <signal.h>
+#include <sys/ucontext.h>
 
 #define STATIC_SPACE_START 0x20000000
 #define STATIC_SPACE_SIZE (30 * 1024 * 1024)
@@ -34,7 +36,7 @@ uintptr_t static_memory_start = STATIC_SPACE_START;
 
 size_t memory_size = LISP_HEAP_SIZE + STACK_SIZE;
 
-
+struct sigaction osa;
 void *static_start;
 lispobj *heap_header;
 
@@ -259,6 +261,12 @@ void print_lisp(lispobj obj) {
   fflush(stdout);
 }
 
+
+void set_rip_value(int64_t rip_position, lispobj lambda) {
+  // FIXME
+  // this should call lisp lambda function and set it to rip_position
+}
+
 void lisp_error(lispobj error_msg) {
   printf("LISP ERROR: ");
   print_lisp_string(error_msg, 1);
@@ -375,11 +383,50 @@ lispobj run_test(char *test_file) {
   //  run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address);
 }
 
+
+void print_contenxt(ucontext_t *uap) {
+  mcontext_t mcontext = uap->uc_mcontext;
+  uint64_t reg_rbp = mcontext->__ss.__rbp;
+  
+
+}
+
+void sigill_handler(int signal , siginfo_t *info, ucontext_t *uap) {
+  printf("SIGILL_HANDLER: %d\n", signal);
+  mcontext_t mcontext = uap->uc_mcontext;
+  uint64_t reg_rbp = mcontext->__ss.__rbp;
+  int64_t reg_rsp = mcontext->__ss.__rsp;
+  printf("rbp: %llx\n", reg_rbp);
+  printf("rsp: %llx\n", reg_rsp);
+  uint64_t previous_rbp = (uint64_t) *((uint64_t *) reg_rbp);
+  uint64_t ret = (uint64_t) *(((uint64_t *) reg_rbp) + 1);
+  printf("previous rbp: %llx\n", previous_rbp);
+  printf("ret: %llx\n", ret);
+  sigaction(SIGILL, &osa, NULL);
+}
+
+
+void install_handler() {
+  
+  struct sigaction sa;
+  struct sigaction osa;
+
+  sa.sa_flags = SA_SIGINFO | SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_sigaction = (void (*)(int, siginfo_t*, void*)) sigill_handler;
+
+  sigaction(SIGILL, &sa, &osa);
+
+}
+
+
 int main(int argc, char *argv[]) {
 
   init_runtime();
   
   load_core();
+
+  install_handler();
 
   if (argc == 2) {
     

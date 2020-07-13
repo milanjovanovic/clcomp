@@ -20,7 +20,6 @@
   ;; FIXME
   )
 
-
 (define-vop debug (res :register) ((msg :register))
   (inst :mov :RAX 33559104)
   (dolist (reg *c-call-save-registers*)
@@ -52,69 +51,70 @@
       (inst :pop reg))))
 
 (define-vop %apply (res :register) ((fun :register) (arguments :register))
-  (let ((*segment-instructions* nil))
-    (let ((loopl (make-vop-label "loop-"))
-	  (startl (make-vop-label "startl-"))
-	  (end-label (make-vop-label "end-label-"))
-	  (rdi (make-vop-label "rdi-"))
-	  (r8 (make-vop-label "r8-"))
-	  (r9 (make-vop-label "r9-"))
-	  (stack-args-label (make-vop-label "stack-args-label-")))
+  (let ((loopl (make-vop-label "loop-"))
+	(startl (make-vop-label "startl-"))
+	(end-label (make-vop-label "end-label-"))
+	(rdi (make-vop-label "rdi-"))
+	(r8 (make-vop-label "r8-"))
+	(r9 (make-vop-label "r9-"))
+	(stack-args-label (make-vop-label "stack-args-label-")))
+
+    (inst :mov :r8 :r8)
     
-      (inst :mov *tmp-reg* arguments)
-      (inst :mov *fun-number-of-arguments-reg* 0)
-      (inst :jump-fixup :jmp startl)
+    (inst :mov *tmp-reg* arguments)
+    (inst :mov *fun-number-of-arguments-reg* 0)
+    (inst :jump-fixup :jmp startl)
 
-      (inst :label loopl)
-      (inst :inc *fun-number-of-arguments-reg*)
-      (inline-vop 'cdr *tmp-reg* *tmp-reg*)
+    (inst :label loopl)
+    (inst :inc *fun-number-of-arguments-reg*)
+    (inline-vop 'cdr *tmp-reg* *tmp-reg*)
 
-      (inst :label startl)
+    (inst :label startl)
 
-      (inst :cmp *tmp-reg* *nil*)
-      (inst :jump-fixup :je end-label)
+    (inst :cmp *tmp-reg* *nil*)
+    (inst :jump-fixup :je end-label)
       
-      (inst :cmp *fun-number-of-arguments-reg* 4)
-      (inst :jump-fixup :je stack-args-label)
+    (inst :cmp *fun-number-of-arguments-reg* 4)
+    (inst :jump-fixup :je stack-args-label)
       
-      (inst :cmp *fun-number-of-arguments-reg* 3)
-      (inst :jump-fixup :je r9)
+    (inst :cmp *fun-number-of-arguments-reg* 3)
+    (inst :jump-fixup :je r9)
       
-      (inst :cmp *fun-number-of-arguments-reg* 2)
-      (inst :jump-fixup :je r8)
+    (inst :cmp *fun-number-of-arguments-reg* 2)
+    (inst :jump-fixup :je r8)
       
-      (inst :cmp *fun-number-of-arguments-reg* 1)
-      (inst :jump-fixup :je rdi)
+    (inst :cmp *fun-number-of-arguments-reg* 1)
+    (inst :jump-fixup :je rdi)
 
-      (inline-vop 'car :rdx *tmp-reg*)
-      (inst :jump-fixup :jmp loopl)
+    (inline-vop 'car :rdx *tmp-reg*)
+    (inst :jump-fixup :jmp loopl)
 
-      (inst :label rdi)
-      (inline-vop 'car :rdi *tmp-reg*)
-      (inst :jump-fixup :jmp loopl)
+    (inst :label rdi)
+    (inline-vop 'car :rdi *tmp-reg*)
+    (inst :jump-fixup :jmp loopl)
 
-      (inst :label r8)
-      (inline-vop 'car :r8 *tmp-reg*)
-      (inst :jump-fixup :jmp loopl)
+    (inst :label r8)
+    (inline-vop 'car :r8 *tmp-reg*)
+    (inst :jump-fixup :jmp loopl)
 
-      (inst :label r9)
-      (inline-vop 'car :r9 *tmp-reg*)
-      (inst :jump-fixup :jmp loopl)
+    (inst :label r9)
+    (inline-vop 'car :r9 *tmp-reg*)
+    (inst :jump-fixup :jmp loopl)
 
 
-      (inst :label stack-args-label)
-      (inst :mov :r11 (@ *base-pointer-reg*))
-      (inst :mov (@ *base-pointer-reg* ) :r11)
-      (inst :jump-fixup :jmp loopl)
-      
+    (inst :label stack-args-label)
+    (inline-vop 'car :r11 *tmp-reg*)
+    (inst :push :r11)
+    (inst :jump-fixup :jmp loopl)
 
-      (inst :label end-label)
-      ;; shift number of arguments
-      (inst :mov *fun-address-reg* fun)
-      ;; FIXME, it's symbol address
-      (inst :call *fun-address-reg*))
+    (inst :label end-label)
+    (inst :shl *fun-number-of-arguments-reg* *tag-size*)
+    ;; shift left number of arguments
+    (inst :mov *fun-address-reg* fun)
+    ;; FIXME, it's symbol address
+    (inst :call *fun-address-reg*))
     
-    (reverse *segment-instructions*)))
+  (reverse *segment-instructions*))
 
 (defun listify-code-generator (fixed-arguments-count)
   (let ((*segment-instructions* nil))
@@ -132,11 +132,6 @@
 
       (inst :shr *fun-number-of-arguments-reg* *tag-size*)
 
-      ;; calculate last argument stack offset first
-      ;; (inst :lea *tmp-reg* (@ *fun-number-of-arguments-reg* nil nil (- (+ 1 (length *fun-arguments-regs*)))))
-      ;; (inst :lea *tmp-reg* (@ *tmp-reg* *word-size* (* 2 *word-size*)))
-      ;; last argument is first on stack 
-      ;; (inst :mov *tmp-reg* (* 2 *word-size*))
       (inst :mov *tmp-reg* *fun-number-of-arguments-reg*)
 
       ;; handle case when there are no arguments
@@ -236,7 +231,9 @@
 	     (inst :mov (@ :r14) :r11)
 	     (inst :mov (@ :r14 nil nil *word-size*) :r12)
 
-	     ;; FIXME, add comment
+	     ;; we are setting last fixed parameter to (LAST_FIXED_PARAMETER . &REST)
+	     ;; last fixed parameter *is not* the same as last runtime parameter
+	     ;; this is why we are differently calculating stack offset for it
 	     (inst :mov *tmp-reg* (- fixed-arguments-count
 				      (length *fun-arguments-regs*)))
 	     (inst :lea :r13 (@ *tmp-reg* *word-size* (* 2 *word-size*)))
@@ -259,4 +256,5 @@
   ;; (define-vop read (:res register) ())
 
   ;; (define-vop write (:res register) ((buf :register) (nbyte :register)))
+
 

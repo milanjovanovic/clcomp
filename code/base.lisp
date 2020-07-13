@@ -2,12 +2,20 @@
   (declare (inline %raw))
   (%raw obj))
 
-(defun apply (fun arg &rest args)
+(defun %apply (function args)
   (declare (inline %apply))
-  (cond ((null args)
-	 (%apply fun arg))
-	(t
-	 (%apply fun (cons arg args)))))
+  (%apply function args))
+
+(defun apply (function arg &rest arguments)
+  (cond ((atom arguments)
+	 (%apply function arg))
+	((atom (cdr arguments))
+	 (%apply function (cons arg (car arguments))))
+	(t (do* ((a1 arguments a2)
+		 (a2 (cdr arguments) (cdr a2)))
+		((atom (cdr a2))
+		 (rplacd a1 (car a2))
+		 (%apply function (cons arg arguments)))))))
 
 (defun funcall (fun &rest args)
   (apply fun args))
