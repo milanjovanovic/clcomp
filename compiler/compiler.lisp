@@ -875,7 +875,8 @@
       (resolve-component-rips component))))
 
 (defun get-rip-offset (component rip-name)
-  (second (assoc rip-name (compile-component-rip-offsets component))))
+  (or (second (assoc rip-name (compile-component-rip-offsets component)))
+      (error (concatenate 'string "Error, unknown RIP " rip-name))))
 
 (defun calculate-rip-offset (current-code-size rip-name component)
   ;; add current code size + all rip offsets - (actual rip offset - 1)
@@ -908,45 +909,52 @@
 		(t (push inst code))))
 	(setf (compile-component-byte-code component) (reverse code))))))
 
+(defun flatten-comps (components &optional (key #'cdr))
+  (if (null components)
+      nil
+      (append
+       (cons (funcall key (car components))
+	     (flatten-comps (compile-component-subcomps (cdr (car components))) key))
+       (flatten-comps (cdr components) key))))
+
+(defun flatten-components-in-order (start-compile-component)
+  (reverse (cons start-compile-component
+		 (flatten-comps (compile-component-subcomps start-compile-component)))))
+
 (defun link-compilation-component (compile-component start)
-  (let ((current start))
-    ;; FIXME, this is bad
-    (dolist (subcomp-pair (compile-component-subcomps compile-component))
-      (setf current
-	    (+ current
-	       (link-compilation-component (cdr subcomp-pair) current))))
-    (assemble-component compile-component)
-    (setf (compile-component-start compile-component) current)
-    (+ current (set-and-maybe-adjust-code-size compile-component))))
+  (let ((flatten-components (flatten-components-in-order compile-component))
+	(current start))
+    (dolist (component flatten-components)
+      (assemble-component component)
+      (setf (compile-component-start component) current)
+      (setf current (+ current (set-and-maybe-adjust-code-size component))))))
 
 (defun get-complete-component-code (component)
   (append (compile-component-prefix-code component)
 	  (compile-component-byte-code component)))
 
 (defun get-all-components-byte-code (start-component)
-  (let ((code))
-    (dolist (subcomp-pair (compile-component-subcomps start-component))
-      (setf code
-	    (get-all-components-byte-code (cdr subcomp-pair))))
-    (append code (get-complete-component-code start-component))))
+  (let ((flatten-components (flatten-components-in-order start-component))
+	(code nil))
+    (dolist (component flatten-components)
+      (setf code (append code (get-complete-component-code component))))
+    code))
 
 (defun get-all-components-rips (start-component)
-  (declare (optimize (speed 0) (safety 3) (debug 3)))
-  (let ((rips))
-    (dolist (subcomp-pair (compile-component-subcomps start-component))
-      (setf rips
-	    (get-all-components-rips (cdr subcomp-pair))))
-    (let ((this-rips nil)
-	  (comp-rips (compile-component-rips start-component)))
-      (dolist (rip comp-rips)
-	(let ((rip-offset (get-rip-offset start-component (get-rip-relative-name rip))))
-	  (push 
-	   (make-rip-location :rip rip
-			      :byte-offset (+ (compile-component-start start-component)
-					      (length (first (compile-component-prefix-code start-component)))
-					      (* *word-size* (- rip-offset 1))))
-	   this-rips)))
-      (append this-rips rips))))
+  (let ((subcomps (cons start-component (flatten-comps (compile-component-subcomps start-component)
+						       #'cdr)))
+	(rips nil))
+    (dolist (comp subcomps)
+      (let* ((comp-rips (compile-component-rips comp)))
+	(dolist (crip comp-rips)
+	  (let ((rip-offset (get-rip-offset comp (get-rip-relative-name crip))))
+	    (push 
+	     (make-rip-location :rip crip
+				:byte-offset (+ (compile-component-start comp)
+						(length (first (compile-component-prefix-code comp)))
+						(* *word-size* (- rip-offset 1))))
+	     rips)))))
+    rips))
 
 (defun assemble-and-link-compilation-unit (compilation-unit start)
   (let ((start-component (compilation-unit-compile-component compilation-unit)))

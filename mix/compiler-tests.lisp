@@ -218,6 +218,18 @@
 					   (apply (lambda (a b c) (list a b c))
 						  1 (list 2 3)))))
 
+(define-compiler-test "funcall-2" t (lambda ()
+				      (%initialize-env)
+				      (let ((x (lambda () (lambda (a) (+ a a)))))
+					(let ((y (funcall x)))
+					  (= 20 (funcall y 10))))))
+
+(define-compiler-test "funcall-3" t (lambda ()
+				      (%initialize-env)
+				      (let ((a (lambda (x) (funcall x 1)))
+					    (b (lambda () (lambda (x) (+ x x)))))
+					(= 2 (funcall a (funcall b))))))
+
 (defun generate-all-test-cores ()
   (let ((*debug* nil))
     (maphash (lambda (k v)

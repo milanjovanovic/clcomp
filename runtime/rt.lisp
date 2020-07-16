@@ -51,7 +51,7 @@
     (unless address
       (error (format nil "Unknown local RIP ~a" name)))
     (when *debug*
-     (format t "Name: ~a, RIP Address: ~x~%" name address))
+      (format t "Name: ~a, RIP Address: ~x~%" name address))
     (let ((bytes (little-endian-64bit address))
 	  (index offset))
       (dolist (byte bytes)
@@ -61,7 +61,6 @@
 (defun resolve-fixups (unit)
   (let ((unit-code (get-compilation-unit-code-buffer unit))
 	(fixups (compilation-unit-fixups unit)))
-    ;; (when *do-break* (break))
     (if (listp fixups )
 	(dolist (fixup fixups)
 	  (if (fun-rip-relative-p (rip-location-rip fixup))
@@ -77,11 +76,11 @@
     s))
 
 (defun process-compile-component (start-compile-component)
-  (dolist (subcomp (compile-component-subcomps start-compile-component))
+  (dolist (subcomp (reverse (flatten-comps (compile-component-subcomps start-compile-component)
+					   #'identity)))
     (let ((rip (car subcomp))
 	  (compile-component (cdr subcomp)))
-      (process-compile-component compile-component)
-      (push (cons (rip-relative-location-location rip) *compilation-unit-local-start-address* ) *compilation-unit-local-rips*)
+      (push (cons (rip-relative-location-location rip) *compilation-unit-local-start-address*) *compilation-unit-local-rips*)
       (incf *compilation-unit-local-start-address*
 	    (compile-component-code-size compile-component))
       (incf *compilation-unit-main-offset*
@@ -92,7 +91,6 @@
 	(*compilation-unit-local-start-address* (compilation-unit-start comp-unit)))
     (process-compile-component (compilation-unit-compile-component comp-unit))
     (let ((code-buffer (resolve-fixups comp-unit)))
-      
       (write-sequence code-buffer file-stream))))
 
 (defun write-start-address (stream)
