@@ -4,7 +4,22 @@
 (defparameter *temp-counter* 0)
 (defparameter *label-counter* 0)
 
-(defstruct ir-component code code-blocks sub-comps rips)
+(defstruct lambda-info lambda-list-rest)
+(defstruct ir-component code code-blocks sub-comps rips lambda-info)
+
+(defun get-lambda-info (lambda-node)
+  (let ((lambda-info (make-lambda-info)))
+    (setf (lambda-info-lambda-list-rest lambda-info)
+	  (some #'lexical-var-node-rest
+		(lambda-node-arguments lambda-node)))
+    lambda-info))
+
+(defun maybe-create-new-ir-component (component lambda-node)
+  (or component
+      (let ((comp (make-ir-component)))
+	(setf (ir-component-lambda-info comp)
+	      (get-lambda-info lambda-node))
+	comp)))
 
 (defparameter *specials* nil)
 
@@ -390,6 +405,8 @@
 (defun emit-lambda-ir (component node)
   (let ((lambda-comp (make-ir-component))
 	(temp-loc (make-rip-relative-location :location (make-temp-location-symbol))))
+    (setf (ir-component-lambda-info lambda-comp)
+	  (get-lambda-info node))
     (push (make-sub-component :name temp-loc :component lambda-comp)
 	  (ir-component-sub-comps component))
     (push (make-component-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))
@@ -414,7 +431,7 @@
 
 ;;; entry node need to be lambda
 (defun make-ir (lambda-node &optional component name)
-  (let ((component (or component (make-ir-component))))
+  (let ((comp (maybe-create-new-ir-component component lambda-node)))
     (let ((arguments (lambda-node-arguments lambda-node))
 	  (body (lambda-node-body lambda-node))
 	  (environments (make-env-holder))
@@ -422,13 +439,13 @@
 	  (declarations (lambda-node-declarations lambda-node)))
       (add-env env environments)
       (add-declarations-env declarations environments)
-      (make-lambda-entry-ir component arguments)
-      (make-lambda-arguments-ir component arguments environments)
-      (make-return-ir component (emit-node-ir component body environments))
-      (make-lambda-exit-ir component)
+      (make-lambda-entry-ir comp arguments)
+      (make-lambda-arguments-ir comp arguments environments)
+      (make-return-ir comp (emit-node-ir comp body environments))
+      (make-lambda-exit-ir comp)
       (remove-env environments)
       (remove-declarations-env environments))
-    (or name component)))
+    (or name comp)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; IR blocks

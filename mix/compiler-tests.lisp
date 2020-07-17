@@ -160,7 +160,20 @@
 				   (equal (rest-fixed-4 1 2 3 4) (list 1 2 3 4 nil))
 				   (equal (rest-fixed-4 1 2 3 4 5 6) (list 1 2 3 4 (list 5 6)))
 				   (equal (rest-fixed-5 1 2 3 4 5) (list 1 2 3 4 5 nil))
-				   (equal (rest-fixed-5 1 2 3 4 5 6 7 8) (list 1 2 3 4 5 (list 6 7 8))))))
+				   (equal (rest-fixed-5 1 2 3 4 5 6 7 8) (list 1 2 3 4 5 (list 6 7 8)))
+				   (equal (rest-fixed-6 1 2 3 4 5 6 7 8) (list 1 2 3 4 5 6 (list 7 8)))
+				   (equal (rest-fixed-7 1 2 3 4 5 6 7 8) (list 1 2 3 4 5 6 7 (list 8))))))
+
+
+(define-compiler-test "key-1" t (lambda ()
+				  (%initialize-env)
+				  (and
+				   (equal (key-fixed-2 0 1 'x 2 'y 3 'z 4)
+					  (list 0 1 2 3 4))
+				   (equal (key-fixed-4 0 1 2 3 'x 4 'y 5 'z 6)
+					  (list 0 1 2 3 4 5 6))
+				   (equal (key-fixed-6 0 1 2 3 4 5 'x 6 'y 7 'z 8)
+					  (list 0 1 2 3 4 5 6 7 8)))))
 
 
 (define-compiler-test "equality-1" t (lambda ()

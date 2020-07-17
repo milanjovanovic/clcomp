@@ -319,10 +319,10 @@
 	      (push (list rest-var (list 'cdr rest-var-sym)) b))
 	    (dolist (k key-keywords)
 	      (if (atom k)
-		  (push (list k (list 'getf rest-var-sym (list 'quote k))) b)
+		  (push (list k (list 'getf rest-var (list 'quote k))) b)
 		  (push (list (first k)
 			      (list 'or
-				    (list 'getf rest-var-sym (list 'quote (first k)))
+				    (list 'getf rest-var (list 'quote (first k)))
 				    (second k))) b)))
 	    (reverse b)))))
 
@@ -417,5 +417,3 @@
 		(quote (clcomp-macroexpand-quote-obj (second form)))
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))
-
-

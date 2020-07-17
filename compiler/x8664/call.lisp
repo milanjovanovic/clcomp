@@ -216,7 +216,7 @@
       (inst :label set-cons-result)
 
       (cond ((and (> fixed-arguments-count 0)
-		  (< fixed-arguments-count 5))
+		  (<= fixed-arguments-count (length *fun-arguments-regs*)))
 	     (let ((register (nth (- fixed-arguments-count 1) *fun-arguments-regs*)))
 	       (inst :mov (@ :r14) register)
 	       (inst :mov (@ :r14 nil nil *word-size*) :r12)
@@ -224,22 +224,24 @@
 	    ((= fixed-arguments-count 0)
       	     (inst :mov :rdx :r12))
 	    (t
-	     (inst :mov :r11 :r11)
-	     (inst :sub *tmp-reg* *fun-number-of-arguments-reg*)
-	     (inst :lea :r13 (@ nil *tmp-reg* *word-size* (* 2 *word-size*)))
+	     (inst :mov :r11 *tmp-reg*)
+	     (inst :sub :r11 *fun-number-of-arguments-reg*)
+	     (inst :lea :r13 (@ nil :r11 *word-size* (* 2 *word-size*)))
 	     (inst :mov :r11 (@ *base-pointer-reg* :r13))
 	     (inst :mov (@ :r14) :r11)
 	     (inst :mov (@ :r14 nil nil *word-size*) :r12)
 
 	     ;; we are setting last fixed parameter to (LAST_FIXED_PARAMETER . &REST)
-	     ;; last fixed parameter *is not* the same as last runtime parameter
-	     ;; this is why we are differently calculating stack offset for it
-	     (inst :mov *tmp-reg* (- fixed-arguments-count
-				      (length *fun-arguments-regs*)))
-	     (inst :lea :r13 (@ *tmp-reg* *word-size* (* 2 *word-size*)))
+	     (inst :lea :r11 (@ :r14 nil nil *list-tag*))
+	     (inst :mov (@ *base-pointer-reg* :r13) :r11)
 
-	     (inst :lea *tmp-reg* (@ :r14 nil nil *list-tag*))
-	     (inst :mov (@ *base-pointer-reg* :r13) *tmp-reg*)))
+	     ;; since compiler doesn't know how many arguments will be at runtime
+	     ;; we calculate RBP offset for first stack argument
+	     ;; compiler count on this to be able to grab stack arguments
+	     ;; when there is &REST in arguments list
+	     (inst :mov *fun-number-of-arguments-reg* *tmp-reg*)
+	     (inst :sub *fun-number-of-arguments-reg* (+ 1 (length *fun-arguments-regs*)))
+	     (inst :lea *fun-number-of-arguments-reg* (@ nil *fun-number-of-arguments-reg* *word-size* (* 2 *word-size*)))))
       
       (inst :jump-fixup :jmp exit)
       

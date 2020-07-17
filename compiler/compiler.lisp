@@ -204,11 +204,17 @@
 					     stack-args)
 					 ))))))))
 
-(defun translate-receive-param (param-location param-index number-of-arguments translator allocation)
-  (let ((storage (get-allocation-storage param-location allocation)))
-    (when storage
+(defun translate-receive-param (param-location param-index number-of-arguments translator allocation ir-component)
+  (let ((storage (get-allocation-storage param-location allocation))
+	(lambda-list-rest-p (lambda-info-lambda-list-rest (ir-component-lambda-info ir-component))))
+    (emit-ir-assembly translator
+		      (asm-storage-move storage
+					(make-receive-param-storage param-index number-of-arguments lambda-list-rest-p)))
+    (when (and lambda-list-rest-p
+	       (> param-index
+		  (length *fun-arguments-regs*)))
       (emit-ir-assembly translator
-			(asm-storage-move storage (make-receive-param-storage param-index number-of-arguments))))))
+			(list (list :sub *fun-number-of-arguments-reg* *word-size*))))))
 
 (defun translate-load (ir translator allocation)
   (emit-ir-assembly translator
@@ -328,7 +334,7 @@
 		     (list :label :wrong-arg-count-label)))
   (emit-ir-assembly translator (list (list :ud2))))
 
-(defun to-asm (ir translator allocation)
+(defun to-asm (ir translator allocation ir-component)
   (let ((mnemonic (first ir)))
     (when *debug*
       (progn
@@ -342,7 +348,7 @@
       (arg-check (translate-arg-check ir translator))
       (arg-minimum-check (translate-arg-minimum-check ir translator))
       (params-count (translate-params-count ir translator))
-      (receive-param (translate-receive-param (second ir) (third ir) (fourth ir) translator allocation))
+      (receive-param (translate-receive-param (second ir) (third ir) (fourth ir) translator allocation ir-component))
       (load (translate-load ir translator allocation))
       (load-param (translate-load-param ir translator allocation))
       (load-call (translate-load-call ir translator allocation))
@@ -360,7 +366,7 @@
 	      (index (car ir)))
 	  (when *debug*
 	    (format t "~% ********* INDEX: ~a~%" index))
-	  (to-asm ir-instruction translator allocation))))
+	  (to-asm ir-instruction translator allocation ir-component))))
     translator))
 
 ;;; linear scan register allocation
@@ -529,7 +535,7 @@
 (defstruct reg-storage register)
 ;;; FIXME, no need for stack-storage, should be memory-storage with RBP as base
 (defstruct stack-storage offset)
-(defstruct memory-storage base offset)
+(defstruct memory-storage base index scale offset)
 (defstruct constant-storage constant)
 
 (defun allocation-add-storage (allocation interval storage)
@@ -711,15 +717,21 @@
     (stack-storage (@ *base-pointer-reg* nil nil (- (* *word-size* (+ (stack-storage-offset storage)
 								      (length *preserved-regs*)
 								      1)))))
-    (memory-storage (@ (memory-storage-base storage) nil nil (memory-storage-offset storage)))))
+    (memory-storage (@ (memory-storage-base storage)
+		       (memory-storage-index storage)
+		       (memory-storage-scale storage)
+		       (memory-storage-offset storage)))))
 
-(defun make-receive-param-storage (param-index number-of-arguments)
+(defun make-receive-param-storage (param-index number-of-arguments lambda-list-rest-p)
   (let ((regs-args (length *fun-arguments-regs*)))
     (if (> param-index regs-args)
 	;; we already did push RBP to stack and with return addres that's 2 slots so arguments are RBP+16, RBP+24 ...
-	(make-memory-storage :base *base-pointer-reg*
-			     :offset (+ (* 2 *word-size*)
-					(* *word-size* (- number-of-arguments param-index))))
+	(if  lambda-list-rest-p
+	     (make-memory-storage :base *base-pointer-reg*
+				  :index *fun-number-of-arguments-reg*)
+	     (make-memory-storage :base *base-pointer-reg*
+				  :offset (+ (* 2 *word-size*)
+					     (* *word-size* (- number-of-arguments param-index)))))
 	(make-reg-storage :register (nth (- param-index 1) *fun-arguments-regs*)))))
 
 (defun get-param-storage (param-number arguments-count)
