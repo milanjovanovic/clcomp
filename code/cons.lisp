@@ -138,3 +138,34 @@
       ((or (eq (car place) indicator)
 	   (null place))
        (cadr place))))
+
+(defun cars-and-cdrs (lists)
+  (let ((cars nil)
+	(cdrs nil))
+    (dolist (list lists)
+      (let ((f (car list))
+	    (r (cdr list)))
+	(if f
+	    (progn
+	      (setf cars (cons f cars))
+	      (setf cdrs (cons r cdrs)))
+	    (return-from cars-and-cdrs nil))))
+    (list (list-reverse cars)
+	  (list-reverse cdrs))))
+
+(defun mapcar (function list &rest more-lists)
+  (let ((lists (cons list more-lists))
+	(ccar nil)
+	(ccdr nil))
+    (do* ((pairs (cars-and-cdrs lists) (cars-and-cdrs (second pairs)))
+	  (cars (car pairs) (car pairs)))
+	 ((null (car pairs)) nil)
+      (let ((result-cons (cons (apply function cars) nil)))
+	(if (null ccar)
+	    (progn
+	      (setf ccar result-cons)
+	      (setf ccdr result-cons))
+	    (progn
+	      (setf (cdr ccdr) result-cons)
+	      (setf ccdr result-cons)))))
+    ccar))

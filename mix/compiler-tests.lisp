@@ -243,6 +243,26 @@
 					    (b (lambda () (lambda (x) (+ x x)))))
 					(= 2 (funcall a (funcall b))))))
 
+(define-compiler-test "mapcar-1" t (lambda ()
+				     (%initialize-env)
+				     (equal
+				      (mapcar (lambda (a b c)
+						(+ a b c))
+					      (list 1 2 3)
+					      (list 10 20 30)
+					      (list 100 200 300 400))
+				      (list 111 222 333))))
+
+(define-compiler-test "mapcar-2" t (lambda ()
+				     (%initialize-env)
+				     (let ((x (lambda () 
+						(lambda (x y)
+						  (+ x y)))))
+				       (equal '(11 22 33)
+					      (mapcar (funcall x)
+						      '(1 2 3)
+						      '(10 20 30))))))
+
 (defun generate-all-test-cores ()
   (let ((*debug* nil))
     (maphash (lambda (k v)

@@ -202,7 +202,7 @@ void print_lisp_array(lispobj obj) {
 }
 
 void print_lisp_pointer(lispobj obj) {
-  printf("IN POINTER\n");
+  // printf("IN POINTER\n");
   if (is_simple_array(obj)) {
     if (is_string(obj)) {
       print_lisp_string(obj, 1);
