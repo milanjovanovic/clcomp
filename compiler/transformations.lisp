@@ -31,7 +31,7 @@
 ;;; transform sexp expression to structures tree
 
 (defstruct immediate-constant-node value)
-(defstruct ref-constant-node form)
+(defstruct ref-constant-node form node)
 (defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
 (defstruct dynamic-var-node name form)
 (defstruct if-node test-form true-form false-form)
@@ -129,7 +129,7 @@
 	((characterp form)
 	 (make-immediate-constant-node :value (characterize form)))
 	((stringp form)
-	 (make-ref-constant-node :form form))
+	 (parse-and-create-ref-costant-node form))
 	(t (error "Unknown constant form"))))
 
 (defun create-tagbody-node (forms environment)
@@ -151,6 +151,13 @@
       (make-lexical-var-node :name form :form nil)
       (make-call-node :function 'symbol-value :arguments (make-ref-constant-node :form form))))
 
+(defun parse-and-create-ref-costant-node (form)
+  (make-ref-constant-node
+   :form form
+   :node (create-node (clcomp-macroexpand (list 'lambda nil
+						form)
+					  (create-macros-env t t)))))
+
 (defun create-node (form &optional environment)
   (if (atom form)
       (cond ((constantp form)
@@ -162,7 +169,7 @@
 	(cond ((eq first '%compile-constant) ;; FIXME, need this for now, just for testing
 	       (make-immediate-constant-node :value (second form)))
 	      ((eq first 'quote)
-	       (make-ref-constant-node :form form))
+	       (parse-and-create-ref-costant-node form))
 	      ((eq first 'lambda)
 	       (create-lambda-node form environment))
 	      ((eq first 'if)

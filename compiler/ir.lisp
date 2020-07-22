@@ -164,7 +164,7 @@
 
 (defstruct fun-rip-relative name)
 (defstruct component-rip-relative name)
-(defstruct sub-component name component)
+(defstruct sub-component name component eval)
 
 (defun get-rip-relative-name (rip-relative-location)
   (etypecase rip-relative-location
@@ -187,13 +187,6 @@
 
 (defun make-if-ir (component location label)
   (add-ir component (list (list 'if location 'go label))))
-
-;;; FIXME, this is wrong
-(defun make-quoted-ir (component to from)
-  (declare (ignorable component to from))
-  (error "make-quoter-ir")
-  ;; (add-ir component (list (list 'load-quoted to from)))
-  )
 
 (defun add-fun-rip-relative-location (fun ir-component)
   (unless
@@ -289,16 +282,6 @@
   (let ((location (make-temp-location)))
     (make-load-ir component location (make-immediate-constant :constant (immediate-constant-node-value node)))
     location))
-
-;;; FIXME, this is not right
-;;; quick solution: transform this to runtime list
-(defun emit-quoted-form-ir (component node)
-  (let ((location (make-temp-location)))
-    (make-quoted-ir component location (quoted-node-form node))
-    location))
-
-(defun emit-lexical-var-node (node environments)
-  (get-var-ir-symbol node environments))
 
 (defun emit-progn-ir (component node environments)
   (let ((nodes (progn-node-forms node))
@@ -397,6 +380,14 @@
   ;; tagbody returns nil
   (make-immediate-constant :constant *nil*))
 
+(defun emit-load-time-component (component ref-constant-node)
+  (let ((temp-loc (make-rip-relative-location :location (make-temp-location-symbol)))
+	(subcomp (make-ir-component)))
+    (push (make-sub-component :name temp-loc :component subcomp :eval t)
+	  (ir-component-sub-comps component))
+    (push (make-component-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))
+    (make-ir (ref-constant-node-node ref-constant-node) subcomp temp-loc)))
+
 (defun emit-go-ir (component node environments)
   (make-go-ir component (get-label-ir-symbol (go-node-label-node node) environments))
   nil)
@@ -420,13 +411,13 @@
     (if-node (emit-if-ir component node environments))
     (let-node (emit-let-ir component node environments))
     (lambda-node (emit-lambda-ir component node))
-    (quoted-node (emit-quoted-form-ir component node))
     (immediate-constant-node (emit-constant-ir component node))
     (setq-node (emit-setq-ir component node environments))
     (tagbody-node (emit-tagbody-ir component node environments))
     ;; FIXME, error -> go-node returns nil now, should not return anything
     ;; anyway, dead code elimination in block analyzing solves this
     (go-node (emit-go-ir component node environments))
+    (ref-constant-node (emit-load-time-component component node))
     (otherwise (error "Unknown node type"))))
 
 ;;; entry node need to be lambda

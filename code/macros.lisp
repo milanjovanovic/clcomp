@@ -63,9 +63,9 @@
 (defun macro-or (form)
   (if (= (length form) 2)
       (second form)
-   (let ((f (gensym "F-")))
-     (list 'let (list (list f (second form)))
-	   (list 'if f f (cons 'or (cddr form)))))))
+      (let ((f (gensym "F-")))
+	(list 'let (list (list f (second form)))
+	      (list 'if f f (cons 'or (cddr form)))))))
 (setf (gethash 'or *macros*) 'macro-or)
 
 (defun macro-named-lambda (form)
@@ -174,7 +174,12 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defstruct macros-env blocks)
+(defstruct macros-env blocks compile-or-load-time time)
+
+(defun create-macros-env (compile-or-load-time time)
+  (make-macros-env :blocks (make-hash-table :test 'equalp)
+		   :compile-or-load-time compile-or-load-time
+		   :time time))
 
 (defun get-block-or-return-from-symbol (env block-symbol base-name)
   (let* ((hash-key (concatenate 'string (symbol-name block-symbol) base-name))
@@ -238,7 +243,7 @@
 		      (clcomp-macroexpand f env))
 		    (cdr form)))))
 
-(defun %clcomp-macroexpand (macro-form env)
+s(defun %clcomp-macroexpand (macro-form env)
   (let* ((macro-fun (gethash (first macro-form) *macros*))
 	 (expanded (funcall macro-fun macro-form)))
     (if (consp expanded)
@@ -255,7 +260,9 @@
 
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)
-  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun (clcomp-macroexpand (list 'quote (second form)))))
+  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun
+							   (clcomp-macroexpand (list 'quote (second form))
+									       env)))
 	(list '%defun (second form)
 	      (clcomp-macroexpand (%parse-defun-to-lambda form) env))))
 
@@ -375,29 +382,34 @@
   (let* ((macro-fun (gethash (first macro-form) *macros*)))
     (funcall macro-fun macro-form)))
 
-(defun clcomp-macroexpand-string (string)
-  (let ((f nil)
-	(i (- (length string) 1)))
-    (dotimes (c (+ 1 i))
-      (push (char string i) f)
-      (decf i))
-    (list 'make-string (length string) (cons 'list  f))))
+(defun clcomp-macroexpand-string (string env)
+  (if (macros-env-compile-or-load-time env)
+      (let ((f nil)
+	    (i (- (length string) 1)))
+	(dotimes (c (+ 1 i))
+	  (push (char string i) f)
+	  (decf i))
+	(list 'make-string (length string) (cons 'list  f)))
+      string))
 
 
 ;;; QUOTE expanding
 ;;; we are moving INTERN to runtime so we can bootstrap READER
-(defun clcomp-macroexpand-quote-obj (obj)
-  (if (consp obj)
-      (cons 'list  (mapcar 'clcomp-macroexpand-quote-obj obj))
-      (cond ((stringp obj) (clcomp-macroexpand-string obj))
-	    ((symbolp obj) (list 'intern (clcomp-macroexpand-string (symbol-name obj))))
-	    (t obj))))
+(defun clcomp-macroexpand-quote-obj (obj env)
+  (if (macros-env-compile-or-load-time env)
+      (if (consp obj)
+	  (cons 'list  (mapcar (lambda (ex)
+				 (clcomp-macroexpand-quote-obj ex env)) obj))
+	  (cond ((stringp obj) (clcomp-macroexpand-string obj env))
+		((symbolp obj) (list 'intern (clcomp-macroexpand-string (symbol-name obj) env)))
+		(t obj)))
+      (list 'quote obj)))
 
 (defun clcomp-macroexpand (form &optional env)
   (unless env
-    (setf env (make-macros-env :blocks (make-hash-table :test 'equalp))))
+    (setf env (create-macros-env nil nil)))
   (if (atom form)
-      (cond ((stringp form) (clcomp-macroexpand-string form))
+      (cond ((stringp form) (clcomp-macroexpand-string form env))
 	    (t form))
       (let ((first (first form)))
 	(let ((macro-fun (gethash first *macros*)))
@@ -414,6 +426,6 @@
 		(lambda (%clcomp-macroexpand-lambda form env))
 		(setf (%clcomp-macroexpand-setf form env))
 		;; FIXME, if lambda form is first need to macroexpand
-		(quote (clcomp-macroexpand-quote-obj (second form)))
+		(quote (clcomp-macroexpand-quote-obj (second form) env))
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))
