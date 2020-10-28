@@ -17,14 +17,12 @@
 
 (defparameter *debug* nil)
 
-(defparameter *c* nil)
-(defparameter *all* nil)
-(defparameter *ir* nil)
-
-
 (defparameter *dont-inline* nil)
 
 (defparameter *compile-or-load-time* nil)
+
+
+(defparameter *symbols* (make-hash-table))
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
@@ -96,21 +94,9 @@
 	   (list
 	    (list :mov (storage-operand storage1) (storage-operand storage2)))))))
 
-(defun asm-storage-move-from-rip-relative (storage1 rip-location)
-  (let ((s1-type (type-of storage1)))
-    (if (or (eq s1-type 'stack-storage)
-	    (eq s1-type 'memory-storage))
-	(list
-	 (list :rip-relative-fixup :mov *tmp-reg* (list 'subcomp (rip-relative-location-location rip-location)))
-	 (list :mov (storage-operand storage1) *tmp-reg*))
-	(list
-	 (list :rip-relative-fixup :mov (storage-operand storage1) (list 'subcomp (rip-relative-location-location rip-location)))))))
-
 (defun asm-move (loc1 loc2 allocation)
-  (if (eq 'rip-relative-location (type-of loc2))
-      (asm-storage-move-from-rip-relative (get-allocation-storage loc1 allocation) loc2)
-      (asm-storage-move (get-allocation-storage loc1 allocation)
-			(get-allocation-storage loc2 allocation))))
+  (asm-storage-move (get-allocation-storage loc1 allocation)
+		    (get-allocation-storage loc2 allocation)))
 
 (defun calle-save-registers ()
   (let (assembly)
@@ -133,13 +119,12 @@
 				 (* *word-size* 
 				    ;; reverse stack arguments fix
 				    (if (oddp stack-size)
-				    		    stack-size
-				    		    (+ 1 stack-size))
+				    	stack-size
+				    	(+ 1 stack-size))
 				    )))) ; 16 byte aligment
 	;; FIXME, remove aligment, reverse stack arguments parsing
-	 (emit-ir-assembly translator
-			   (list (list :sub *stack-pointer-reg* *word-size*)))
-	)))
+	(emit-ir-assembly translator
+			  (list (list :sub *stack-pointer-reg* *word-size*))))))
 
 (defun maybe-deallocate-stack-space (translator allocation)
   (let ((stack-size (allocation-stack allocation)))
@@ -226,8 +211,10 @@
 
 (defun translate-load-call (ir translator allocation)
   (emit-ir-assembly translator
+		    (asm-storage-move (make-reg-storage :register *fun-address-reg*)
+				      (make-rip-relative-storage (fourth ir))))
+  (emit-ir-assembly translator
 		    (list
-		     (list :rip-relative-fixup :mov *fun-address-reg* (list 'function-address (fourth ir)))
 		     (list :call *fun-address-reg*)))
   (let ((arguments-count (nth 4 ir)))
     (when (> arguments-count (length *fun-arguments-regs*))
@@ -242,11 +229,11 @@
 		      (list
 		       (list :mov (storage-operand storage) *return-value-reg*)))
     #+nil(when (and storage
-	       (when (typep storage 'reg-storage)
-		 (not (eq (reg-storage-register storage) *return-value-reg*))))
-      (emit-ir-assembly translator
-			(list
-			 (list :mov (storage-operand storage) *return-value-reg*))))))
+		    (when (typep storage 'reg-storage)
+		      (not (eq (reg-storage-register storage) *return-value-reg*))))
+	   (emit-ir-assembly translator
+			     (list
+			      (list :mov (storage-operand storage) *return-value-reg*))))))
 
 (defun emit-vop-code (vop ir allocation translator)
   ;; we are using fun arguments registers for our VOP
@@ -264,7 +251,7 @@
 	(etypecase arg-storage
 	  (reg-storage
 	   (push (reg-storage-register arg-storage) arguments-storage))
-	  (stack-storage
+	  ((or stack-storage memory-storage)
 	   (if (eq :register (second vop-argument))
 	       (let ((register (first usable-registers)))
 		 ;; FIXME, check this again !!!
@@ -526,7 +513,6 @@
     complete-intervals))
 
 (defun make-ir-intervals (ir-component)
-  (setf *c* ir-component)
   (do-lifetime-analysis ir-component)
   (let ((block-intervals (get-block-intervals ir-component)))
     (merge-intervals block-intervals)))
@@ -738,9 +724,12 @@
   (let ((arg-reg-count (length *fun-arguments-regs*)))
     (if (> param-number arg-reg-count)
 	(make-memory-storage :base *stack-pointer-reg* :offset (* *word-size*
-								  (- arguments-count param-number))
-			     )
+								  (- arguments-count param-number)))
 	(make-reg-storage :register (nth (- param-number 1) *fun-arguments-regs*)))))
+
+(defun make-rip-relative-storage (location)
+  (make-memory-storage :base :RIP
+		       :offset (list 'displacement (list 'rip location))))
 
 (defun get-allocation-storage (location allocation)
   (let ((location-type (type-of location)))
@@ -755,14 +744,14 @@
 	     )
        )
       ((var-location tmp-location) (gethash (location-symbol location) (allocation-storage allocation)))
-      (rip-relative-location (make-memory-storage))
+      (rip-relative-location (make-rip-relative-storage (rip-relative-location-location location)))
       (lambda-return-location (make-reg-storage :register *return-value-reg*))
       (otherwise (error "Unknown location type")))))
 
 
 
 (defstruct rip-location rip byte-offset)
-(defstruct compile-component id code prefix-code start code-size subcomps rips rip-offsets byte-code)
+(defstruct compile-component id code prefix-code start code-size subcomps rips rip-offsets byte-code eval-load-compile)
 (defstruct compilation-unit compile-component start fixups code main-offset)
 
 (defun get-compilation-unit-code-size (compilation-unit)
@@ -787,9 +776,6 @@
 (defun compile-component-pass-1 (ir-component)
   (let* ((intervals (make-ir-intervals ir-component))
 	 (allocation (make-component-allocation intervals)))
-    (setf *c* ir-component
-	  *ir* intervals
-	  *all* allocation)
     (make-compile-component :code (translator-code (translate-component ir-component allocation))
 			    :subcomps (mapcar (lambda (subcomp)
 						(cons (sub-component-name subcomp)
@@ -862,7 +848,8 @@
 	  (rip-offsets nil)
 	  (start-offset (+ (length subcomps)
 			   (length (remove-if (lambda (rip)
-						(typep rip 'component-rip-relative))
+						(or (typep rip 'component-rip-relative)
+						    (typep rip 'fixup-rip-relative)))
 					      rips)))))
       (when (> start-offset 0)
 	(push (assemble-instruction (list :jmp (* *word-size* start-offset))) pre-code)
@@ -874,7 +861,8 @@
 	;; non subcomponent rips
 	(when (> (length rips) (length subcomps))
 	  (dolist (rip-relative rips)
-	    (when (not (typep rip-relative 'component-rip-relative))
+	    (when (not (or (typep rip-relative 'component-rip-relative)
+			   (typep rip-relative 'fixup-rip-relative)))
 	      (push *dummy-rip-value* pre-code)
 	      (push (list (get-rip-relative-name rip-relative) start-offset) rip-offsets)
 	      (decf start-offset)))))
@@ -907,17 +895,13 @@
 	(dolist (inst (compile-component-byte-code component))
 	  ;; FIXME, check this again
 	  (incf current-size (instruction-size inst))
-	  (cond ((eq (first inst) :rip-relative-fixup)
-		 (let* ((mnemonic (second inst))
-			(to (third inst))
-			(rip-name (second (fourth inst)))
-			(rip (list *instruction-pointer-register* nil nil (calculate-rip-offset current-size
-												rip-name
-												component)))
-			(instruction (list mnemonic to rip)))
-		   (push (assemble-instruction instruction) code)
-		   (when *debug*
-		     (print (list 'rip-instruction inst instruction (assemble-instruction instruction))))))
+	  (cond ((instruction-has-unresolved-memory-operand inst)
+		 (let* ((rip-name (unresolved-memory-operand-rip-name inst))
+			(rip-offset (calculate-rip-offset current-size
+							  rip-name
+							  component))
+			(resolved-instruction (resolve-instruciton-offset inst rip-offset)))
+		   (push (assemble-instruction resolved-instruction) code)))
 		(t (push inst code))))
 	(setf (compile-component-byte-code component) (reverse code))))))
 

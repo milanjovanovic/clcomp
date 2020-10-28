@@ -59,6 +59,16 @@ struct lisp_code {
   char *code;
   long code_size;
 };
+
+struct fixups {
+  uint64_t size;
+  struct eval_fixup *efixups;
+};
+
+struct eval_fixup {
+  uintptr_t fun;
+  uintptr_t fixup;
+};
  
 struct cons *allocate_cons(void **heap, lispobj car, lispobj cdr);
 lispobj tag_cons(struct cons *cons);

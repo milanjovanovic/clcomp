@@ -32,24 +32,55 @@
 	     (push inst new-instructions))))
     new-instructions))
 
+(defun is-unresolved-offset-memory-operand (operand)
+  (and (consp operand)
+       (let ((displacement (car (last operand))))
+	 (and (consp displacement)
+	      (eq (car displacement) 'displacement)
+	      (second displacement)))))
+
+(defun instruction-has-unresolved-memory-operand (instruction)
+  (some #'is-unresolved-offset-memory-operand  (rest instruction)))
+
+(defun unresolved-memory-operand-rip-name (instruction)
+  (second (instruction-has-unresolved-memory-operand instruction)))
+
 (defun jump-instruction-size (instruction)
   (let ((mnemonic (second instruction)))
     (cond ((eq mnemonic :jmp) 5)
 	  (t 6))))
 
+;;; just look at displacement and insert test value so we can get instruction size
+(defun maybe-fix-ea-operand (operand &optional (displ 32)) ; use 32 as test displacement
+  (let ((operand (reformat-operand operand)))
+    (if (consp operand)
+	(let ((displacement (car (last operand))))
+	  (append (butlast operand)
+		  (if (and (consp displacement)
+			   (eq 'displacement (first displacement)))
+		      (list displ)
+		      (list displacement))))
+	operand)))
+
+(defun maybe-fix-unresolved-offset-instruction (instruction)
+  (cons (first instruction)
+	(mapcar #'maybe-fix-ea-operand (rest instruction))))
+
+(defun resolve-instruciton-offset (instruction rip-offset)
+  (cons (first instruction)
+	(mapcar (lambda (o)
+		  (maybe-fix-ea-operand o rip-offset)) (rest instruction))))
+
 (defun instruction-size (instruction)
   (let ((f (first instruction)))
     (cond ((eq f :jump-fixup)
 	   (jump-instruction-size instruction))
-	  ((eq f :rip-relative-fixup)
-	   7)
 	  ((eq f :label)
 	   0)
-	  ((eq f :rip-relative-fixup-location)
-	   *word-size*)
 	  ((numberp f)
 	   (length instruction))
-	  (t (length (assemble-instruction instruction))))))
+	  (t (length (assemble-instruction
+		      (maybe-fix-unresolved-offset-instruction instruction)))))))
 
 (defun code-size (instructions)
   (let ((size 0))
@@ -62,7 +93,7 @@
   (let (code)
     (dolist (inst instructions)
       (let ((mnemonic (first inst)))
-	(cond ((eq mnemonic :rip-relative-fixup)
+	(cond ((instruction-has-unresolved-memory-operand inst)
 	       (push inst code))
 	      ((eq mnemonic :label))
 	      (t (push (assemble-instruction inst) code)))))

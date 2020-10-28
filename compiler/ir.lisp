@@ -5,7 +5,7 @@
 (defparameter *label-counter* 0)
 
 (defstruct lambda-info lambda-list-rest)
-(defstruct ir-component code code-blocks sub-comps rips lambda-info)
+(defstruct ir-component code code-blocks sub-comps rips lambda-info eval-load-compile)
 
 (defun get-lambda-info (lambda-node)
   (let ((lambda-info (make-lambda-info)))
@@ -164,12 +164,14 @@
 
 (defstruct fun-rip-relative name)
 (defstruct component-rip-relative name)
+(defstruct fixup-rip-relative name)
 (defstruct sub-component name component eval)
 
 (defun get-rip-relative-name (rip-relative-location)
   (etypecase rip-relative-location
     (fun-rip-relative (fun-rip-relative-name rip-relative-location))
-    (component-rip-relative (component-rip-relative-name rip-relative-location))))
+    (component-rip-relative (component-rip-relative-name rip-relative-location))
+    (fixup-rip-relative (fixup-rip-relative-name rip-relative-location))))
 
 
 (defun add-ir (component ir)
@@ -380,13 +382,20 @@
   ;; tagbody returns nil
   (make-immediate-constant :constant *nil*))
 
+(defun emit-lexical-var-node (node environments)
+  (get-var-ir-symbol node environments))
+
 (defun emit-load-time-component (component ref-constant-node)
   (let ((temp-loc (make-rip-relative-location :location (make-temp-location-symbol)))
-	(subcomp (make-ir-component)))
+	(subcomp (make-ir-component :eval-load-compile t)))
     (push (make-sub-component :name temp-loc :component subcomp :eval t)
 	  (ir-component-sub-comps component))
-    (push (make-component-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))
+    (push (make-fixup-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))
     (make-ir (ref-constant-node-node ref-constant-node) subcomp temp-loc)))
+
+
+(defun emit-raw-symbol-component (component node)
+  )
 
 (defun emit-go-ir (component node environments)
   (make-go-ir component (get-label-ir-symbol (go-node-label-node node) environments))
@@ -418,6 +427,8 @@
     ;; anyway, dead code elimination in block analyzing solves this
     (go-node (emit-go-ir component node environments))
     (ref-constant-node (emit-load-time-component component node))
+    (global-reference-node-p (fixme))
+    ;; (symbol-raw-node (emit-raw-symbol-component component node))
     (otherwise (error "Unknown node type"))))
 
 ;;; entry node need to be lambda

@@ -32,7 +32,8 @@
 
 (defstruct immediate-constant-node value)
 (defstruct ref-constant-node form node)
-(defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
+(defstruct global-reference-node form type)
+aa(defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
 (defstruct dynamic-var-node name form)
 (defstruct if-node test-form true-form false-form)
 (defstruct let-node bindings form sequential)
@@ -149,14 +150,27 @@
 (defun create-lexical-or-symbol-value-node (form environment)
   (if (lexical-binding-exist environment form)
       (make-lexical-var-node :name form :form nil)
-      (make-call-node :function 'symbol-value :arguments (make-ref-constant-node :form form))))
+      (make-call-node :function 'symbol-value
+		      :arguments (list (make-ref-constant-node
+					:form form
+					:node (create-node (clcomp-macroexpand (list 'lambda nil
+										     (list 'quote form))
+									       (create-macros-env t t))))))))
 
 (defun parse-and-create-ref-costant-node (form)
-  (make-ref-constant-node
-   :form form
-   :node (create-node (clcomp-macroexpand (list 'lambda nil
-						form)
-					  (create-macros-env t t)))))
+  (if (and (consp form) (symbolp (second form)))
+      ;; (make-global-reference-node :form (second form) :type 'symbol)
+      ;; do SYMBOL the same way as STRING
+      (make-ref-constant-node
+       :form form
+       :node (create-node (clcomp-macroexpand (list 'lambda nil
+						    form)
+					      (create-macros-env t t))))
+      (make-ref-constant-node
+       :form form
+       :node (create-node (clcomp-macroexpand (list 'lambda nil
+						    form)
+					      (create-macros-env t t))))))
 
 (defun create-node (form &optional environment)
   (if (atom form)

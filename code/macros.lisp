@@ -243,7 +243,7 @@
 		      (clcomp-macroexpand f env))
 		    (cdr form)))))
 
-s(defun %clcomp-macroexpand (macro-form env)
+(defun %clcomp-macroexpand (macro-form env)
   (let* ((macro-fun (gethash (first macro-form) *macros*))
 	 (expanded (funcall macro-fun macro-form)))
     (if (consp expanded)
@@ -429,3 +429,5 @@ s(defun %clcomp-macroexpand (macro-form env)
 		(quote (clcomp-macroexpand-quote-obj (second form) env))
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))
+
+

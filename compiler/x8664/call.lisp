@@ -1,7 +1,7 @@
 (in-package :clcomp)
 
 (define-vop %error (res :register) ((msg :register))
-  (inst :mov :RAX 33560272)
+  (inst :mov :RAX 33563440)
   (dolist (reg *c-call-save-registers*)
     (unless (eq reg res)
       (inst :push reg)))

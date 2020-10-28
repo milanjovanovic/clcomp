@@ -20,9 +20,11 @@
 #define LISP_HEAP_START 0x200000000
 #define STACK_SIZE (5 * 1024 * 1024)
 #define LISP_HEAP_SIZE (100 * 1024 * 1024)
+#define FIXUP_FILE "fixups.core"
 
 lispobj init_lisp(uintptr_t stack, uintptr_t heap);
 lispobj run_lisp_test(uintptr_t stack, uintptr_t heap, uintptr_t code_address);
+lispobj eval_lisp_fixup(uintptr_t fun);
 void print_lisp(lispobj obj);
 
 int64_t read_long(FILE *fp);
@@ -341,7 +343,6 @@ void init_runtime() {
   printf("HEAP_HEADER_START: %p\n", (void *) (*heap_header));
   printf("HEAP_HEADER_END: %p\n", (void *) (*(heap_header+1)));
   
-  // print_lisp(init_lisp(stack_start, (uintptr_t) heap_header));
 }
 
 void load_core() {
@@ -371,6 +372,69 @@ struct lisp_code load_test_code(char *file) {
   return lcode;
 }
 
+struct fixups read_fixups() {
+  
+  struct fixups fixps;
+  struct stat info;
+  uint64_t i;
+  uint64_t fxps_count;
+
+  if (stat(FIXUP_FILE, &info) != 0) {
+    fixps.size = 0;
+    fixps.efixups = (void *) 0;
+    return fixps;
+  }
+    
+  
+  fxps_count = info.st_size / sizeof (struct eval_fixup);
+  fixps.size = fxps_count;
+
+  struct eval_fixup *e_fixups = malloc(sizeof(struct eval_fixup) * fxps_count);
+  struct eval_fixup *copy = e_fixups;
+
+  FILE *fp = fopen(FIXUP_FILE, "rb");
+  
+  uintptr_t fun;
+  uintptr_t fixup;
+  
+  for (i = 0; i < fxps_count; i++) {
+    
+    fread(&fun, sizeof(uintptr_t), 1, fp);
+    fread(&fixup, sizeof(uintptr_t), 1, fp);
+    
+    e_fixups->fun = fun;
+    e_fixups->fixup = fixup;
+
+    e_fixups++;
+  }
+
+  fclose(fp);
+
+  fixps.efixups = copy;
+  return fixps;
+    
+}
+
+void evaluate_fixups(struct fixups fixs) {
+
+  uint64_t size = fixs.size;
+  uint64_t i;
+  struct eval_fixup *efix = fixs.efixups;
+
+  uintptr_t fun;
+  uintptr_t faddress;
+  
+  for (i = 0; i < size; i++) {
+    fun = efix->fun;
+    faddress = efix->fixup;
+    lispobj obj =  eval_lisp_fixup(fun);
+    lispobj *ptr = (lispobj*) faddress;
+    *ptr = obj;
+    efix++;
+  }
+}
+
+
 lispobj run_test(char *test_file) {
   
   struct lisp_code lcode = load_test_code(test_file);
@@ -379,17 +443,17 @@ lispobj run_test(char *test_file) {
   load_code(lcode.code, lcode.code_size);
   free(lcode.code);
 
+  evaluate_fixups(read_fixups());
+  
   return(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
   //  run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address);
 }
 
 
-void print_contenxt(ucontext_t *uap) {
-  mcontext_t mcontext = uap->uc_mcontext;
-  uint64_t reg_rbp = mcontext->__ss.__rbp;
-  
-
-}
+/* void print_contenxt(ucontext_t *uap) { */
+/*   mcontext_t mcontext = uap->uc_mcontext; */
+/*   uint64_t reg_rbp = mcontqext->__ss.__rbp; */
+/* } */
 
 void sigill_handler(int signal , siginfo_t *info, ucontext_t *uap) {
   printf("SIGILL_HANDLER: %d\n", signal);
@@ -405,7 +469,6 @@ void sigill_handler(int signal , siginfo_t *info, ucontext_t *uap) {
   sigaction(SIGILL, &osa, NULL);
 }
 
-
 void install_handler() {
   
   struct sigaction sa;
@@ -414,17 +477,18 @@ void install_handler() {
   sa.sa_flags = SA_SIGINFO | SA_RESTART;
   sigemptyset(&sa.sa_mask);
   sa.sa_sigaction = (void (*)(int, siginfo_t*, void*)) sigill_handler;
-
+ 
   sigaction(SIGILL, &sa, &osa);
 
 }
 
-
 int main(int argc, char *argv[]) {
 
   init_runtime();
-  
-  load_core();
+
+  init_lisp(stack_start, (uintptr_t) heap_header);
+
+  /* load_core(); */
 
   install_handler();
 

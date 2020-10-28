@@ -21,5 +21,5 @@
     (loop for f = (read s nil)
 	  while f
 	  do
-	  (clcomp-compile-top-level-form f))))
+	     (clcomp-compile-top-level-form f))))
 
