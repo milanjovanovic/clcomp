@@ -33,7 +33,7 @@
 (defstruct immediate-constant-node value)
 (defstruct ref-constant-node form node)
 (defstruct global-reference-node form type)
-aa(defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
+(defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
 (defstruct dynamic-var-node name form)
 (defstruct if-node test-form true-form false-form)
 (defstruct let-node bindings form sequential)

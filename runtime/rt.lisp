@@ -20,6 +20,8 @@
 (defparameter *compile-component-start-address* 0)
 (defparameter *compilation-unit-main-offset* 0)
 
+(defparameter *bootstrap-data* nil)
+
 (defparameter *do-break* nil)
 
 (defun make-eval-fixup-pair (funcall-object fixup-address)
@@ -33,6 +35,18 @@
 				      (compile-component-start (compilation-unit-compile-component compilation-unit)))))
   (setf *compilation-start-address* (+ *compilation-start-address* (get-compilation-unit-code-size compilation-unit))))
 
+
+;; SYMBOLS that solves MAKE-SYMBOL and MAKE-STRING circularity
+(defun process-bootstrap-data ()
+  (let ((data (create-bootstrap-data)))
+    (setf *compilation-start-address*
+	  (+ *compilation-start-address* (* 8 (length data))))
+    (setf *bootstrap-data* data)))
+
+(defun dump-bootstrap-data (stream)
+  (dolist (qword *bootstrap-data*)
+    (dolist (c (little-endian-64bit qword))
+      (write-byte c stream))))
 
 ;; FIXME
 ;; for now we are only resolving FUNCTION calls
@@ -120,9 +134,15 @@
   (dolist (c (immediate-as-byte-list *start-address* :imm64))
     (write-byte c stream)))
 
+(defun create-bootstrap-data ()
+  (let ((vmem (allocate-memory *runtime-heap-start*)))
+    (allocate-symbol vmem 'foo)
+    (dump-data vmem)))
+
 (defun rt-dump-binary (file)
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
     (write-start-address f)
+    (dump-bootstrap-data f)
     (do*
      ((comps (reverse (compilation-units *current-compilation*)) (cdr comps))
       (comp (car comps) (car comps)))
@@ -139,7 +159,6 @@
       (write-sequence (make-array *word-size*
 				  :initial-contents (little-endian-64bit (cdr fixup)))
 		      f))))
-
 
 (defun rt-add-to-compilation (compilation-unit)
   (setf (compilation-units *current-compilation*)
@@ -163,6 +182,7 @@
   (let ((*debug* nil)
 	(*load-time-fixups* nil))
     (rt-reset)
+    (process-bootstrap-data)
     ;; (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     ;; (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
     ;; (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
@@ -178,13 +198,14 @@
     (maphash (lambda (k v)
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
-    (rt-dump-binary "/tmp/core")
+    (rt-dump-binary "/Users/milan/projects/clcomp.github/runtime/core")
     (rt-dump-fixups "/Users/milan/projects/clcomp.github/runtime/fixups.core")))
 
 (defun compile-and-dump (form)
   (let ((*debug* nil)
 	(*load-time-fixups* nil))
     (rt-reset)
+    (process-bootstrap-data)
     (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
@@ -199,5 +220,5 @@
     (maphash (lambda (k v)
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
-    (rt-dump-binary "/tmp/core")
+    (rt-dump-binary "/Users/milan/projects/clcomp.github/runtime/core")
     (rt-dump-fixups "/Users/milan/projects/clcomp.github/runtime/fixups.core")))

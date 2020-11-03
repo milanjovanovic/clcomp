@@ -7,6 +7,7 @@
   :components ((:file "clcomp")
 	       (:file "compiler/constants")
 	       (:file "compiler/utils")
+	       (:file "compiler/rawenc")
 	       (:file "compiler/assembler")
 	       (:file "compiler/instructions")
 	       (:file "compiler/tests")
