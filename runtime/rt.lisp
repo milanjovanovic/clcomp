@@ -20,7 +20,7 @@
 (defparameter *compile-component-start-address* 0)
 (defparameter *compilation-unit-main-offset* 0)
 
-(defparameter *bootstrap-data* nil)
+(defparameter *vmem* nil)
 
 (defparameter *do-break* nil)
 
@@ -38,13 +38,13 @@
 
 ;; SYMBOLS that solves MAKE-SYMBOL and MAKE-STRING circularity
 (defun process-bootstrap-data ()
-  (let ((data (create-bootstrap-data)))
+  (let ((vmem (create-bootstrap-data)))
     (setf *compilation-start-address*
-	  (+ *compilation-start-address* (* 8 (length data))))
-    (setf *bootstrap-data* data)))
+	  (+ *compilation-start-address* (* 8 (length (dump-data vmem)))))
+    (setf *vmem* vmem)))
 
 (defun dump-bootstrap-data (stream)
-  (dolist (qword *bootstrap-data*)
+  (dolist (qword (dump-data *vmem*))
     (dolist (c (little-endian-64bit qword))
       (write-byte c stream))))
 
@@ -91,6 +91,21 @@
      (make-eval-fixup-pair address (+ offset *compilation-unit-local-start-address*))
      *load-time-fixups*)))
 
+(defun resolve-compile-time-constant-fixup (fixup unit-code-buffer)
+  (let* ((name (fixup-rip-relative-constant-name (rip-location-rip fixup)))
+	 (offset (rip-location-byte-offset fixup))
+	 (address (gethash (fixup-rip-relative-constant-form (rip-location-rip fixup))
+			   (vmem-allocations *vmem*))))
+    (unless address
+      (error (format nil "Unknown local RIP ~a" name)))
+    (when *debug*
+      (format t "Name: ~a, EVAL RIP Address: ~x~%" name address))
+    (let ((bytes (little-endian-64bit address))
+	  (index offset))
+      (dolist (byte bytes)
+	(setf (aref unit-code-buffer index) byte)
+	(incf index)))))
+
 (defun resolve-fixups (unit)
   (let ((unit-code (get-compilation-unit-code-buffer unit))
 	(fixups (compilation-unit-fixups unit)))
@@ -101,7 +116,9 @@
 		((component-rip-relative-p (rip-location-rip fixup))
 		 (resolve-local-fixup fixup unit-code))
 		((fixup-rip-relative-p (rip-location-rip fixup) )
-		 (resolve-eval-load-compile-fixup fixup))))
+		 (resolve-eval-load-compile-fixup fixup))
+		((fixup-rip-relative-constant-p (rip-location-rip fixup))
+		 (resolve-compile-time-constant-fixup fixup unit-code))))
 	(resolve-fixup fixups unit-code))
     unit-code))
 
@@ -136,8 +153,8 @@
 
 (defun create-bootstrap-data ()
   (let ((vmem (allocate-memory *runtime-heap-start*)))
-    (allocate-symbol vmem 'foo)
-    (dump-data vmem)))
+    (allocate-symbol vmem 'character)
+    vmem))
 
 (defun rt-dump-binary (file)
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))

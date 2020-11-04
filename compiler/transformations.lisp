@@ -18,6 +18,11 @@
 					 (logxor two-args-logxor)
 					 (logand two-args-logand)))
 
+
+;;; this symbols need to be internet
+;;; look at code/global.lisp
+(defparameter *bootstrap-symbols* '(simple-array character))
+
 (defun get-two-arg-version (fun)
   (second (assoc fun *two-arg-transformation*)))
 
@@ -30,11 +35,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; transform sexp expression to structures tree
 
+(defstruct compile-time-constant-node form)
 (defstruct immediate-constant-node value)
 (defstruct ref-constant-node form node)
-(defstruct global-reference-node form type)
+;; (defstruct global-reference-node form type)
 (defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
-(defstruct dynamic-var-node name form)
+;; (defstruct dynamic-var-node name form)
 (defstruct if-node test-form true-form false-form)
 (defstruct let-node bindings form sequential)
 (defstruct progn-node forms)
@@ -161,11 +167,13 @@
   (if (and (consp form) (symbolp (second form)))
       ;; (make-global-reference-node :form (second form) :type 'symbol)
       ;; do SYMBOL the same way as STRING
-      (make-ref-constant-node
-       :form form
-       :node (create-node (clcomp-macroexpand (list 'lambda nil
-						    form)
-					      (create-macros-env t t))))
+      (if (member (second form) *bootstrap-symbols*)
+	  (make-compile-time-constant-node :form (second form))
+	  (make-ref-constant-node
+	   :form form
+	   :node (create-node (clcomp-macroexpand (list 'lambda nil
+							form)
+						  (create-macros-env t t)))))
       (make-ref-constant-node
        :form form
        :node (create-node (clcomp-macroexpand (list 'lambda nil

@@ -25,8 +25,7 @@
   (let ((array (allocate-array dimension)))
     (%set-array-type array (list 'simple-array element-type (list dimension)))
     (%set-array-element-type array element-type)
-    (%set-simple-array-tag array) ; FIXME, for now use VOP here, when we implement dynamic binding
-					;  we can just use (get-extended-tag 'simple-array here)
+    (%set-simple-array-tag array)
     (if initial-contents
 	(let ((index 0))
 	  (dolist (e initial-contents)
@@ -54,7 +53,6 @@
   (declare (inline %set-array-type %set-array-element-type %set-array-tag debug %set-string-tag))
   (let ((array (allocate-array size))
 	(index 0))
-    ;; FIXME, for now we can't use symbols in MAKE-STRING becase symbols also expand to MAKE-STRING
     (%set-array-type array (list 'simple-array 'character (list size)))
     (%set-array-element-type array 'character)
     (%set-string-tag array)

@@ -22,4 +22,6 @@
 	      (car (%get-env)))))
 
 (defun %initialize-env ()
-  (%set-env (list nil nil)))
+  (%set-env (list nil nil))
+  (%add-to-interned-symbols 'character)
+  (%add-to-interned-symbols 'simple-array))

@@ -165,13 +165,15 @@
 (defstruct fun-rip-relative name)
 (defstruct component-rip-relative name)
 (defstruct fixup-rip-relative name)
+(defstruct fixup-rip-relative-constant name form)
 (defstruct sub-component name component eval)
 
 (defun get-rip-relative-name (rip-relative-location)
   (etypecase rip-relative-location
     (fun-rip-relative (fun-rip-relative-name rip-relative-location))
     (component-rip-relative (component-rip-relative-name rip-relative-location))
-    (fixup-rip-relative (fixup-rip-relative-name rip-relative-location))))
+    (fixup-rip-relative (fixup-rip-relative-name rip-relative-location))
+    (fixup-rip-relative-constant (fixup-rip-relative-constant-name rip-relative-location))))
 
 
 (defun add-ir (component ir)
@@ -393,9 +395,15 @@
     (push (make-fixup-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))
     (make-ir (ref-constant-node-node ref-constant-node) subcomp temp-loc)))
 
-
-(defun emit-raw-symbol-component (component node)
-  )
+(defun emit-compile-time-constant-ir (component node environments)
+  (declare (ignore environments ))
+  (let ((location (make-temp-location))
+	(temp-loc (make-rip-relative-location :location (make-temp-location-symbol))))
+    (push (make-fixup-rip-relative-constant :name (rip-relative-location-location temp-loc)
+					    :form (compile-time-constant-node-form node))
+	  (ir-component-rips component))
+    (make-load-ir component location temp-loc)
+    location))
 
 (defun emit-go-ir (component node environments)
   (make-go-ir component (get-label-ir-symbol (go-node-label-node node) environments))
@@ -427,8 +435,8 @@
     ;; anyway, dead code elimination in block analyzing solves this
     (go-node (emit-go-ir component node environments))
     (ref-constant-node (emit-load-time-component component node))
-    (global-reference-node-p (fixme))
-    ;; (symbol-raw-node (emit-raw-symbol-component component node))
+    (compile-time-constant-node (emit-compile-time-constant-ir component node environments))
+      ;; (symbol-raw-node (emit-raw-symbol-component component node))
     (otherwise (error "Unknown node type"))))
 
 ;;; entry node need to be lambda
