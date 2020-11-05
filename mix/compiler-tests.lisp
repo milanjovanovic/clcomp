@@ -120,7 +120,7 @@
 
 (define-compiler-test "array-test-3" t (lambda ()
 					   (%initialize-env)
-					   (let ((a (make-array 3 'fixnum 0 nil))
+					   (let* ((a (make-array 3 'fixnum 0 nil))
 						 (atype (type-of a)))
 					     (and (= (aref a 0) 0)
 						  (= (aref a 1) 0)

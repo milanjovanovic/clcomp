@@ -25,7 +25,7 @@
   (let ((array (allocate-array dimension)))
     (%set-array-type array (list 'simple-array element-type (list dimension)))
     (%set-array-element-type array element-type)
-    (%set-simple-array-tag array)
+    (%set-simple-array-tag array) ; FIXME, no need for VOP here
     (if initial-contents
 	(let ((index 0))
 	  (dolist (e initial-contents)
@@ -55,7 +55,7 @@
 	(index 0))
     (%set-array-type array (list 'simple-array 'character (list size)))
     (%set-array-element-type array 'character)
-    (%set-string-tag array)
+    (%set-string-tag array) ; FIXME, no need for VOP here
     (dolist (e initial-contents)
       (setf-aref array index e)
       (setf index (+ 1 index)))
