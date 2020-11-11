@@ -248,50 +248,72 @@
 			(list
 			 (list :mov (storage-operand storage) *return-value-reg*))))))
 
+
+(defun storage-to-vop-operand-type (storage)
+  (etypecase storage
+    (stack-storage :stack)
+    (reg-storage :register)))
+
+(defun storage-match-vop-operand (storage vop-operand)
+  (let* ((vop-operand-types (rest vop-operand))	 
+	 (storage-vop-operand-type (storage-to-vop-operand-type storage)))
+    (find storage-vop-operand-type vop-operand-types)))
+
+(defun get-vop-res-operand (ir-return-storage vop-res)
+  (let ((storage-match (storage-match-vop-operand ir-return-storage vop-res)))
+    (if storage-match
+	ir-return-storage
+	(make-reg-storage :register *return-value-reg*))))
+
 (defun emit-vop-code (vop ir allocation translator)
-  ;; we are using fun arguments registers for our VOP
-  ;; allwaus use *RETURN-VALUE-REG* as return register
-  ;; FIXME, is this OK ?
-  ;; FIXME, this is wrong, we are using registers that regalloc already allocated for VAR's
-  ;; TODO, spill register value
-  (let ((arguments-storage nil)
-	(usable-registers *fun-arguments-regs*)
-	(ir-arguments (get-ir-vop-args ir))
-	(vop-arguments (vop-arguments vop)))
+  (let* ((arguments-storage nil)
+	 (registers *fun-arguments-regs*)
+	 (ir-ret-storage (get-allocation-storage (get-ir-vop-return-loc ir) allocation))
+	 (ir-arguments (get-ir-vop-args ir))
+	 (vop-arguments (vop-arguments vop))
+ 	 (vop-res (vop-res vop))	 
+	 (res-operand-storage (get-vop-res-operand ir-ret-storage vop-res)))
     (dolist (argument ir-arguments)
-      (let ((arg-storage (get-allocation-storage argument allocation))
-	    (vop-argument (first vop-arguments)))
-	(etypecase arg-storage
-	  (reg-storage
-	   (push (reg-storage-register arg-storage) arguments-storage))
-	  (stack-storage
-	   (if (eq :register (second vop-argument))
-	       (let ((register (first usable-registers)))
-		 ;; FIXME, check this again !!!
-		 (emit-ir-assembly translator (asm-storage-move (make-reg-storage :register register)
-								arg-storage))
-		 (push register arguments-storage)
-		 (setf usable-registers (rest usable-registers)))
-	       (push (storage-operand arg-storage) arguments-storage))))))
-    ;; FIXME don't hardcode *return-value-reg*
-    (emit-ir-assembly translator
-		      (get-vop-code vop (cons *return-value-reg*  (reverse arguments-storage))))
-    ;; FIXME, this is also bogus
-    (emit-ir-assembly translator
-		      (list
-		       (list :mov (storage-operand (get-allocation-storage (third ir) allocation))
-			     *return-value-reg*)))))
+      (let* ((arg-storage (get-allocation-storage argument allocation))
+	     ;; FIXME, set vop-arguments to cdr
+	     (vop-argument (first vop-arguments))
+	     (vop-arg-types (rest vop-argument))
+	     (storage-match (storage-match-vop-operand arg-storage vop-argument)))
+	(if storage-match
+	    (push (storage-operand arg-storage) arguments-storage)
+	    ;; we should only have situtaion that current storage is stack and VOP needs register storageA
+	    ;; FIXME, maybe first give register to vop arguments that can only be REGISTER
+	    (cond ((and (stack-storage-p arg-storage)
+			(= 1 (length vop-arg-types))
+			(find :register vop-arg-types))
+		   (let ((register (first registers)))
+		     (unless register
+		       (error "No more registers !!!"))
+		     ;; FIXME, check this again !!!
+		     (emit-ir-assembly translator (asm-storage-move (make-reg-storage :register register)
+								    arg-storage))
+		     (push register arguments-storage)
+		     (setf registers (rest registers))))
+		  (t (error "Illegal state !!!"))))))
+    (let ((current-stack-ptr-op (make-stack-storage-operand (allocation-stack allocation))))
+      (emit-ir-assembly translator
+			(get-vop-code vop (cons (storage-operand res-operand-storage)  (reverse (cons current-stack-ptr-op
+												      arguments-storage))))))
+    ;; FIXME, check this
+    (unless (storage-equal ir-ret-storage res-operand-storage)
+      (emit-ir-assembly translator
+			(asm-storage-move (get-allocation-storage (third ir) allocation)
+					  res-operand-storage)))))
+
 
 (defun translate-vop-call (ir translator allocation)
   (let ((vop-name (get-ir-vop-name ir))
 	(ir-vop-args (get-ir-vop-args ir)))
     (if vop-name
-	(let* ((vop (get-vop vop-name)))
+	(let ((vop (get-vop vop-name)))
 	  (if vop
-	      (let ((regs (length (vop-arguments vop))))
-		(when (> regs (length *fun-arguments-regs*))
-		  (error (format nil "Not enough regs for VOP ~a" ir)))
-		(when (not (= (length ir-vop-args) regs))
+	      (let ((vop-arguments-size (length (vop-arguments vop))))
+		(when (not (= (length ir-vop-args) vop-arguments-size))
 		  (error (format nil "Wrong number of arguments for VOP in ~a" ir)))
 		(emit-vop-code vop ir allocation translator))
 	      (error (format nil "Unknown vop for ir ~a" ir))))
@@ -653,7 +675,6 @@
 
 
 (defun find-register (allocation interval)
-  (declare (optimize (speed 0) (debug 3)))
   ;; (when (equalp (interval-intervals interval) (list (list 11 11))) (break))
   (let ((inactive-register (search-for-inactive-register allocation interval)))
     (if inactive-register
@@ -694,7 +715,6 @@
 	(return-from maybe-expire-intervals allocation))))
 
 (defun make-component-allocation (intervals-map)
-  (declare (optimize (speed 0) (debug 3)))
   (let ((allocation (make-allocation  :stack 0
 				      :reg-map (make-hash-table)
 				      :registers *preserved-regs*
@@ -710,13 +730,22 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defun make-stack-storage-operand (offset)
+  (@ *base-pointer-reg* nil nil (- (* *word-size* (+ offset
+						     (length *preserved-regs*)
+						     1)))))
+
+(defun bump-stack-operand (stack-operand number-of-words)
+  (@ (first stack-operand)
+     (second stack-operand)
+     (third stack-operand)
+     (- (fourth stack-operand) (* number-of-words *word-size*))))
+
 (defun storage-operand (storage)
   (case (type-of storage)
     (constant-storage (constant-storage-constant storage))
     (reg-storage (reg-storage-register storage))
-    (stack-storage (@ *base-pointer-reg* nil nil (- (* *word-size* (+ (stack-storage-offset storage)
-								      (length *preserved-regs*)
-								      1)))))
+    (stack-storage (make-stack-storage-operand (stack-storage-offset storage)))
     (memory-storage (@ (memory-storage-base storage)
 		       (memory-storage-index storage)
 		       (memory-storage-scale storage)
@@ -758,6 +787,15 @@
       (rip-relative-location (make-memory-storage))
       (lambda-return-location (make-reg-storage :register *return-value-reg*))
       (otherwise (error "Unknown location type")))))
+
+(defun storage-equal (s1 s2)
+  (and (eq (type-of s1)
+	   (type-of s2))
+       (etypecase s1
+	 (reg-storage (eq (reg-storage-register s1)
+			  (reg-storage-register s2)))
+	 (stack-storage (equal (storage-operand s1)
+			       (storage-operand s2))))))
 
 
 
@@ -854,7 +892,6 @@
   assembly)
 
 (defun assemble-component (component)
-  (declare (optimize (debug 3)))
   (let ((main-code (assembly-pass-1 (peephole (resolve-assembly-jumps (compile-component-code component)))))
 	(subcomps (compile-component-subcomps component))
  	(rips (compile-component-rips component)))
