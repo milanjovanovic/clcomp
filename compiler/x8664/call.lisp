@@ -53,17 +53,20 @@
 (define-vop %apply (res :register :stack)
   ((fun :register :stack)
    (arguments :register :stack))
-  (let ((loopl (make-vop-label "loop-"))
-	(startl (make-vop-label "startl-"))
-	(end-label (make-vop-label "end-label-"))
-	(rdi (make-vop-label "rdi-"))
-	(r8 (make-vop-label "r8-"))
-	(r9 (make-vop-label "r9-"))
-	(stack-args-label (make-vop-label "stack-args-label-"))
-	(no-stack-args-label (make-vop-label "no-stack-args-label"))
-	(exit-label (make-vop-label "exit-label"))
-	(fun-stack-ptr (bump-stack-operand $stack-top-operand$ 1))
-	(fun-is-reg (is-register fun)))
+  (let* ((loopl (make-vop-label "loop-"))
+	 (startl (make-vop-label "startl-"))
+	 (end-label (make-vop-label "end-label-"))
+	 (rdi (make-vop-label "rdi-"))
+	 (r8 (make-vop-label "r8-"))
+	 (r9 (make-vop-label "r9-"))
+	 (stack-args-label (make-vop-label "stack-args-label-"))
+	 (no-stack-args-label (make-vop-label "no-stack-args-label"))
+	 (exit-label (make-vop-label "exit-label"))
+	 (fun-stack-ptr (bump-stack-operand $stack-top-operand$ 1))
+	 (fun-is-reg (find fun *fun-arguments-regs*))
+	 (new-stack-top (if fun-is-reg
+			    (bump-stack-operand fun-stack-ptr 1)
+			    fun-stack-ptr)))
 
     (inst :mov *tmp-reg* arguments)
     (inst :mov *fun-number-of-arguments-reg* 0)
@@ -101,23 +104,23 @@
     (inst :cmp *fun-number-of-arguments-reg* 1)
     (inst :jump-fixup :je rdi)
 
-    (inline-vop 'car :rdx *tmp-reg* $stack-top-operand$)
+    (inline-vop 'car :rdx *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label rdi)
-    (inline-vop 'car :rdi *tmp-reg* $stack-top-operand$)
+    (inline-vop 'car :rdi *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label r8) 
-    (inline-vop 'car :r8 *tmp-reg* $stack-top-operand$)
+    (inline-vop 'car :r8 *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label r9)
-    (inline-vop 'car :r9 *tmp-reg* $stack-top-operand$)
+    (inline-vop 'car :r9 *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label stack-args-label)
-    (inline-vop 'car :r11 *tmp-reg* $stack-top-operand$)
+    (inline-vop 'car :r11 *tmp-reg* new-stack-top)
     (inst :push :r11) 
     (inst :jump-fixup :jmp loopl)
 
@@ -145,7 +148,7 @@
 
     (inst :label no-stack-args-label)
     (inst :mov *tmp-reg* (* *word-size*
-				      (if fun-is-reg 2 1)))
+			    (if fun-is-reg 2 1)))
 
     (inst :label exit-label)
     
