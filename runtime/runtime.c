@@ -217,7 +217,9 @@ void print_lisp_pointer(lispobj obj) {
 }
   
 void print_lisp_symbol(lispobj obj) {
-  printf("#:");
+  int interned = is_symbol_interned(obj, car(*(heap_header+3)));
+    if (!interned)
+    printf("#:");
   print_lisp_string(symbol_name(obj), 0);
 }
 
@@ -428,8 +430,10 @@ void evaluate_fixups(struct fixups fixs) {
     fun = efix->fun;
     faddress = efix->fixup;
     lispobj obj =  eval_lisp_fixup(fun);
-    lispobj *ptr = (lispobj*) faddress;
-    *ptr = obj;
+    if (faddress != 0) {
+      lispobj *ptr = (lispobj*) faddress;
+      *ptr = obj;
+    }
     efix++;
   }
 }

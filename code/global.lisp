@@ -25,3 +25,6 @@
   (%set-env (list nil nil))
   (%add-to-interned-symbols 'character)
   (%add-to-interned-symbols 'simple-array))
+
+(defun %init-runtime ()
+  (%initialize-env))

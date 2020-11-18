@@ -55,10 +55,48 @@ lispobj symbol_plist(lispobj symbol) {
   return sym->plist;
 }
 
-int is_symbol_interned(lispobj symbol, lispobj env_array) {
-  // FIXME
-  struct array *env = (struct array *) env_array;
+int string_equal(struct array *s1, struct array *s2) {
+  
+  if (s1->size != s2->size)
+    return 0;
+
+  lispobj *s1_first = &s1->elements;
+  lispobj *s2_first = &s2->elements;
+  
+
+  for (long i = 0; i < untag_fixnum(s1->size); i++) {
+    char s1_char = untag_char(*(s1_first + i));
+    char s2_char = untag_char(*(s2_first + i));
+    if (s1_char != s2_char)
+      return 0;
+  }
+
+  return 1;
+  
+}
+
+int is_symbol_interned(lispobj symbol, lispobj symbols_list) {
+  
+  if (symbols_list == LISP_NIL)
+    return 0;
+
+  struct array *ssymbol_name = (struct array *) (untag_pointer (symbol_name(symbol)));
+
+  lispobj current_cdr = symbols_list;
+
+  while (current_cdr != LISP_NIL) {
+
+    lispobj cons = car(current_cdr);
+    struct array *name = (struct array *) untag_pointer(car(cons));
+
+    if (string_equal(ssymbol_name, name))
+      return 1;
+
+    current_cdr = cdr(current_cdr);
+  }
+  
   return 0;
+  
 }
 
 struct array *allocate_string(void **heap, char *cstring) {

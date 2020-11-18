@@ -244,6 +244,9 @@
 (define-inst-template :jnb (:imm32) ()
 		      #x0f nil #x83 nil)
 
+(define-inst-template :js (:imm32) ()
+		      #x0f nil #x88 nil)
+
 ;; shift
 
 (define-inst-template :shl (:reg64 :imm8) ()

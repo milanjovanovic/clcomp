@@ -231,6 +231,13 @@
 					   (apply (lambda (a b c) (list a b c))
 						  1 (list 2 3)))))
 
+(define-compiler-test "apply-stack-args" t (lambda ()
+					     (%initialize-env)
+					     (equal (list 1 2 3 4 5 6 7)
+						    (apply (lambda (a b c d e f g)
+							     (list a b c d e f g))
+							   1 (list 2 3 4 5 6 7)))))
+
 (define-compiler-test "funcall-2" t (lambda ()
 				      (%initialize-env)
 				      (let ((x (lambda () (lambda (a) (+ a a)))))
@@ -262,6 +269,17 @@
 					      (mapcar (funcall x)
 						      '(1 2 3)
 						      '(10 20 30))))))
+
+(define-compiler-test "mapcar-stack-args" t (lambda ()
+				     (%initialize-env)
+				     (let ((x (lambda () 
+						(lambda (x y)
+						  (+ x y)))))
+				       (equal '(11 22 33 44 55 66)
+					      (mapcar (funcall x)
+						      '(1 2 3 4 5 6)
+						      '(10 20 30 40 50 60))))))
+
 
 (defun generate-all-test-cores ()
   (let ((*debug* nil))

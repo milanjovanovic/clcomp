@@ -93,3 +93,7 @@ char untag_char(lispobj obj);
 
 lispobj tag_pointer(uintptr_t pointer);
 lispobj untag_pointer(lispobj obj);
+
+int string_equal(struct array *s1, struct array *s2);
+int is_symbol_interned(lispobj symbol, lispobj symbols_list);
+

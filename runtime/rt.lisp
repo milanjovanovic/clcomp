@@ -24,7 +24,10 @@
 
 (defparameter *do-break* nil)
 
+(defparameter *init-function* '%init-runtime)
+
 (defun make-eval-fixup-pair (funcall-object fixup-address)
+  (print (list (format nil "~x" funcall-object) (format nil "~x" fixup-address)))
   (cons funcall-object fixup-address))
 
 (defun maybe-rt-%defun (name compilation-unit)
@@ -156,6 +159,9 @@
     (allocate-symbol vmem 'character)
     vmem))
 
+(defun make-init-fixup ()
+  (cons (rt-get-fun-address *init-function*) 0))
+
 (defun rt-dump-binary (file)
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
     (write-start-address f)
@@ -168,14 +174,16 @@
 	(write-compilation-unit-code comp f)))))
 
 (defun rt-dump-fixups (file)
+  (declare (optimize (debug 3)))
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
-    (dolist (fixup *load-time-fixups*)
-      (write-sequence (make-array *word-size*
-				  :initial-contents (little-endian-64bit (car fixup)))
-		      f)
-      (write-sequence (make-array *word-size*
-				  :initial-contents (little-endian-64bit (cdr fixup)))
-		      f))))
+    (let ((fixups (cons (make-init-fixup) *load-time-fixups*)))
+      (dolist (fixup fixups)
+	(write-sequence (make-array *word-size*
+				    :initial-contents (little-endian-64bit (car fixup)))
+			f)
+	(write-sequence (make-array *word-size*
+				    :initial-contents (little-endian-64bit (cdr fixup)))
+			f)))))
 
 (defun rt-add-to-compilation (compilation-unit)
   (setf (compilation-units *current-compilation*)
