@@ -55,6 +55,10 @@
 (define-inst-template :neg (:reg64) ()
 		      nil nil #xF7 #x18)
 
+;;; IMUL
+(define-inst-template :imul (:reg64 (:reg64 :addr)) ()
+		      nil #x0F #xAF nil)
+
 ;;; LOGICAL
 (define-inst-template :xor ((:reg64 :addr) :reg64) ()
 		      nil nil #x31 nil)
@@ -170,7 +174,7 @@
 		      nil nil #x50 nil)
 
 (define-inst-template :push (:addr) (+v64)
-		      nil nil #xFF #x30)
+		      nil nil #xFF #x30) 
 
 #+nil
 (define-inst-template :push (:imm64) ()
@@ -183,6 +187,9 @@
 
 (define-inst-template :pop (:addr) ()
 		      nil nil #x8F #x00)
+
+(define-inst-template :neg (:reg64) ()
+		      nil nil #xF7 #xD8)
 
 ;;; CALL
 (define-inst-template :call ((:reg64 :addr64)) (+v64)
@@ -276,4 +283,3 @@
 
 (define-inst-template :ud2 () ()
 		      nil nil '(#x0f #x0b) nil)
-

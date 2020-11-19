@@ -109,9 +109,17 @@
 	(setf (aref unit-code-buffer index) byte)
 	(incf index)))))
 
+(defun resolve-eval-at-load-time-fixup (compilation-unit)
+  (let ((comp-component (compilation-unit-compile-component compilation-unit)))
+    (push (cons (+ (compile-component-start comp-component)
+		   (compilation-unit-start compilation-unit))
+		0)
+	  *load-time-fixups*)))
+
 (defun resolve-fixups (unit)
   (let ((unit-code (get-compilation-unit-code-buffer unit))
-	(fixups (compilation-unit-fixups unit)))
+	(fixups (compilation-unit-fixups unit))
+	(eval-at-load (compilation-unit-eval-at-load unit)))
     (if (listp fixups)
 	(dolist (fixup fixups)
 	  (cond ((fun-rip-relative-p (rip-location-rip fixup))
@@ -123,6 +131,8 @@
 		((fixup-rip-relative-constant-p (rip-location-rip fixup))
 		 (resolve-compile-time-constant-fixup fixup unit-code))))
 	(resolve-fixup fixups unit-code))
+    (when eval-at-load
+      (resolve-eval-at-load-time-fixup unit))
     unit-code))
 
 (defun print-hex-code (buffers)
@@ -159,9 +169,6 @@
     (allocate-symbol vmem 'character)
     vmem))
 
-(defun make-init-fixup ()
-  (cons (rt-get-fun-address *init-function*) 0))
-
 (defun rt-dump-binary (file)
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
     (write-start-address f)
@@ -174,16 +181,14 @@
 	(write-compilation-unit-code comp f)))))
 
 (defun rt-dump-fixups (file)
-  (declare (optimize (debug 3)))
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
-    (let ((fixups (cons (make-init-fixup) *load-time-fixups*)))
-      (dolist (fixup fixups)
-	(write-sequence (make-array *word-size*
-				    :initial-contents (little-endian-64bit (car fixup)))
-			f)
-	(write-sequence (make-array *word-size*
-				    :initial-contents (little-endian-64bit (cdr fixup)))
-			f)))))
+    (dolist (fixup (reverse *load-time-fixups*))
+      (write-sequence (make-array *word-size*
+				  :initial-contents (little-endian-64bit (car fixup)))
+		      f)
+      (write-sequence (make-array *word-size*
+				  :initial-contents (little-endian-64bit (cdr fixup)))
+		      f))))
 
 (defun rt-add-to-compilation (compilation-unit)
   (setf (compilation-units *current-compilation*)
@@ -208,8 +213,8 @@
 	(*load-time-fixups* nil))
     (rt-reset)
     (process-bootstrap-data)
-    ;; (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     ;; (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
+    ;; (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     ;; (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
     ;; (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
     ;; (clcomp-compile-file (format nil "~a/code/seq.lisp" *clcomp-home*))
@@ -231,8 +236,8 @@
 	(*load-time-fixups* nil))
     (rt-reset)
     (process-bootstrap-data)
-    (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/global.lisp" *clcomp-home*))
+    (clcomp-compile-file (format nil "~a/code/base.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/cons.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/array.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/seq.lisp" *clcomp-home*))

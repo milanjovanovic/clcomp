@@ -5,7 +5,7 @@
 (defparameter *label-counter* 0)
 
 (defstruct lambda-info lambda-list-rest)
-(defstruct ir-component code code-blocks sub-comps rips lambda-info eval-load-compile)
+(defstruct ir-component code code-blocks sub-comps rips lambda-info)
 
 (defun get-lambda-info (lambda-node)
   (let ((lambda-info (make-lambda-info)))
@@ -394,7 +394,7 @@
 
 (defun emit-load-time-component (component ref-constant-node)
   (let ((temp-loc (make-rip-relative-location :location (make-temp-location-symbol)))
-	(subcomp (make-ir-component :eval-load-compile t)))
+	(subcomp (make-ir-component)))
     (push (make-sub-component :name temp-loc :component subcomp :eval t)
 	  (ir-component-sub-comps component))
     (push (make-fixup-rip-relative :name (rip-relative-location-location temp-loc)) (ir-component-rips component))

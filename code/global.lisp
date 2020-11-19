@@ -28,3 +28,6 @@
 
 (defun %init-runtime ()
   (%initialize-env))
+
+;;; this needs to be evaluated first at load time 
+(%init-runtime)

@@ -29,7 +29,6 @@
 
 
 (define-compiler-test "simple-test-1" t (lambda ()
-					  (%initialize-env)
 					  (= 0 0)))
 
 (define-compiler-test "simple-test-2" nil (lambda ()
@@ -38,7 +37,6 @@
 
 ;;; CONS/LIST
 (define-compiler-test "cons-test-1" t (lambda ()
-					(%initialize-env)
 					(let ((l (cons 1 (cons 2 (cons 3 nil)))))
 					  (setf (car l) 10)
 					  (let ((c (car l)))
@@ -46,63 +44,52 @@
 
 (define-compiler-test "cons-test-1-inline" t (lambda ()
 					       (declare (inline cons car))
-					       (%initialize-env)
 					       (let ((l (cons 1 (cons 2 (cons 3 nil)))))
 						 (setf (car l) 10)
 						 (let ((c (car l)))
 						   (= c 10)))))
 
 (define-compiler-test "list-test-1" t (lambda ()
-					(%initialize-env)
 					(let ((l (list 1 2 3 4 5 6)))
 					  (= 6 (+ (car l) 5)))))
 
 (define-compiler-test "list-test-1-inline" t (lambda ()
 					       (declare (inline car))
-					       (%initialize-env)
 					       (let ((l (list 1 2 3 4 5 6)))
 						 (= 6 (+ (car l) 5)))))
 
 (define-compiler-test "list-test-2" t (lambda ()
-					(%initialize-env)
 					(let ((l (list 1 2 3 4 5 6)))
 					  (= 6 (list-length l)))))
 
 (define-compiler-test "list-test-3" t (lambda ()
-					(%initialize-env)
 					(let ((l (list 1 2 3 4 5 6)))
 					  (= 4 (list-length (cddr l))))))
 
 (define-compiler-test "list-test-4" nil (lambda ()
-					  (%initialize-env)
 					  (let ((l (list 1 2 3 4 5 6)))
 					    (= 4 (list-length l)))))
 
 (define-compiler-test "list-test-5" t (lambda ()
-					(%initialize-env)
 					(let ((l (list 1 2 3 4 5 6)))
 					  (and
 					   (= 6 (car (list-reverse l)))
 					   (= 6 (list-length (list-reverse l)))))))
 
 (define-compiler-test "list-test-6" t (lambda ()
-					(%initialize-env)
 					(= 3 (length (list 1 2 3)))))
 
 (define-compiler-test "list-append-1" t (lambda ()
-					  (%initialize-env)
 					  (= 6 (length (append (list 1 2)
 							       (list 3 4)
 							       (list 5 6))))))
 
 (define-compiler-test "list-test-7" t (lambda ()
-					(%initialize-env)
 					(= 3 (cddr (list* 1 2 3)))))
 
 
 ;;; ARRAY
 (define-compiler-test "array-test-1" t (lambda ()
-					(%initialize-env)
 					(let ((a (make-array 3 t nil  (cons 1 (cons 2 (cons 3 nil))))))
 					  (setf (aref a 1) 20)
 					  (and (= (aref a 0) 1)
@@ -110,7 +97,6 @@
 					       (= (aref a 2) 3)))))
 
 (define-compiler-test "array-test-2" nil (lambda ()
-					   (%initialize-env)
 					   (let ((a (make-array 3 t nil (cons 1 (cons 2 (cons 3 nil))))))
 					     (setf (aref a 1) 20)
 					     (and (= (aref a 0) 1)
@@ -119,7 +105,6 @@
 
 
 (define-compiler-test "array-test-3" t (lambda ()
-					   (%initialize-env)
 					   (let* ((a (make-array 3 'fixnum 0 nil))
 						 (atype (type-of a)))
 					     (and (= (aref a 0) 0)
@@ -131,7 +116,6 @@
 
 ;;; STRING
 (define-compiler-test "string-test-1" t (lambda ()
-					  (%initialize-env)
 					  (let* ((s1 "test string")
 						 (s2 (%copy-array s1))
 						 (s3 (string-upcase s2)))
@@ -143,7 +127,6 @@
 
 ;;; MIX
 (define-compiler-test "mix-1" t (lambda ()
-				  (%initialize-env)
 				  (let ((symbol 'bla))
 				    (and (eq 'foo 'foo)
 					 (not (eq 'foo 'bar))
@@ -152,7 +135,6 @@
 
 
 (define-compiler-test "mix-2" t (lambda ()
-				  (%initialize-env)
 				  (and
 				   (equal (rest-fixed-0) (list nil))
 				   (equal (rest-fixed-0 1 2) (list (list 1 2)))
@@ -166,7 +148,6 @@
 
 
 (define-compiler-test "key-1" t (lambda ()
-				  (%initialize-env)
 				  (and
 				   (equal (key-fixed-2 0 1 'x 2 'y 3 'z 4)
 					  (list 0 1 2 3 4))
@@ -177,34 +158,27 @@
 
 
 (define-compiler-test "equality-1" t (lambda ()
-				       (%initialize-env)
 				       (equal (list 1 2 3 4)
 					      (list 1 2 3 4))))
 
 (define-compiler-test "equality-2" nil (lambda ()
-				       (%initialize-env)
 				       (equal (list 1 2 3 4)
 					      (list 1 2 3))))
 
 (define-compiler-test "equality-3" t (lambda ()
-				       (%initialize-env)
 				       (equalp "bla" "BLA")))
 
 (define-compiler-test "equality-4" t (lambda ()
-				       (%initialize-env)
 				       (equalp (list "bla") (list "BLA"))))
 
 (define-compiler-test "equality-4" nil (lambda ()
-					 (%initialize-env)
 					 (equal (list "bla") (list "BLA"))))
 
 (define-compiler-test "equality-5" t (lambda ()
-				       (%initialize-env)
 				       (equalp #\a #\A)))
 
 
 (define-compiler-test "equality-6" t (lambda ()
-				       (%initialize-env)
 				       (let ((x 'foo)
 					     (y 'foo))
 					 (and (eq x y)
@@ -215,43 +189,36 @@
 					      (equalp (list x x ) (list y y))))))
 
 (define-compiler-test "math-1" t (lambda ()
-				   (%initialize-env)
 				   (and (= 64 (ash 1 6))
 					(= 1 (ash 64 -6)))))
 
 (define-compiler-test "funcall-1" t (lambda ()
-				     (%initialize-env)
 				     (equal (list 1 2 3)
 					    (funcall (lambda (a b c) (list a b c))
 						     1 2 3))))
 
 (define-compiler-test "apply-1" t (lambda ()
-				    (%initialize-env)
 				    (equal (list 1 2 3)
 					   (apply (lambda (a b c) (list a b c))
 						  1 (list 2 3)))))
 
 (define-compiler-test "apply-stack-args" t (lambda ()
-					     (%initialize-env)
 					     (equal (list 1 2 3 4 5 6 7)
 						    (apply (lambda (a b c d e f g)
 							     (list a b c d e f g))
 							   1 (list 2 3 4 5 6 7)))))
 
 (define-compiler-test "funcall-2" t (lambda ()
-				      (%initialize-env)
 				      (let ((x (lambda () (lambda (a) (+ a a)))))
 					(let ((y (funcall x)))
 					  (= 20 (funcall y 10))))))
 
 (define-compiler-test "funcall-3" t (lambda ()
-				      (%initialize-env)
 				      (let ((a (lambda (x) (funcall x 1)))
 					    (b (lambda () (lambda (x) (+ x x)))))
 					(= 2 (funcall a (funcall b))))))
 
 (define-compiler-test "mapcar-1" t (lambda ()
-				     (%initialize-env)
 				     (equal
 				      (mapcar (lambda (a b c)
 						(+ a b c))
@@ -261,7 +228,6 @@
 				      (list 111 222 333))))
 
 (define-compiler-test "mapcar-2" t (lambda ()
-				     (%initialize-env)
 				     (let ((x (lambda () 
 						(lambda (x y)
 						  (+ x y)))))
@@ -271,7 +237,6 @@
 						      '(10 20 30))))))
 
 (define-compiler-test "mapcar-stack-args" t (lambda ()
-				     (%initialize-env)
 				     (let ((x (lambda () 
 						(lambda (x y)
 						  (+ x y)))))

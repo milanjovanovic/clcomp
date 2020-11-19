@@ -61,6 +61,10 @@
   (inst :xor res *tmp-reg*)
   (inst :sub res *tmp-reg*))
 
+(define-vop %neg (res :register) ((arg1 :register))
+  (inst :mov res arg1)
+  (inst :neg res))
+
 (define-vop two-args-logxor (res :register) ((arg1 :register) (arg2 :register))
   (inst :mov res arg1)
   (inst :xor res arg2))
@@ -102,3 +106,8 @@
   (inst :mov res *nil*)
   (inst :mov *tmp-reg* *t*)
   (inst :cmovs res *tmp-reg*))
+
+(define-vop %imul (res :register) ((arg1 :register) (arg2 :register :stack))
+  (inst :mov res arg1)
+  (inst :sar res *tag-size*)
+  (inst :imul res arg2))

@@ -25,7 +25,8 @@
 ;;; FIXME, implement interned symbols storageintern
 
 (defun %defparameter (symbol value)
-  (setf (symbol-value symbol) value))
+  (declare (inline set-symbol-value))
+  (set-symbol-value symbol value))
 
 (defun %make-and-intern-symbol (name)
   (let ((symbol (make-symbol name)))

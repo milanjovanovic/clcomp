@@ -8,13 +8,21 @@
   (if (atom form)
       form
       (let ((expanded (clcomp-macroexpand form)))
-	(ecase (first expanded)
+	(case (first expanded)
 	  (eval-when (when (eval-at-compile-timep (second expanded))
 		       (clcomp-eval (cons 'progn (cddr expanded)))))
 	  (progn (dolist (f (cdr expanded))
 		   (clcomp-compile-top-level-form f)))
 	  (%defun (clcomp-compile (second expanded)
-				  (third expanded)))))))
+				  (third expanded)))
+	  (%defparameter (clcomp-compile nil
+					 (list 'lambda nil
+					       form)
+					 :eval-at-load t))
+	  (otherwise (clcomp-compile nil
+				     (list 'lambda nil
+					   form)
+				     :eval-at-load t))))))
 
 (defun clcomp-compile-file (file)
   (with-open-file (s file)
@@ -22,4 +30,3 @@
 	  while f
 	  do
 	     (clcomp-compile-top-level-form f))))
-

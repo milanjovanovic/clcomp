@@ -10,6 +10,9 @@
 	       (%clcomp-eval f1)))
       (otherwise (apply f (rest exp))))))
 
+(defun %compiler-defparameter (s)
+  s)
+
 (defun clcomp-eval (exp)
   (declare (optimize (debug 3)))
   (let ((macroexpanded (clcomp-macroexpand exp (create-macros-env t t))))
