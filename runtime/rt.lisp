@@ -27,7 +27,6 @@
 (defparameter *init-function* '%init-runtime)
 
 (defun make-eval-fixup-pair (funcall-object fixup-address)
-  (print (list (format nil "~x" funcall-object) (format nil "~x" fixup-address)))
   (cons funcall-object fixup-address))
 
 (defun maybe-rt-%defun (name compilation-unit)

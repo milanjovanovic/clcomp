@@ -69,9 +69,13 @@
 	    ((and (characterp x) (characterp y))
 	     (char-equal x y)))))
 
-;; (defun sxhash (x)
-;;   (cond ((fixnum x) x)
-;; 	((stringp x) "")
-;; 	((characterp x) "")
-;; 	((symbolp x) symbol)))
+(defun sxhash (x)
+  (cond ((null x) 0)
+	((fixnump x) (abs x))
+	((consp x) (%sxhash-cons x))
+	((stringp x) (%sxhash-string x))
+	((characterp x) (char-code x))
+	((symbolp x) 100)
+	((arrayp x) 200)
+	(t (error "unknown type"))))
 

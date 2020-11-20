@@ -16,13 +16,17 @@
   (declare (inline two-args--))
   (two-args-- a b))
 
+(defun %neg (a)
+  (declare (inline %neg))
+  (%neg a))
+
 (defun - (num &rest rest)
   (if rest
       (let ((result num))
 	(dolist (i rest)
 	  (setf result (- result i)))
 	result)
-      num))
+      (%neg num)))
 
 (defun two-args-= (a b)
   (declare (inline two-args-=))
@@ -126,3 +130,7 @@
 
 ;; (defun dpb (newbyte bytespec integer)
 ;;   (logior (ash newbyte (cdr bytespec) integer)))
+
+(defun %signed-ovflw-* (a b)
+  (declare (inline %imul))
+  (%imul a b))

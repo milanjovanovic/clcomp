@@ -23,14 +23,14 @@
 	(vsym (first (second form))))
     (list 'block nil
 	  (list 'let* (list (list vsym 0)
-			   (list limit (second (second form))))
+			    (list limit (second (second form))))
 		(list 'tagbody tag1
 		      (list 'progn
+			    (list 'when (list '>= vsym limit)
+				  (list 'return-from nil nil))
 			    (cons 'progn (cddr form))
 			    (list 'setf vsym (list '+ 1 vsym))
-			    (list 'if (list '>= vsym limit)
-				  (list 'return-from nil nil)
-				  (list 'go tag1))))))))
+			    (list 'go tag1)))))))
 (setf (gethash 'dotimes *macros*) 'macro-dotimes)
 
 

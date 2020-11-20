@@ -110,4 +110,7 @@
 (define-vop %imul (res :register) ((arg1 :register) (arg2 :register :stack))
   (inst :mov res arg1)
   (inst :sar res *tag-size*)
-  (inst :imul res arg2))
+  (inst :mov *tmp-reg* arg2)
+  (inst :sar *tmp-reg* *tag-size*)
+  (inst :imul res arg2)
+  (inst :shl res *tag-size*))

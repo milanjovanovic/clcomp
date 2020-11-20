@@ -119,3 +119,11 @@
 		(char s i))
 	  (setf current-index (+ current-index 1))))
       rstring)))
+
+(defun %sxhash-string (string)
+  (declare (inline abs))
+  (let ((hash 0)
+	(string-size (array-total-size string)))
+    (dotimes (i string-size)
+      (setf hash (+ (%signed-ovflw-* 31 hash) (char-code (char string i)))))
+    (abs hash)))

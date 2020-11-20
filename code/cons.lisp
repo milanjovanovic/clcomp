@@ -74,6 +74,15 @@
 (defun fourth (list)
   (cadddr list))
 
+(defun %cons-sxhash-depth (cons hash depth)
+  (if (= depth 0)
+      0
+      (+ (sxhash (car cons))
+	 (%cons-sxhash-depth (cdr cons) hash (- depth 1)))))
+
+(defun %sxhash-cons (cons)
+  (abs (%cons-sxhash-depth cons 17 8)))
+
 (defun list-length (list)
   (if (listp list)
       (let ((x 0))
