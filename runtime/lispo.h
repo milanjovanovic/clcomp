@@ -52,6 +52,7 @@ struct symbol {
   lispobj function;
   lispobj value;
   lispobj plist;
+  lispobj package;
 };
 
 struct lisp_code {

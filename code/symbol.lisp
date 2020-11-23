@@ -18,6 +18,10 @@
   (declare (inline symbol-plist))
   (symbol-plist symbol))
 
+(defun symbol-package (symbol)
+  (declare (inline symbol-package))
+  (symbol-package symbol))
+
 (defun symbolp (symbol)
   (declare (inline symbolp))
   (symbolp symbol))
@@ -28,12 +32,28 @@
   (declare (inline set-symbol-value))
   (set-symbol-value symbol value))
 
+;; (defun %make-and-intern-symbol (name)
+;;   (let ((symbol (make-symbol name)))
+;;     (%add-to-interned-symbols symbol)
+;;     symbol))
+
+;; (defun intern (name)
+;;   (let ((symbol (%get-global-interned-symbol name)))
+;;     (or symbol
+;; 	(%make-and-intern-symbol name))))
+
+(defun %set-symbol-package (symbol package)
+  (declare (inline %set-symbol-package))
+  (%set-symbol-package symbol package))
+
 (defun %make-and-intern-symbol (name)
   (let ((symbol (make-symbol name)))
-    (%add-to-interned-symbols symbol)
+    (%add-to-interned-symbols symbol "CL")
     symbol))
 
 (defun intern (name)
-  (let ((symbol (%get-global-interned-symbol name)))
+  (let ((symbol (%get-global-interned-symbol name "CL")))
     (or symbol
-	(%make-and-intern-symbol name))))
+	(let ((sym (%make-and-intern-symbol name)))
+	  (%set-symbol-package sym "CL")
+	  sym))))

@@ -39,3 +39,6 @@
 
 (defun rest-fixed-8 (a b c d e f g h &rest x)
   (list a b c d e f g h x))
+
+(defun foo (&rest a &key b c)
+  (list a b c))

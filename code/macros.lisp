@@ -82,10 +82,20 @@
 		       (cdddr form)))))
 (setf (gethash 'and *macros*) 'macro-and)
 
-
 ;;; only simple form for now (defstruct name a b c)
+
+(defun get-parent-struct (form)
+  (when (consp form)
+    (getf (second form) :include)))
+
+(defun get-struct-name (form)
+  (if (consp form)
+      (first form)
+      form))
+
 (defun macro-defstruct (form)
-  (let* ((name (second form))
+  (let* ((name (get-struct-name form))
+	 (parent (get-parent-struct name))
 	 (slots (cddr form))
 	 (constructor-sym (intern (concatenate 'string "MAKE-" (symbol-name name)))))
     (append (list 'progn
@@ -376,7 +386,8 @@
 		   (clcomp-macroexpand what env)))
 	    ((eq accessor 'char)
 	     (list 'setf-char (clcomp-macroexpand (second where) env) (clcomp-macroexpand (third where) env)
-		   (clcomp-macroexpand what env))))))))
+		   (clcomp-macroexpand what env)))
+	    (t (error "Unknown SETF expander !!")))))))
 
 (defun clcomp-macroexpand-1 (macro-form)
   (let* ((macro-fun (gethash (first macro-form) *macros*)))

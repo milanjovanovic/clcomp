@@ -24,10 +24,13 @@
 
 (defparameter *do-break* nil)
 
-(defparameter *init-function* '%init-runtime)
 
 (defun make-eval-fixup-pair (funcall-object fixup-address)
   (cons funcall-object fixup-address))
+
+(defun add-fixup (fixup)
+  (declare (optimize (debug 3)))
+  (push fixup *load-time-fixups*))
 
 (defun maybe-rt-%defun (name compilation-unit)
   ;; code loading will increase heap pointer
@@ -89,9 +92,8 @@
       (error (format nil "Unknown local RIP ~a" name)))
     (when *debug*
       (format t "Name: ~a, EVAL RIP Address: ~x~%" name address))
-    (push  
-     (make-eval-fixup-pair address (+ offset *compilation-unit-local-start-address*))
-     *load-time-fixups*)))
+    (add-fixup  
+     (make-eval-fixup-pair address (+ offset *compilation-unit-local-start-address*)))))
 
 (defun resolve-compile-time-constant-fixup (fixup unit-code-buffer)
   (let* ((name (fixup-rip-relative-constant-name (rip-location-rip fixup)))
@@ -110,12 +112,12 @@
 
 (defun resolve-eval-at-load-time-fixup (compilation-unit)
   (let ((comp-component (compilation-unit-compile-component compilation-unit)))
-    (push (cons (+ (compile-component-start comp-component)
+    (add-fixup (cons (+ (compile-component-start comp-component)
 		   (compilation-unit-start compilation-unit))
-		0)
-	  *load-time-fixups*)))
+		0))))
 
 (defun resolve-fixups (unit)
+  (declare (optimize (debug 3)))
   (let ((unit-code (get-compilation-unit-code-buffer unit))
 	(fixups (compilation-unit-fixups unit))
 	(eval-at-load (compilation-unit-eval-at-load unit)))
@@ -156,8 +158,9 @@
 	(*compilation-unit-local-start-address* (compilation-unit-start comp-unit))
 	(*compile-component-start-address* (compilation-unit-start comp-unit)))
     (process-compile-component (compilation-unit-compile-component comp-unit))
-    (let ((code-buffer (resolve-fixups comp-unit)))
-      (write-sequence code-buffer file-stream))))
+    (let ((*debug-current-compile-unit* comp-unit))
+     (let ((code-buffer (resolve-fixups comp-unit)))
+       (write-sequence code-buffer file-stream)))))
 
 (defun write-start-address (stream)
   (dolist (c (immediate-as-byte-list *start-address* :imm64))
@@ -169,6 +172,7 @@
     vmem))
 
 (defun rt-dump-binary (file)
+  (declare (optimize (debug 3)))
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
     (write-start-address f)
     (dump-bootstrap-data f)
@@ -180,6 +184,7 @@
 	(write-compilation-unit-code comp f)))))
 
 (defun rt-dump-fixups (file)
+  (declare (optimize (debug 3)))
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
     (dolist (fixup (reverse *load-time-fixups*))
       (write-sequence (make-array *word-size*
@@ -231,6 +236,7 @@
     (rt-dump-fixups "/Users/milan/projects/clcomp.github/runtime/fixups.core")))
 
 (defun compile-and-dump (form)
+  (declare (optimize (debug 3)))
   (let ((*debug* nil)
 	(*load-time-fixups* nil))
     (rt-reset)
@@ -251,3 +257,4 @@
 	     *rt-funs*)
     (rt-dump-binary "/Users/milan/projects/clcomp.github/runtime/core")
     (rt-dump-fixups "/Users/milan/projects/clcomp.github/runtime/fixups.core")))
+

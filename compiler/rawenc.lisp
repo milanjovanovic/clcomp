@@ -1,6 +1,7 @@
 (in-package #:clcomp)
 
 (defstruct vmem start current allocations data)
+(defparameter *default-package* "CL")
 
 (defun allocate-memory (start)
   (make-vmem :start start
@@ -75,17 +76,23 @@
   (let ((esym (get-maybe-allocated-object vmem sym)))
     (or esym
 	(let* ((symbol-name (symbol-name sym))
-	       (allocated-sname-addr (or (get-maybe-allocated-object vmem symbol-name)
-					 (allocate-string vmem symbol-name)))
 	       (symbol-name-addr (get-next-qword vmem))
 	       (symbol-value-addr (get-next-qword vmem))
 	       (symbol-function-addr (get-next-qword vmem))
-	       (symbol-plist-addr (get-next-qword vmem)))
+	       (symbol-plist-addr (get-next-qword vmem))
+	       (symbol-package-addr (get-next-qword vmem))
+	       (_ (add-allocated-obj vmem sym (+ symbol-name-addr *symbol-tag*)))
+	       (allocated-sname-addr (or (get-maybe-allocated-object vmem symbol-name)
+					 (allocate-string vmem symbol-name)))
+	       (allocated-package-name-addr (or (get-maybe-allocated-object vmem *default-package*)
+						(allocate-string vmem *default-package*))))
+	  (declare (ignore _))
 	  (add-allocated-obj vmem sym (+ symbol-name-addr *symbol-tag*))
 	  (write-object vmem symbol-name-addr allocated-sname-addr)
 	  (write-object vmem symbol-value-addr *nil*)
 	  (write-object vmem symbol-function-addr *nil*)
 	  (write-object vmem symbol-plist-addr *nil*)
+	  (write-object vmem symbol-package-addr allocated-package-name-addr)
 	  (+ symbol-name-addr *symbol-tag*)))))
 
 (defun allocate-null (vmem)

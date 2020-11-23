@@ -6,28 +6,42 @@
   (declare (inline %set-env))
   (%set-env env))
 
-(defun %get-global-symbols ()
-  (car (%get-env)))
+(defun %find-package-symbols (list package)
+  (dolist (cons list)
+    (when (string-equal package (first cons))
+      (return-from %find-package-symbols cons))))
 
-(defun %get-global-interned-symbol (symbol-name)
-  (dolist (cons (%get-global-symbols))
-    (let ((sname (car cons))
-	  (symbol (cdr cons)))
-      (when (string-equal symbol-name sname)
-	(return-from %get-global-interned-symbol symbol)))))
+(defun %get-global-interned-symbol (symbol-name package)
+  (let* ((package-symbols (%find-package-symbols (car (%get-env)) package)))
+    (when package-symbols
+      (dolist (cons (second package-symbols))
+	(let ((sname (car cons))
+	      (symbol (cdr cons)))
+	  (when (string-equal symbol-name sname)
+	    (return-from %get-global-interned-symbol symbol)))))))
 
-(defun %add-to-interned-symbols (symbol)
-  (setf (car (%get-env))
-	(cons (cons (symbol-name symbol) symbol)
-	      (car (%get-env)))))
+(defun %add-to-interned-symbols (symbol package)
+  (let* ((symbols-env (car (%get-env)))
+	 (package-symbols (%find-package-symbols symbols-env package)))
+    (if package-symbols
+	(setf (car (cdr package-symbols))
+	      (cons (cons (symbol-name symbol) symbol)
+		    (car (cdr package-symbols))))
+	(setf (car (%get-env))
+	      (cons (list package (list (cons (symbol-name symbol) symbol)))
+		    symbols-env)))))
 
 (defun %initialize-env ()
-  (%set-env (list nil nil))
-  (%add-to-interned-symbols 'character)
-  (%add-to-interned-symbols 'simple-array))
+  (%set-env (list nil nil)))
 
-(defun %init-runtime ()
-  (%initialize-env))
 
 ;;; this needs to be evaluated first at load time 
-(%init-runtime)
+(%initialize-env)
+
+;; this is after %INIT-RUNTIME because it's creating fixup for string "CL"
+;; and this can't be evaluated before env is created
+(defun %intern-bootstrap-symbols ()
+  (%add-to-interned-symbols 'simple-array "CL")
+  (%add-to-interned-symbols 'character "CL"))
+
+(%intern-bootstrap-symbols)

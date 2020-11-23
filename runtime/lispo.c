@@ -40,6 +40,11 @@ lispobj symbol_name(lispobj symbol) {
   return sym->name;
 }
 
+lispobj symbol_package(lispobj symbol) {
+  struct symbol *sym = untag_symbol(symbol);
+  return sym->package;
+}
+
 lispobj symbol_value(lispobj symbol) {
   struct symbol *sym = untag_symbol(symbol);
   return sym->value;
@@ -75,12 +80,42 @@ int string_equal(struct array *s1, struct array *s2) {
   
 }
 
-int is_symbol_interned(lispobj symbol, lispobj symbols_list) {
+lispobj find_package(struct array *package, lispobj packages_list) {
+  
+  if (packages_list == LISP_NIL)
+    return LISP_NIL;
+
+  lispobj current_cdr = packages_list;
+
+  while (current_cdr != LISP_NIL) {
+    
+    lispobj package_symbols = car(current_cdr);
+    struct array *package_name = (struct array *) (untag_pointer (car(package_symbols)));
+    
+    if (string_equal(package, package_name))
+      return car(cdr(package_symbols));
+
+    current_cdr = cdr(current_cdr);
+  }
+
+  return LISP_NIL;
+
+}
+
+int is_symbol_interned(lispobj symbol, lispobj packages_list) {
+  
+  if (packages_list == LISP_NIL)
+    return 0;
+
+
+  struct array *ssymbol_name = (struct array *) (untag_pointer (symbol_name(symbol)));
+
+  struct array *ssymbol_package = (struct array *) (untag_pointer (symbol_package(symbol)));
+
+  lispobj symbols_list = find_package(ssymbol_package, packages_list);
   
   if (symbols_list == LISP_NIL)
     return 0;
-
-  struct array *ssymbol_name = (struct array *) (untag_pointer (symbol_name(symbol)));
 
   lispobj current_cdr = symbols_list;
 

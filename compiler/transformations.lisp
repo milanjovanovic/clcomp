@@ -21,7 +21,12 @@
 
 ;;; this symbols need to be internet
 ;;; look at code/global.lisp
-(defparameter *bootstrap-symbols* '(simple-array character))
+(defparameter *bootstrap-symbols* '(simple-array character "CL"))
+
+(defun bootstraped-object-p (object)
+  (find object *bootstrap-symbols* :test 'equal))
+
+
 
 (defun get-two-arg-version (fun)
   (second (assoc fun *two-arg-transformation*)))
@@ -167,18 +172,21 @@
   (if (and (consp form) (symbolp (second form)))
       ;; (make-global-reference-node :form (second form) :type 'symbol)
       ;; do SYMBOL the same way as STRING
-      (if (member (second form) *bootstrap-symbols*)
+      (if (bootstraped-object-p (second form))
 	  (make-compile-time-constant-node :form (second form))
 	  (make-ref-constant-node
 	   :form form
 	   :node (create-node (clcomp-macroexpand (list 'lambda nil
 							form)
 						  (create-macros-env t t)))))
-      (make-ref-constant-node
-       :form form
-       :node (create-node (clcomp-macroexpand (list 'lambda nil
-						    form)
-					      (create-macros-env t t))))))
+      (if (and (stringp form)
+	       (bootstraped-object-p form))
+	  (make-compile-time-constant-node :form form)
+	  (make-ref-constant-node
+	   :form form
+	   :node (create-node (clcomp-macroexpand (list 'lambda nil
+							form)
+						  (create-macros-env t t)))))))
 
 (defun create-node (form &optional environment)
   (if (atom form)
