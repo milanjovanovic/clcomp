@@ -218,7 +218,7 @@ void print_lisp_pointer(lispobj obj) {
   
 void print_lisp_symbol(lispobj obj) {
   int interned = is_symbol_interned(obj, car(*(heap_header+3)));
-    if (!interned)
+  if (!interned)
     printf("#:");
   print_lisp_string(symbol_name(obj), 0);
 }

@@ -21,7 +21,7 @@
 
 ;;; this symbols need to be internet
 ;;; look at code/global.lisp
-(defparameter *bootstrap-symbols* '(simple-array character "CL"))
+(defparameter *bootstrap-symbols* '(simple-array character "CL" "KEYWORD"))
 
 (defun bootstraped-object-p (object)
   (find object *bootstrap-symbols* :test 'equal))

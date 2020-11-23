@@ -169,6 +169,7 @@
 (defun create-bootstrap-data ()
   (let ((vmem (allocate-memory *runtime-heap-start*)))
     (allocate-symbol vmem 'character)
+    (allocate-object vmem "KEYWORD")
     vmem))
 
 (defun rt-dump-binary (file)
