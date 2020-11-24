@@ -23,6 +23,7 @@ typedef uintptr_t lispobj;
 
 #define EXTENDED_TAG_SIMPLE_ARRAY 0xD1
 #define EXTENDED_TAG_STRING 0xD9
+#define EXPTENDET_TAG_STRUCT 0xF0
 
 // tag 0x7 is free
 
@@ -44,6 +45,12 @@ struct array {
   lispobj size;
   lispobj type;
   lispobj etype;
+  lispobj elements;
+};
+
+struct structure {
+  lispobj tag;
+  lispobj struct_type;
   lispobj elements;
 };
 
@@ -81,7 +88,7 @@ lispobj symbol_name(lispobj symbol);
 lispobj symbol_value(lispobj symbol);
 lispobj symbol_function(lispobj symbol);
 lispobj symbol_name(lispobj symbol);
-
+lispobj symbol_package(lispobj symbol);
 
 struct array *allocate_string(void **heap, char *cstring);
 lispobj tag_array(struct array *array);

@@ -1,6 +1,5 @@
 (in-package #:clcomp)
 
-
 ;; FIXME, implement eval as load time fixup eval
 (defun %clcomp-eval (exp)
   (declare (optimize (speed 0) (debug 3)))
@@ -8,17 +7,16 @@
     (case f
       (progn (dolist (f1 (cdr exp))
 	       (%clcomp-eval f1)))
-      (defsetf (let ((accessor (second exp))
-		     (setter (third exp)))
-		 (push (cons accessor setter) *defsetfs*)))
-      (otherwise (apply f (rest exp))))))
+      (defsetf (apply '%%defsetf (cdr exp)))
+      (%%define-struct (apply '%%define-struct (rest exp)))
+      (otherwise (error "Unknown !")))))
 
 (defun %compiler-defparameter (s)
   s)
 
 (defun clcomp-eval (exp)
   (declare (optimize (debug 3)))
-  (let ((macroexpanded (clcomp-macroexpand exp (create-macros-env t t))))
+  (let ((macroexpanded (clcomp-macroexpand exp)))
     ;; (reset-temp-location-counter)
     (%clcomp-eval macroexpanded)))
 

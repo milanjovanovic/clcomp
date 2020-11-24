@@ -35,6 +35,10 @@
 (defun typep (object type)
   "FIXME")
 
+;; this is not real CL CHECK-TYPE
+(defun check-type (object type)
+  "FIXME")
+
 (defun eq (x y)
   (declare (inline eq))
   (eq x y))

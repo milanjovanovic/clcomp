@@ -42,3 +42,8 @@
 
 (defun foo (&rest a &key b c)
   (list a b c))
+
+(defstruct foo a b)
+
+(defstruct (bar (:include foo) c))
+

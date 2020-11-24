@@ -1,9 +1,6 @@
 (in-package :clcomp)
 (declaim (optimize (speed 0) (safety 3) (debug 3)))
 
-(defparameter *macros* (make-hash-table))
-(defparameter *defsetfs* nil)
-
 (defun macro-defparameter (form)
   (list 'progn
 	(list 'eval-when (list ':compile-toplevel)
@@ -11,10 +8,10 @@
 	(list '%defparameter (list 'quote (second form)) (third form))))
 (setf (gethash 'defparameter *macros*) 'macro-defparameter)
 
-(defun macro-defsetf (form)
-  (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
-	(list 'push `(cons ',(second form) ',(third form)) '*defsetfs*)))
-(setf (gethash 'defsetf *macros*) 'macro-defsetf)
+;; (defun macro-defsetf (form)
+;;   (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
+;; 	(list 'push `(cons ',(second form) ',(third form)) '*defsetfs*)))
+;; (setf (gethash 'defsetf *macros*) 'macro-defsetf)
 
 (defun macro-dotimes (form)
   (let ((limit (gensym "LIMIT-"))
@@ -112,7 +109,8 @@
 					(dolist (slot slots)
 					  (push (list '%set-struct-slot 's index slot) set-form)
 					  (incf index))
-					set-form)))))))
+					set-form)))
+		's))))
 
 (defun create-struct-type-predicate (struct)
   (let ((type-predicate-name (intern (concatenate 'string (symbol-name struct) "-P"))))
@@ -131,11 +129,12 @@
 	 (parent-slots (when parent
 			 (%%get-struct-slots parent)))
 	 (slots (append parent-slots (cddr form))))
+    (when (and parent
+	       (not (%%get-struct-info parent)))
+      (error (concatenate 'string "Unknown parent struct " (symbol-name parent))))
     (append (list 'progn
 		  (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
-			(list '%%define-struct (list 'quote name)
-			      (list 'quote (get-struct-type-list parent))
-			      (list 'quote slots)))
+			(list '%%define-struct name (get-struct-type-list parent) slots))
 		  (create-%make-struct-body name slots parent))
 	    (list
 	     (create-struct-type-predicate name))
@@ -151,7 +150,7 @@
 			slot-form)
 		  (push (list 'defun writer-sym
 			      (list 'instance 'value)
-			      (list 'check-type 'instance name)
+			      (list 'check-type 'instance (list 'quote name))
 			      (list '%set-struct-slot 'instance index 'value))
 			slot-form)
 		  (push (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
@@ -310,7 +309,7 @@
 
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)
-  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%compiler-defun
+  (list 'progn (list 'eval-when '(:compile-toplevel) (list '%%compiler-defun
 							   (clcomp-macroexpand (list 'quote (second form))
 									       env)))
 	(list '%defun (second form)

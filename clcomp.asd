@@ -25,6 +25,7 @@
 	       (:file "compiler/assembling")
 	       (:file "compiler/compiler")
 	       (:file "runtime/ffi")
+	       (:file "runtime/runtime-support")
 	       (:file "code/macros")
 	       (:file "runtime/rt")
 	       (:file "compiler/eval")
