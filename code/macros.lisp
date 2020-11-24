@@ -372,6 +372,7 @@
 	     (return (reverse (cons (gensym "rest-arg") (cons '&rest new-lambda-list)))))
 	    (t (push lc new-lambda-list))))))
 
+
 (defun %rest-or-key-or-optional-args-let-form (last-fixed-var rest-var key-keywords optional-variables)
   (let ((rest-var-sym (gensym "rest-var-sym-")))
     (list 'let*
@@ -383,10 +384,12 @@
 	    (if key-keywords
 		(dolist (k key-keywords)
 		  (if (atom k)
-		      (push (list k (list 'getf rest-var (list 'quote k))) b)
+		      (push (list k (list 'getf rest-var (list 'load-time-value
+							       (list 'intern (symbol-name k) "KEYWORD")))) b)
 		      (push (list (first k)
 				  (list 'or
-					(list 'getf rest-var (list 'quote (first k)))
+					(list 'load-time-value
+					      (list 'intern (symbol-name (first k)) "KEYWORD"))
 					(second k))) b)))
 		(let ((oindex 0))
 		  (dolist (ovar optional-variables)
@@ -462,6 +465,11 @@
 	(list 'make-string (length string) (cons 'list  f)))
       string))
 
+(defun clcomp-macroexpand-keyword (obj env)
+  (if (macros-env-compile-or-load-time env)
+      (list 'intern (clcomp-macroexpand-string (symbol-name obj) env) "KEYWORD")
+      obj))
+
 
 ;;; QUOTE expanding
 ;;; we are moving INTERN to runtime so we can bootstrap READER
@@ -480,6 +488,7 @@
     (setf env (create-macros-env nil nil)))
   (if (atom form)
       (cond ((stringp form) (clcomp-macroexpand-string form env))
+	    ((keywordp form) (clcomp-macroexpand-keyword form env))
 	    (t form))
       (let ((first (first form)))
 	(let ((macro-fun (gethash first *macros*)))
@@ -499,5 +508,3 @@
 		(quote (clcomp-macroexpand-quote-obj (second form) env))
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))
-
-

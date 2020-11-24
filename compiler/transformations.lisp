@@ -141,7 +141,9 @@
 	((characterp form)
 	 (make-immediate-constant-node :value (characterize form)))
 	((stringp form)
-	 (parse-and-create-ref-costant-node form))
+	 (parse-and-create-ref-constant-node form))
+	((keywordp form)
+	 (parse-and-create-ref-constant-node form))
 	(t (error "Unknown constant form"))))
 
 (defun create-tagbody-node (forms environment)
@@ -158,6 +160,13 @@
 (defun create-go-node (form)
   (make-go-node :label-node (make-label-node :label (second form))))
 
+(defun create-load-time-value-node (form)
+  (make-ref-constant-node
+   :form form
+   :node (create-node (list 'lambda nil
+			    (list 'declare)
+			    (cons 'progn (cdr (clcomp-macroexpand form (create-macros-env t t))))))))
+
 (defun create-lexical-or-symbol-value-node (form environment)
   (if (lexical-binding-exist environment form)
       (make-lexical-var-node :name form :form nil)
@@ -170,7 +179,7 @@
 											 (list 'quote form))
 										   (create-macros-env t t)))))))))
 
-(defun parse-and-create-ref-costant-node (form)
+(defun parse-and-create-ref-constant-node (form)
   (if (and (consp form) (symbolp (second form)))
       ;; (make-global-reference-node :form (second form) :type 'symbol)
       ;; do SYMBOL the same way as STRING
@@ -181,7 +190,7 @@
 	   :node (create-node (clcomp-macroexpand (list 'lambda nil
 							form)
 						  (create-macros-env t t)))))
-      (if (and (stringp form)
+      (if (and (or (stringp form) (keywordp form))
 	       (bootstraped-object-p form))
 	  (make-compile-time-constant-node :form form)
 	  (make-ref-constant-node
@@ -201,9 +210,11 @@
 	(cond ((eq first '%compile-constant) ;; FIXME, need this for now, just for testing
 	       (make-immediate-constant-node :value (second form)))
 	      ((eq first 'quote)
-	       (parse-and-create-ref-costant-node form))
+	       (parse-and-create-ref-constant-node form))
 	      ((eq first 'lambda)
 	       (create-lambda-node form environment))
+	      ((eq first 'load-time-value)
+	       (create-load-time-value-node form))
 	      ((eq first 'if)
 	       (create-if-node form environment))
 	      ((or (eq first 'let)
