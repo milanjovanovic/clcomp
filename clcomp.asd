@@ -19,6 +19,7 @@
 	       (:file "compiler/x8664/symbol")
 	       (:file "compiler/x8664/call")
 	       (:file "compiler/x8664/char")
+	       (:file "compiler/x8664/struct")
 	       (:file "compiler/transformations")
 	       (:file "compiler/ir")
 	       (:file "compiler/assembling")

@@ -20,7 +20,8 @@
 
 (defparameter *extended-tags*
   '((simple-array 209)
-    (string 217)))
+    (string 217)
+    (struct 240)))
 
 (defparameter *largest-extended-tag* 249)
 
@@ -40,6 +41,7 @@
 
 
 (defparameter *array-header-size* 4) ;; look at lispo.h
+(defparameter *struct-header-size* 2)
 
 (defun fixnumize (num)
   (if (and (> num *most-negative-fixnum*)

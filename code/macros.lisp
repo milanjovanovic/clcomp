@@ -4,7 +4,6 @@
 (defparameter *macros* (make-hash-table))
 (defparameter *defsetfs* nil)
 
-
 (defun macro-defparameter (form)
   (list 'progn
 	(list 'eval-when (list ':compile-toplevel)
@@ -13,7 +12,7 @@
 (setf (gethash 'defparameter *macros*) 'macro-defparameter)
 
 (defun macro-defsetf (form)
-  (list 'eval-when (list :compile-toplevel :execute)
+  (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
 	(list 'push `(cons ',(second form) ',(third form)) '*defsetfs*)))
 (setf (gethash 'defsetf *macros*) 'macro-defsetf)
 
@@ -84,24 +83,62 @@
 
 ;;; only simple form for now (defstruct name a b c)
 
+;; FIXME, expects :include to be second form
 (defun get-parent-struct (form)
-  (when (consp form)
-    (getf (second form) :include)))
+  (when (consp (second form))
+    (getf (second (second form)) :include)))
 
 (defun get-struct-name (form)
-  (if (consp form)
-      (first form)
-      form))
+  (if (consp (second form))
+      (first (second form))
+      (second form)))
+
+
+;;; FIXME, this just returns one parent type
+(defun get-struct-type-list (parent)
+  (when parent
+    parent))
+
+(defun create-%make-struct-body (struct slots parent-struct)
+  (let ((constructor-name (intern (concatenate 'string "MAKE-" (symbol-name struct)))))
+    (list 'defun constructor-name (cons '&key slots)
+	  (list 'let (list (list 's (list '%allocate-struct (length slots)
+					  (if parent-struct
+					      (list 'cons (list 'quote struct)
+						    (list 'quote parent-struct))
+					      (list 'quote struct)))))
+		(cons 'progn (reverse (let ((set-form nil)
+					    (index 0))
+					(dolist (slot slots)
+					  (push (list '%set-struct-slot 's index slot) set-form)
+					  (incf index))
+					set-form)))))))
+
+(defun create-struct-type-predicate (struct)
+  (let ((type-predicate-name (intern (concatenate 'string (symbol-name struct) "-P"))))
+    ;; FIXME, %structp can return NIL or struct type cons
+    (list 'defun type-predicate-name (list 'obj)
+	  (list 'and (list '%structp 'obj)
+		(list 'let (list (list 'stype (list '%struct-type 'obj)))
+		      (list 'if (list 'consp 'stype)
+			    (list 'or (list 'eq (list 'quote struct) (list 'car 'stype))
+				  (list 'eq (list 'quote struct) (list 'cdr 'stype)))
+			    (list 'eq (list 'quote struct) 'stype)))))))
 
 (defun macro-defstruct (form)
   (let* ((name (get-struct-name form))
-	 (parent (get-parent-struct name))
-	 (slots (cddr form))
-	 (constructor-sym (intern (concatenate 'string "MAKE-" (symbol-name name)))))
+	 (parent (get-parent-struct form))
+	 (parent-slots (when parent
+			 (%%get-struct-slots parent)))
+	 (slots (append parent-slots (cddr form))))
     (append (list 'progn
-		  (list '%defstruct name (length slots))
-		  (list 'defun constructor-sym slots
-			(list 'make-array (length slots) (cons 'list slots))))
+		  (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
+			(list '%%define-struct (list 'quote name)
+			      (list 'quote (get-struct-type-list parent))
+			      (list 'quote slots)))
+		  (create-%make-struct-body name slots parent))
+	    (list
+	     (create-struct-type-predicate name))
 	    (let ((slot-form nil)
 		  (index 0))
 	      (dolist (slot slots)
@@ -109,13 +146,16 @@
 		      (writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
 		  (push (list 'defun reader-sym
 			      (list 'instance)
-			      (list 'aref 'instance index))
+			      (list 'check-type 'instance name)
+			      (list '%get-struct-slot 'instance index))
 			slot-form)
 		  (push (list 'defun writer-sym
 			      (list 'instance 'value)
-			      (list 'setf (list 'aref 'instance index) 'value))
+			      (list 'check-type 'instance name)
+			      (list '%set-struct-slot 'instance index 'value))
 			slot-form)
-		  (push (list 'defsetf reader-sym writer-sym) slot-form))
+		  (push (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
+			      (list 'defsetf reader-sym writer-sym)) slot-form))
 		(setf index (+ 1 index)))
 	      (reverse slot-form)))))
 (setf (gethash 'defstruct *macros*) 'macro-defstruct)

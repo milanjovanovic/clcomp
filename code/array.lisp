@@ -19,6 +19,7 @@
   (declare (inline %array-type))
   (%array-type array))
 
+;;; FIXME, &KEY arguments
 (defun make-array (dimension element-type initial-element initial-contents)
   (declare (inline %set-array-type %set-array-element-type %set-array-tag debug
 		   %set-simple-array-tag))
@@ -55,7 +56,7 @@
 	(index 0))
     (%set-array-type array (list 'simple-array 'character (list size)))
     (%set-array-element-type array 'character)
-    (%set-string-tag array) ; FIXME, no need for VOP here
+    (%set-string-tag array)		; FIXME, no need for VOP here
     (dolist (e initial-contents)
       (setf-aref array index e)
       (setf index (+ 1 index)))

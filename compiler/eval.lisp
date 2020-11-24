@@ -8,6 +8,9 @@
     (case f
       (progn (dolist (f1 (cdr exp))
 	       (%clcomp-eval f1)))
+      (defsetf (let ((accessor (second exp))
+		     (setter (third exp)))
+		 (push (cons accessor setter) *defsetfs*)))
       (otherwise (apply f (rest exp))))))
 
 (defun %compiler-defparameter (s)
