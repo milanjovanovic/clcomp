@@ -34,14 +34,17 @@
 (defun %initialize-env ()
   (%set-env (list nil nil)))
 
-
 ;;; this needs to be evaluated first at load time 
 (%initialize-env)
+
 
 ;; this is after %INIT-RUNTIME because it's creating fixup for string "CL"
 ;; and this can't be evaluated before env is created
 (defun %intern-bootstrap-symbols ()
   (%add-to-interned-symbols 'simple-array "CL")
-  (%add-to-interned-symbols 'character "CL"))
+  (%add-to-interned-symbols 'character "CL")
+  (%add-to-interned-symbols '*package* "CL"))
 
 (%intern-bootstrap-symbols)
+
+(defparameter *package* "CL")

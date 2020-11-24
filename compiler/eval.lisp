@@ -9,10 +9,9 @@
 	       (%clcomp-eval f1)))
       (defsetf (apply '%%defsetf (cdr exp)))
       (%%define-struct (apply '%%define-struct (rest exp)))
+      (%%compiler-defun (apply '%%compiler-defun (rest exp)))
+      (%%compiler-defparameter (apply '%%compiler-defparameter (rest exp)))
       (otherwise (error "Unknown !")))))
-
-(defun %compiler-defparameter (s)
-  s)
 
 (defun clcomp-eval (exp)
   (declare (optimize (debug 3)))

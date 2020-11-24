@@ -6,6 +6,8 @@
 
 (defparameter *macros* (make-hash-table))
 
+(defparameter *dynamic-variables* nil)
+
 (defun %%get-struct-info (struct)
   (assoc struct *structs* ))
 
@@ -28,3 +30,7 @@
     (if current
 	(setf (cdr current) setter)
 	(push (cons getter setter) *defsetfs*))))
+
+(defun %%compiler-defparameter (s)
+  (unless (find s *dynamic-variables*)
+    (push s *dynamic-variables*)))

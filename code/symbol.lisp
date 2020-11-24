@@ -26,34 +26,23 @@
   (declare (inline symbolp))
   (symbolp symbol))
 
-;;; FIXME, implement interned symbols storageintern
-
 (defun %defparameter (symbol value)
   (declare (inline set-symbol-value))
   (set-symbol-value symbol value))
-
-;; (defun %make-and-intern-symbol (name)
-;;   (let ((symbol (make-symbol name)))
-;;     (%add-to-interned-symbols symbol)
-;;     symbol))
-
-;; (defun intern (name)
-;;   (let ((symbol (%get-global-interned-symbol name)))
-;;     (or symbol
-;; 	(%make-and-intern-symbol name))))
 
 (defun %set-symbol-package (symbol package)
   (declare (inline %set-symbol-package))
   (%set-symbol-package symbol package))
 
-(defun %make-and-intern-symbol (name)
+(defun %make-and-intern-symbol (name package)
   (let ((symbol (make-symbol name)))
-    (%add-to-interned-symbols symbol "CL")
+    (%add-to-interned-symbols symbol package)
     symbol))
 
-(defun intern (name)
-  (let ((symbol (%get-global-interned-symbol name "CL")))
+;;; FIXME, package is current a string
+(defun intern (name &optional (package *package*))
+  (let ((symbol (%get-global-interned-symbol name package)))
     (or symbol
-	(let ((sym (%make-and-intern-symbol name)))
-	  (%set-symbol-package sym "CL")
+	(let ((sym (%make-and-intern-symbol name package)))
+	  (%set-symbol-package sym package)
 	  sym))))

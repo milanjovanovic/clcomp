@@ -4,7 +4,7 @@
 (defun macro-defparameter (form)
   (list 'progn
 	(list 'eval-when (list ':compile-toplevel)
-	      (list '%compiler-defparameter (list 'quote (second form))))
+	      (list '%%compiler-defparameter (list 'quote (second form))))
 	(list '%defparameter (list 'quote (second form)) (third form))))
 (setf (gethash 'defparameter *macros*) 'macro-defparameter)
 
@@ -338,6 +338,12 @@
 	   (null lambda-list))
        (cdr lambda-list))))
 
+(defun %lambda-list-&optional-vars (lambda-list)
+  (do ((lambda-list lambda-list (cdr lambda-list)))
+      ((or (eq (car lambda-list) '&optional)
+	   (null lambda-list))
+       (cdr lambda-list))))
+
 (defun %lambda-list-get-&rest-var (lambda-list)
   (do* ((ll lambda-list (cdr ll))
 	(lc (car ll) (car ll)))
@@ -361,11 +367,12 @@
       (cond ((eq '&rest lc)
 	     (let ((rest-sym (car (cdr ll))))
 	       (return (reverse (cons rest-sym (cons '&rest new-lambda-list))))))
-	    ((eq '&key lc)
+	    ((or (eq '&key lc)
+		 (eq '&optional lc))
 	     (return (reverse (cons (gensym "rest-arg") (cons '&rest new-lambda-list)))))
 	    (t (push lc new-lambda-list))))))
 
-(defun %rest-or-key-args-let-form (last-fixed-var rest-var key-keywords)
+(defun %rest-or-key-or-optional-args-let-form (last-fixed-var rest-var key-keywords optional-variables)
   (let ((rest-var-sym (gensym "rest-var-sym-")))
     (list 'let*
 	  (let ((b nil))
@@ -373,25 +380,38 @@
 	    (when (not (eq last-fixed-var rest-var))
 	      (push (list last-fixed-var (list 'car rest-var-sym)) b)
 	      (push (list rest-var (list 'cdr rest-var-sym)) b))
-	    (dolist (k key-keywords)
-	      (if (atom k)
-		  (push (list k (list 'getf rest-var (list 'quote k))) b)
-		  (push (list (first k)
-			      (list 'or
-				    (list 'getf rest-var (list 'quote (first k)))
-				    (second k))) b)))
+	    (if key-keywords
+		(dolist (k key-keywords)
+		  (if (atom k)
+		      (push (list k (list 'getf rest-var (list 'quote k))) b)
+		      (push (list (first k)
+				  (list 'or
+					(list 'getf rest-var (list 'quote (first k)))
+					(second k))) b)))
+		(let ((oindex 0))
+		  (dolist (ovar optional-variables)
+		    (if (atom ovar)
+			(push (list ovar (list 'nth oindex rest-var)) b)
+			(push (list (first ovar)
+				    (list 'or
+					  (list 'nth oindex rest-var)
+					  (second ovar))) b))
+		    (incf oindex))))
 	    (reverse b)))))
 
 (defun %clcomp-macroexpand-lambda (form env)
   (let* ((has-declarations (%lambda-has-declarations form))
 	 (key-keywords (%lambda-list-&key-keywords (second form)))
-	 (rearanged-llist (or (and key-keywords
+	 (optional-variables (%lambda-list-&optional-vars (second form)))
+	 (rearanged-llist (or (and (or key-keywords
+				       optional-variables)
 				   (%rerarange-lambda-list (second form)))
 			      (second form)))
 	 (rest-var (%lambda-list-get-&rest-var rearanged-llist))
 	 (last-fixed-param (or (%lambda-list-get-last-fixed-param rearanged-llist) rest-var))
-	 (key-args-let-form (and (or key-keywords rest-var)
-				 (%rest-or-key-args-let-form last-fixed-param rest-var key-keywords))))
+	 (key-args-let-form (and (or key-keywords rest-var optional-variables)
+				 (%rest-or-key-or-optional-args-let-form last-fixed-param
+									 rest-var key-keywords optional-variables))))
     (list 'lambda
 	  (substitute '&compiler-rest '&rest rearanged-llist)
 	  (if has-declarations (third form) (list 'declare))

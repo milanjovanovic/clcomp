@@ -43,7 +43,15 @@
 (defun foo (&rest a &key b c)
   (list a b c))
 
+(defun bar (a b &optional c (d 10))
+  (list a b c d))
+
 (defstruct foo a b)
 
 (defstruct (bar (:include foo) c))
+
+(defparameter *x* 100)
+
+(defun baz (a b &optional c (d *x*))
+  (list a b c d))
 

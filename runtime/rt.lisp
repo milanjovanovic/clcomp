@@ -169,6 +169,7 @@
   (let ((vmem (allocate-memory *runtime-heap-start*)))
     (allocate-symbol vmem 'character)
     (allocate-object vmem "KEYWORD")
+    (allocate-object vmem '*package*)
     vmem))
 
 (defun rt-dump-binary (file)
