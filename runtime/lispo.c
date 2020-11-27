@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <errno.h>
 
 struct cons *allocate_cons(void **heap, lispobj car, lispobj cdr) {
   struct cons *cons = (struct cons *) *heap;
@@ -238,18 +239,32 @@ char * c_string(lispobj string) {
   return ccstr;
 }
 
-int lisp_open(lispobj file) {
+lispobj lisp_open(lispobj file) {
   char *cfile = c_string(file);
   int fd = open(cfile, O_RDONLY);
-  return fd;
+  printf("fd int: %d\n", fd);
+  return tag_fixnum((int64_t) fd);
 }
   
-void lisp_close(lispobj fd) {
+lispobj lisp_close(lispobj fd) {
   int cfd = untag_fixnum(fd);
-  close(cfd);
+  return tag_fixnum((int64_t)(close(cfd)));
+}
+
+lispobj lisp_read_char(lispobj fd) {
+  int cfd = untag_fixnum(fd);
+  char lchar;
+  read(cfd, &lchar, 1);
+  return tag_char(lchar);
 }
 
 void c_print_lisp_string(lispobj s) {
   char *str = c_string(s);
   printf("%s\n", str);
 }
+
+lispobj lisp_test_negative() {
+  int x = -1;
+  return tag_fixnum((int64_t)x);
+}
+

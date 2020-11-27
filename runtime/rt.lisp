@@ -53,6 +53,12 @@
     (dolist (c (little-endian-64bit qword))
       (write-byte c stream))))
 
+(defun make-bootstrap-data ()
+  (let ((data nil))
+    (dolist (qword (dump-data *vmem*))
+      (push (little-endian-64bit qword) data))
+    (reverse data)))
+
 ;; FIXME
 ;; for now we are only resolving FUNCTION calls
 (defun resolve-fixup (fixup unit-code-buffer)
@@ -161,6 +167,13 @@
     (let ((code-buffer (resolve-fixups comp-unit)))
       (write-sequence code-buffer file-stream))))
 
+(defun get-compilation-unit-code (comp-unit)
+  (let ((*compilation-unit-local-rips* nil)
+	(*compilation-unit-local-start-address* (compilation-unit-start comp-unit))
+	(*compile-component-start-address* (compilation-unit-start comp-unit)))
+    (process-compile-component (compilation-unit-compile-component comp-unit))
+    (resolve-fixups comp-unit)))
+
 (defun write-start-address (stream)
   (dolist (c (immediate-as-byte-list *start-address* :imm64))
     (write-byte c stream)))
@@ -184,6 +197,16 @@
       (let ((*do-break* (when (null (cdr comps)) t)))
 	(write-compilation-unit-code comp f)))))
 
+(defun make-compilation-binary-data ()
+  (let ((data))
+    (do*
+     ((comps (reverse (compilation-units *current-compilation*)) (cdr comps))
+      (comp (car comps) (car comps)))
+     ((null comps) nil)
+      (let ((*do-break* (when (null (cdr comps)) t)))
+	(push (get-compilation-unit-code comp) data)))
+    (reverse data)))
+
 (defun rt-dump-fixups (file)
   (declare (optimize (debug 3)))
   (with-open-file (f file :direction :output :if-exists :supersede :element-type '(unsigned-byte 8))
@@ -194,6 +217,17 @@
       (write-sequence (make-array *word-size*
 				  :initial-contents (little-endian-64bit (cdr fixup)))
 		      f))))
+
+(defun make-fixups-code-buffers-list ()
+  (let ((data-buffers-list nil))
+    (dolist (fixup (reverse *load-time-fixups*))
+      (push (make-array *word-size*
+			:initial-contents (little-endian-64bit (car fixup)))
+	    data-buffers-list)
+      (push (make-array *word-size*
+			:initial-contents (little-endian-64bit (cdr fixup)))
+	    data-buffers-list))
+    (reverse data-buffers-list)))
 
 (defun rt-add-to-compilation (compilation-unit)
   (setf (compilation-units *current-compilation*)
@@ -259,6 +293,21 @@
     (maphash (lambda (k v)
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
-    (rt-dump-binary "/Users/milan/projects/clcomp.github/runtime/core")
-    (rt-dump-fixups "/Users/milan/projects/clcomp.github/runtime/fixups.core")))
+    (let* ((bootstrap-data-list (make-bootstrap-data))
+	   (code-buffers-list (make-compilation-binary-data))
+	   (fixups-buffers-list (make-fixups-code-buffers-list))
+	   (fixups-size (* *word-size* (length fixups-buffers-list))))
+      (with-open-file (f "/Users/milan/projects/clcomp.github/runtime/core" :direction :output
+									    :if-exists :supersede
+									    :element-type '(unsigned-byte 8))
+
+	(dolist (c (immediate-as-byte-list fixups-size :imm64))
+	  (write-byte c f))
+	(dolist (fixup-data-buffer fixups-buffers-list)
+	  (write-sequence fixup-data-buffer f))
+	(write-start-address f)
+	(dolist (bootstrap-data bootstrap-data-list)
+	  (write-sequence bootstrap-data f))
+	(dolist (code-buffer code-buffers-list)
+	  (write-sequence  code-buffer f))))))
 

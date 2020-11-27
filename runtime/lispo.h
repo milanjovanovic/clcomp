@@ -108,6 +108,9 @@ int is_symbol_interned(lispobj symbol, lispobj symbols_list);
 
 char * c_string(lispobj string);
 
-int lisp_open(lispobj file);
-void lisp_close(lispobj stream);
+lispobj lisp_open(lispobj file);
+lispobj lisp_close(lispobj stream);
+lispobj lisp_read_char(lispobj fd);
 void c_print_lisp_string(lispobj s);
+
+lispobj lisp_test_negative();

@@ -2,7 +2,7 @@
 
 ;; FIXME, ensure 16byte stack aligment
 ;; use one of registers that C calle preserve
-(define-vop %dlsym (res :register) ((c-function-name :register :stack))
+(define-vop %lisp-symbol-address (res :register) ((c-function-name :register :stack))
   (dolist (reg *c-call-save-registers*)
     (unless (eq reg res)
       (inst :push reg)))
@@ -10,14 +10,13 @@
     (inst :mov :rdi c-function-name))
   (inst :push :rbp)
   (inst :mov :rbp :rsp)
-  (inst :mov :rax 33565472)
+  (inst :mov :rax 33565584)
   (inst :call :rax)
   (inst :mov res :RAX)
   (inst :pop :rbp)
   (dolist (reg (reverse *c-call-save-registers*))
     (unless (eq reg res)
       (inst :pop reg))))
-
 
 ;;; all of this VOPs expects that C fun's returns lispobj
 (define-vop %c-call-zero-args (res :register) ((c-fun :register :stack))

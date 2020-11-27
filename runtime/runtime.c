@@ -361,52 +361,46 @@ void init_runtime() {
 void load_core() {
 }
 
-struct lisp_code load_test_code(char *file) {
+struct lisp_code load_test_code(FILE *fp, int64_t remaining_bytes) {
   
   struct lisp_code lcode;
-  struct stat info;
   
-  stat(file, &info);
-  
-  char *code = malloc((info.st_size - sizeof(int64_t)) * sizeof(char));
-  
-  printf("Code File Size: %lld\n", info.st_size);
-  
-  FILE *fp = fopen(file, "rb");
   int64_t start_address = read_long(fp);
-  fread(code, info.st_size - sizeof(int64_t), 1, fp);
-  fclose(fp);
-
+  remaining_bytes -= WORD_SIZE;
+  
+  char *code = malloc(remaining_bytes * sizeof(char));
+  
+  size_t read = fread(code, remaining_bytes, 1, fp);
+  
   lcode.start_address = start_address;
   lcode.code = code;
-  lcode.code_size = info.st_size - sizeof(int64_t);
+  lcode.code_size = remaining_bytes;
 
   printf("Start address: %lli\n", lcode.start_address);
   return lcode;
 }
 
-struct fixups read_fixups() {
+struct fixups read_fixups(FILE *fp) {
+
+  int64_t fixups_bytes_count = read_long(fp);
   
   struct fixups fixps;
-  struct stat info;
   uint64_t i;
   uint64_t fxps_count;
 
-  if (stat(FIXUP_FILE, &info) != 0) {
+  if (fixups_bytes_count == 0) {
     fixps.size = 0;
     fixps.efixups = (void *) 0;
     return fixps;
   }
     
   
-  fxps_count = info.st_size / sizeof (struct eval_fixup);
+  fxps_count = fixups_bytes_count / sizeof (struct eval_fixup);
   fixps.size = fxps_count;
 
   struct eval_fixup *e_fixups = malloc(sizeof(struct eval_fixup) * fxps_count);
   struct eval_fixup *copy = e_fixups;
 
-  FILE *fp = fopen(FIXUP_FILE, "rb");
-  
   uintptr_t fun;
   uintptr_t fixup;
   
@@ -420,8 +414,6 @@ struct fixups read_fixups() {
 
     e_fixups++;
   }
-
-  fclose(fp);
 
   fixps.efixups = copy;
   return fixps;
@@ -451,14 +443,26 @@ void evaluate_fixups(struct fixups fixs) {
 
 
 lispobj run_test(char *test_file) {
+
+  struct stat info;
+  stat(test_file, &info);
+  int64_t remaining_bytes = info.st_size;
+    
+  FILE *fp = fopen(test_file, "rb");
+
+  struct fixups fxps = read_fixups(fp);
+
+  remaining_bytes -= WORD_SIZE + (fxps.size * sizeof(struct fixups));
   
-  struct lisp_code lcode = load_test_code(test_file);
+  struct lisp_code lcode = load_test_code(fp, remaining_bytes);
   //  uintptr_t code_address = (uintptr_t) *heap_header;
   
   load_code(lcode.code, lcode.code_size);
   free(lcode.code);
 
-  evaluate_fixups(read_fixups());
+  evaluate_fixups(fxps);
+
+  fclose(fp);
   
   return(run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address));
   //  run_lisp_test(stack_start, (uintptr_t) heap_header, lcode.start_address);
@@ -485,7 +489,6 @@ void sigill_handler(int signal , siginfo_t *info, ucontext_t *uap) {
 }
 
 void install_handler() {
-  
   struct sigaction sa;
   struct sigaction osa;
 

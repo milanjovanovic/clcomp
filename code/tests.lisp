@@ -48,7 +48,7 @@
 
 (defstruct foo a b)
 
-(defstruct (bar (:include foo) c))
+(defstruct (bar (:include foo)) c)
 
 (defparameter *x* 100)
 

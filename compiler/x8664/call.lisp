@@ -4,6 +4,23 @@
   ;; FIXME
   )
 
+
+(define-vop %error (res :register) ((msg :register))
+  (inst :mov :RAX 33567488)
+  (dolist (reg *c-call-save-registers*)
+    (unless (eq reg res)
+      (inst :push reg)))
+  (inst :push :rbp)
+  (inst :mov :rbp :rsp)
+  (when (not (eq msg :rdi))
+    (inst :mov :rdi msg))
+  (inst :call :rax)
+  (inst :mov res :RAX)
+  (inst :pop :rbp)
+  (dolist (reg (reverse *c-call-save-registers*))
+    (unless (eq reg res)
+      (inst :pop reg))))
+
 (define-vop debug (res :register) ((msg :register))
   (inst :mov :RAX 33561056)
   (dolist (reg *c-call-save-registers*)
