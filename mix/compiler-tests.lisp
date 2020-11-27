@@ -149,11 +149,11 @@
 
 (define-compiler-test "key-1" t (lambda ()
 				  (and
-				   (equal (key-fixed-2 0 1 'x 2 'y 3 'z 4)
+				   (equal (key-fixed-2 0 1 :x 2 :y 3 :z 4)
 					  (list 0 1 2 3 4))
-				   (equal (key-fixed-4 0 1 2 3 'x 4 'y 5 'z 6)
+				   (equal (key-fixed-4 0 1 2 3 :x 4 :y 5 :z 6)
 					  (list 0 1 2 3 4 5 6))
-				   (equal (key-fixed-6 0 1 2 3 4 5 'x 6 'y 7 'z 8)
+				   (equal (key-fixed-6 0 1 2 3 4 5 :x 6 :y 7 :z 8)
 					  (list 0 1 2 3 4 5 6 7 8)))))
 
 

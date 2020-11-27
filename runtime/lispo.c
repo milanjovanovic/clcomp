@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "lispo.h"
-
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <dlfcn.h>
 
 struct cons *allocate_cons(void **heap, lispobj car, lispobj cdr) {
   struct cons *cons = (struct cons *) *heap;
@@ -65,8 +68,8 @@ int string_equal(struct array *s1, struct array *s2) {
   if (s1->size != s2->size)
     return 0;
 
-  lispobj *s1_first = &s1->elements;
-  lispobj *s2_first = &s2->elements;
+  lispobj *s1_first = (lispobj *) &(s1->elements);
+  lispobj *s2_first = (lispobj *) &(s2->elements);
   
 
   for (long i = 0; i < untag_fixnum(s1->size); i++) {
@@ -211,4 +214,42 @@ lispobj tag_pointer(uintptr_t pointer) {
 
 uintptr_t untag_pointer(lispobj obj) {
   return obj & CLEAR_TAG_MASK;
+}
+
+char * c_string(lispobj string) {
+  
+  struct array *lisp_array = (struct array *) untag_pointer(string);
+  
+  int64_t size = untag_fixnum(lisp_array->size);
+  char *cstr = malloc(size * sizeof(char) +1);
+  char *ccstr = cstr;
+  
+  
+  lispobj *first_char = (lispobj *) &(lisp_array->elements);
+  
+  for (long i = 0; i < size; i++) {
+    char lchar = untag_char(*(first_char + i));
+    *(cstr) = lchar;
+    cstr++;
+  }
+  *(cstr) = '\0';
+  
+  
+  return ccstr;
+}
+
+int lisp_open(lispobj file) {
+  char *cfile = c_string(file);
+  int fd = open(cfile, O_RDONLY);
+  return fd;
+}
+  
+void lisp_close(lispobj fd) {
+  int cfd = untag_fixnum(fd);
+  close(cfd);
+}
+
+void c_print_lisp_string(lispobj s) {
+  char *str = c_string(s);
+  printf("%s\n", str);
 }

@@ -1,27 +1,11 @@
 (in-package :clcomp)
 
-(define-vop %error (res :register) ((msg :register))
-  (inst :mov :RAX 33563440)
-  (dolist (reg *c-call-save-registers*)
-    (unless (eq reg res)
-      (inst :push reg)))
-  (inst :push :rbp)
-  (inst :mov :rbp :rsp)
-  (when (not (eq msg :rdi))
-    (inst :mov :rdi msg))
-  (inst :call :rax)
-  (inst :mov res :RAX)
-  (inst :pop :rbp)
-  (dolist (reg (reverse *c-call-save-registers*))
-    (unless (eq reg res)
-      (inst :pop reg))))
-
 (define-vop %set-rip-value (res :register) ((rip-location :register) (lambda :register))
   ;; FIXME
   )
 
 (define-vop debug (res :register) ((msg :register))
-  (inst :mov :RAX 33559104)
+  (inst :mov :RAX 33561056)
   (dolist (reg *c-call-save-registers*)
     (unless (eq reg res)
       (inst :push reg)))
@@ -36,13 +20,15 @@
     (unless (eq reg res)
       (inst :pop reg))))
 
-(define-vop from-lisp-test (res :register) ()
-  (inst :mov :RAX 33560352)
+(define-vop from-lisp-test (res :register) ((msg :register))
+  (inst :mov :RAX 33561360)
   (dolist (reg *c-call-save-registers*)
     (unless (eq reg res)
       (inst :push reg)))
   (inst :push :rbp)
   (inst :mov :rbp :rsp)
+  (when (not (eq msg :rdi))
+    (inst :mov :rdi msg))
   (inst :call :rax)
   (inst :mov res :RAX)
   (inst :pop :rbp)
@@ -291,13 +277,3 @@
       
       (inst :label exit))
     (reverse *segment-instructions*)))
-
-  ;; (define-vop open (:res register) ((path :register) (mode :register)))
-
-  ;; (define-vop close (:res register) ())
-
-  ;; (define-vop read (:res register) ())
-
-  ;; (define-vop write (:res register) ((buf :register) (nbyte :register)))
-
-

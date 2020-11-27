@@ -10,9 +10,11 @@
 #include <string.h>
 #include <errno.h>
 #include "lispo.h"
+#include "hash.h"
 #include <dirent.h>
 #include <signal.h>
 #include <sys/ucontext.h>
+#include <dlfcn.h>
 
 #define STATIC_SPACE_START 0x20000000
 #define STATIC_SPACE_SIZE (30 * 1024 * 1024)
@@ -29,6 +31,11 @@ void print_lisp(lispobj obj);
 
 int64_t read_long(FILE *fp);
 
+
+struct hashmap *create_nm_hashmap(char *file_name);
+
+
+struct hashmap *symbols_map;
 
 uintptr_t allocation_start = LISP_HEAP_START - STACK_SIZE;
 intptr_t stack_start = LISP_HEAP_START - 0x10; // 16 byte aligned
@@ -67,7 +74,11 @@ int is_symbol(lispobj obj) {
 }
 
 
-
+lispobj get_symbol_address(lispobj fun_name) {
+  char *fun_str = c_string(fun_name);
+  uintptr_t *address = map_get(symbols_map, fun_str);
+  return tag_fixnum(*address);
+}
 
 int is_simple_array(lispobj obj) {
 
@@ -488,6 +499,8 @@ void install_handler() {
 
 int main(int argc, char *argv[]) {
 
+  symbols_map = create_nm_hashmap("runtime.nm");
+
   init_runtime();
 
   init_lisp(stack_start, (uintptr_t) heap_header);
@@ -499,6 +512,7 @@ int main(int argc, char *argv[]) {
   if (argc == 2) {
     
     lispobj result = run_test(argv[1]);
+    // testing
     printf("\nGOT FROM LISP: ");
     print_lisp(result);
     printf("\n");

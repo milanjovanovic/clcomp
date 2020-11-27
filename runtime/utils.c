@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "hash.h"
 
 
 char *get_part(char *str, char delim, int index) {
@@ -21,7 +22,7 @@ char *get_part(char *str, char delim, int index) {
   return NULL;
 }
 
-void read_nm(char *file) {
+void fill_map(char *file, struct hashmap *map) {
   FILE *nm = fopen(file, "r");
   char *line = malloc(255);
   while (fgets(line, 255, nm) != NULL)  {
@@ -29,11 +30,12 @@ void read_nm(char *file) {
     // skip one _
     name++;
     char *address = get_part(line, ' ', 2);
-    // FIXME, create conses
-    printf("name: %s, address: %s\n", name, address);
+    uintptr_t value = strtoull(address, NULL, 10);
+    map_set(map, name, value);
+    //printf("name: %s, address: %lu\n", name, value);
   }
-   free(line);
-   fclose(nm);
+  free(line);
+  fclose(nm);
 }
 
 int64_t read_long(FILE *fp) {
@@ -53,4 +55,10 @@ int64_t read_long(FILE *fp) {
 
   return address;
   
+}
+
+struct hashmap *create_nm_hashmap(char *file_name) {
+  struct hashmap *map = map_allocate(100);
+  fill_map(file_name, map);
+  return map;
 }

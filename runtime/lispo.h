@@ -1,3 +1,4 @@
+#include <stdint.h>
 // NIL car/cdr should be set to the same NIL value
 #define LISP_NIL ((lispobj) 0x20000002)
 // FIXME, T values has bad tag
@@ -105,3 +106,8 @@ lispobj untag_pointer(lispobj obj);
 int string_equal(struct array *s1, struct array *s2);
 int is_symbol_interned(lispobj symbol, lispobj symbols_list);
 
+char * c_string(lispobj string);
+
+int lisp_open(lispobj file);
+void lisp_close(lispobj stream);
+void c_print_lisp_string(lispobj s);
