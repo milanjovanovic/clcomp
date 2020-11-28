@@ -145,7 +145,7 @@
 		      (writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
 		  (push (list 'defun reader-sym
 			      (list 'instance)
-			      (list 'check-type 'instance name)
+			      (list 'check-type 'instance (list 'quote name))
 			      (list '%get-struct-slot 'instance index))
 			slot-form)
 		  (push (list 'defun writer-sym

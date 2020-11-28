@@ -271,6 +271,9 @@
 
 (defun compile-and-dump (form)
   (declare (optimize (debug 3)))
+  (setf *structs* nil)
+  (setf *defsetfs* nil)
+  (setf *dynamic-variables* nil)
   (let ((*debug* nil)
 	(*load-time-fixups* nil))
     (rt-reset)

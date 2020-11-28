@@ -10,7 +10,7 @@
       (defsetf (apply '%%defsetf (cdr exp)))
       (%%define-struct (apply '%%define-struct (rest exp)))
       (%%compiler-defun (apply '%%compiler-defun (rest exp)))
-      (%%compiler-defparameter (apply '%%compiler-defparameter (rest exp)))
+      (%%compiler-defparameter (apply '%%compiler-defparameter (list (second (second exp)))))
       (otherwise (error "Unknown !")))))
 
 (defun clcomp-eval (exp)

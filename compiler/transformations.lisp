@@ -178,14 +178,16 @@
 (defun create-lexical-or-symbol-value-node (form environment)
   (if (lexical-binding-exist environment form)
       (make-lexical-var-node :name form :form nil)
-      (make-call-node :function 'symbol-value
-		      :arguments (if (bootstraped-object-p form)
-				     (list (make-compile-time-constant-node :form form))
-				     (list (make-ref-constant-node
-					    :form form
-					    :node (create-node (clcomp-macroexpand (list 'lambda nil
-											 (list 'quote form))
-										   (create-macros-env t t)))))))))
+      (if (find form *dynamic-variables*)
+	  (make-call-node :function 'symbol-value
+			  :arguments (if (bootstraped-object-p form)
+					 (list (make-compile-time-constant-node :form form))
+					 (list (make-ref-constant-node
+						:form form
+						:node (create-node (clcomp-macroexpand (list 'lambda nil
+											     (list 'quote form))
+										       (create-macros-env t t)))))))
+	  (error "Missing binding"))))
 
 (defun parse-and-create-ref-constant-node (form)
   (if (and (consp form) (symbolp (second form)))

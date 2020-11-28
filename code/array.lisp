@@ -24,7 +24,7 @@
   (declare (inline %set-array-type %set-array-element-type %set-array-tag debug
 		   %set-simple-array-tag))
   (let ((array (allocate-array dimensions)))
-    (%set-array-type array (list 'simple-array element-type (list dimension)))
+    (%set-array-type array (list 'simple-array element-type (list dimensions)))
     (%set-array-element-type array element-type)
     (%set-simple-array-tag array)	; FIXME, no need for VOP here
     (if initial-contents
