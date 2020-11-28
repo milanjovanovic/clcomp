@@ -43,7 +43,9 @@
 (defun %intern-bootstrap-symbols ()
   (%add-to-interned-symbols 'simple-array "CL")
   (%add-to-interned-symbols 'character "CL")
-  (%add-to-interned-symbols '*package* "CL"))
+  (%add-to-interned-symbols '*package* "CL")
+  (%add-to-interned-symbols :element-type "KEYWORD")
+  (%add-to-interned-symbols :initial-element "KEYWORD"))
 
 (%intern-bootstrap-symbols)
 

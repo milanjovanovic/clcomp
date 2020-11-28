@@ -19,6 +19,23 @@
   (declare (inline %array-type))
   (%array-type array))
 
+;;; FIXME, multi-dimensional arrays
+(defun make-array-new (dimensions &key (element-type t) (initial-element 0) initial-contents adjustable)
+  (declare (inline %set-array-type %set-array-element-type %set-array-tag debug
+		   %set-simple-array-tag))
+  (let ((array (allocate-array dimensions)))
+    (%set-array-type array (list 'simple-array element-type (list dimension)))
+    (%set-array-element-type array element-type)
+    (%set-simple-array-tag array)	; FIXME, no need for VOP here
+    (if initial-contents
+	(let ((index 0))
+	  (dolist (e initial-contents)
+	    (setf-aref array index e)
+	    (setf index (+ 1 index))))
+	(dotimes (i dimensions)
+	  (setf-aref array i initial-element)))
+    array))
+
 ;;; FIXME, &KEY arguments
 (defun make-array (dimension element-type initial-element initial-contents)
   (declare (inline %set-array-type %set-array-element-type %set-array-tag debug
@@ -50,17 +67,23 @@
   (declare (inline stringp))
   (stringp o))
 
-(defun make-string (size initial-contents)
+(defun make-string (size &key initial-element element-type)
   (declare (inline %set-array-type %set-array-element-type %set-array-tag debug %set-string-tag))
-  (let ((array (allocate-array size))
-	(index 0))
+  (let ((array (allocate-array size)))
     (%set-array-type array (list 'simple-array 'character (list size)))
     (%set-array-element-type array 'character)
     (%set-string-tag array)		; FIXME, no need for VOP here
-    (dolist (e initial-contents)
-      (setf-aref array index e)
-      (setf index (+ 1 index)))
+    (dotimes (index size)
+      (setf-aref array index initial-element)) 
     array))
+
+(defun %char-list-to-string (size initial-content)
+  (let ((string (make-string size))
+	(index 0))
+    (dolist (e initial-content)
+      (setf-aref string index e)
+      (setf index (+ index 1)))
+    string))
 
 (defun char (string index)
   (declare (inline aref))

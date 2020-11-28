@@ -75,7 +75,10 @@
 (defun allocate-symbol (vmem sym)
   (let ((esym (get-maybe-allocated-object vmem sym)))
     (or esym
-	(let* ((symbol-name (symbol-name sym))
+	(let* ((package (if (keywordp sym)
+			    "KEYWORD"
+			    *default-package*))
+	       (symbol-name (symbol-name sym))
 	       (symbol-name-addr (get-next-qword vmem))
 	       (symbol-value-addr (get-next-qword vmem))
 	       (symbol-function-addr (get-next-qword vmem))
@@ -84,8 +87,8 @@
 	       (_ (add-allocated-obj vmem sym (+ symbol-name-addr *symbol-tag*)))
 	       (allocated-sname-addr (or (get-maybe-allocated-object vmem symbol-name)
 					 (allocate-string vmem symbol-name)))
-	       (allocated-package-name-addr (or (get-maybe-allocated-object vmem *default-package*)
-						(allocate-string vmem *default-package*))))
+	       (allocated-package-name-addr (or (get-maybe-allocated-object vmem package)
+						(allocate-string vmem package))))
 	  (declare (ignore _))
 	  (add-allocated-obj vmem sym (+ symbol-name-addr *symbol-tag*))
 	  (write-object vmem symbol-name-addr allocated-sname-addr)

@@ -21,11 +21,16 @@
 
 ;;; this symbols need to be internet
 ;;; look at code/global.lisp
-(defparameter *bootstrap-symbols* '(simple-array character "CL" "KEYWORD" *package*))
+(defparameter *bootstrap-symbols* '(simple-array character "CL" "KEYWORD" *package* :element-type :initial-element))
 
 (defun bootstraped-object-p (object)
   (find object *bootstrap-symbols* :test 'equal))
 
+(defparameter *boostraped-keyword-symbols* '((element-type :element-type)
+					     (initial-element :initial-element)))
+
+(defun maybe-get-bootstraped-symbol-keyword (k)
+  (second (assoc k *boostraped-keyword-symbols*)))
 
 
 (defun get-two-arg-version (fun)
@@ -167,6 +172,9 @@
 			    (list 'declare)
 			    (cons 'progn (cdr (clcomp-macroexpand form (create-macros-env t t))))))))
 
+(defun create-compile-time-constant-node (form)
+  (make-compile-time-constant-node :form (second form)))
+
 (defun create-lexical-or-symbol-value-node (form environment)
   (if (lexical-binding-exist environment form)
       (make-lexical-var-node :name form :form nil)
@@ -215,6 +223,8 @@
 	       (create-lambda-node form environment))
 	      ((eq first 'load-time-value)
 	       (create-load-time-value-node form))
+	      ((eq first '%compile-time-constant)
+	       (create-compile-time-constant-node form))
 	      ((eq first 'if)
 	       (create-if-node form environment))
 	      ((or (eq first 'let)

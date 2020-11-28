@@ -283,12 +283,28 @@
 					  (let ((x (baz 1 2 3)))
 					    (equal x (list 1 2 3 100)))))
 
+(define-compiler-test "optional-1" t (lambda ()
+				       (and
+					(equal (bar 1 2 3) (list 1 2 3 10))
+					(equal (bar 1 2 3 4) (list 1 2 3 4)))))
+
 (define-compiler-test "bootstrap-symbols" t (lambda ()
 					      (and
 					       (eq 'character 'character)
 					       (eq 'simple-array 'simple-array)
 					       (equal "CL" (symbol-package 'character))
 					       (equal "CL" (symbol-package 'simple-array)))))
+
+
+(define-compiler-test "bootstrap-symbols" t (lambda ()
+					      (and
+					       (not (eq :foo 'foo))
+					       (not (eq 'character :character))
+					       (not (eq :element-type 'element-type))
+					       (eq 'element-type 'element-type)
+					       (eq :element-type :element-type)
+					       (equal "KEYWORD" (symbol-package :element-type))
+					       (equal "CL" (symbol-package 'element-type)))))
 
 
 (defun generate-all-test-cores ()

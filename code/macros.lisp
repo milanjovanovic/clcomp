@@ -372,7 +372,6 @@
 	     (return (reverse (cons (gensym "rest-arg") (cons '&rest new-lambda-list)))))
 	    (t (push lc new-lambda-list))))))
 
-
 (defun %rest-or-key-or-optional-args-let-form (last-fixed-var rest-var key-keywords optional-variables)
   (let ((rest-var-sym (gensym "rest-var-sym-")))
     (list 'let*
@@ -383,14 +382,20 @@
 	      (push (list rest-var (list 'cdr rest-var-sym)) b))
 	    (if key-keywords
 		(dolist (k key-keywords)
-		  (if (atom k)
-		      (push (list k (list 'getf rest-var (list 'load-time-value
-							       (list 'intern (symbol-name k) "KEYWORD")))) b)
-		      (push (list (first k)
-				  (list 'or
-					(list 'load-time-value
-					      (list 'intern (symbol-name (first k)) "KEYWORD"))
-					(second k))) b)))
+		  (let ((bootstraped-sym (maybe-get-bootstraped-symbol-keyword k)))
+		    (if (atom k)
+			(push (list k (list 'getf rest-var (if bootstraped-sym
+							       (list '%compile-time-constant bootstraped-sym)
+							       (list 'load-time-value
+								     (list 'intern (symbol-name k) "KEYWORD"))))) b)
+			(push (list (first k)
+				    (list 'or
+					  (list 'getf rest-var
+						(if bootstraped-sym
+						    (list '%compile-time-constant bootstraped-sym)
+						    (list 'load-time-value
+							  (list 'intern (symbol-name (first k)) "KEYWORD"))))
+					  (second k))) b))))
 		(let ((oindex 0))
 		  (dolist (ovar optional-variables)
 		    (if (atom ovar)
@@ -462,7 +467,7 @@
 	(dotimes (c (+ 1 i))
 	  (push (char string i) f)
 	  (decf i))
-	(list 'make-string (length string) (cons 'list  f)))
+	(list '%char-list-to-string (length string) (cons 'list  f)))
       string))
 
 (defun clcomp-macroexpand-keyword (obj env)

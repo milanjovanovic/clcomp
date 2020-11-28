@@ -105,7 +105,7 @@
   (let* ((name (fixup-rip-relative-constant-name (rip-location-rip fixup)))
 	 (offset (rip-location-byte-offset fixup))
 	 (address (gethash (fixup-rip-relative-constant-form (rip-location-rip fixup))
-			   (vmem-allocations *vmem*))))
+			   (vmem-allocations *vmem*)))) ;; when getting vmem alloocarion we should look ar syjbol packkage
     (unless address
       (error (format nil "Unknown local RIP ~a" name)))
     (when *debug*
@@ -180,9 +180,8 @@
 
 (defun create-bootstrap-data ()
   (let ((vmem (allocate-memory *runtime-heap-start*)))
-    (allocate-symbol vmem 'character)
-    (allocate-object vmem "KEYWORD")
-    (allocate-object vmem '*package*)
+    (dolist (o *bootstrap-symbols*)
+      (allocate-object vmem o))
     vmem))
 
 (defun rt-dump-binary (file)
