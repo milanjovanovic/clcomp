@@ -10,3 +10,6 @@
   (declare (inline %c-call-one-args))
   (%c-call-one-args c-fun arg1))
 
+(defun error (msg)
+  (let ((lisp_error (load-time-value (%lisp-symbol-address "lisp_error"))))
+    (%c-call-one-args lisp_error msg)))

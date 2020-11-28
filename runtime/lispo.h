@@ -114,3 +114,5 @@ lispobj lisp_read_char(lispobj fd);
 void c_print_lisp_string(lispobj s);
 
 lispobj lisp_test_negative();
+
+void lisp_error(lispobj message);

@@ -10,7 +10,7 @@
     (inst :mov :rdi c-function-name))
   (inst :push :rbp)
   (inst :mov :rbp :rsp)
-  (inst :mov :rax 33565584)
+  (inst :mov :rax 33565648)
   (inst :call :rax)
   (inst :mov res :RAX)
   (inst :pop :rbp)

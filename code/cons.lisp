@@ -22,13 +22,13 @@
   (declare (inline listp car))
   (if (listp cons)
       (car cons)
-      (error "CAR: Arguments is not of type LIST")))
+      (error "Arguments is not of type LIST")))
 
 (defun cdr (cons)
   (declare (inline cdr))
   (if (listp cons)
       (cdr cons)
-      (error "CDR: Arguments is not of type LIST")))
+      (error "Arguments is not of type LIST")))
 
 (defun caar (cons)
   (car (car cons)))

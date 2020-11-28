@@ -282,11 +282,11 @@ void set_rip_value(int64_t rip_position, lispobj lambda) {
   // this should call lisp lambda function and set it to rip_position
 }
 
-void lisp_error(lispobj error_msg) {
-  printf("LISP ERROR: ");
-  print_lisp_string(error_msg, 1);
-  exit(1);
-}
+/* void lisp_error(lispobj error_msg) { */
+/*   printf("LISP ERROR: "); */
+/*   print_lisp_string(error_msg, 1); */
+/*   exit(1); */
+/* } */
 
 
 void *allocate_static_memory() {

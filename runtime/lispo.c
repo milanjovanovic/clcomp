@@ -268,3 +268,8 @@ lispobj lisp_test_negative() {
   return tag_fixnum((int64_t)x);
 }
 
+void lisp_error(lispobj message) {
+  char *msg = c_string(message);
+  printf("LISP ERROR: %s\n", msg);
+  exit(1);
+}
