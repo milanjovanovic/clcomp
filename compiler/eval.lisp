@@ -9,12 +9,11 @@
 						       (list 'quote (third exp))
 						       (list 'quote (fourth exp))))
 				       :eval-at-load t))
-      ;; (%%compiler-defun	(clcomp-compile nil (list 'lambda nil
-      ;; 						  (list '%set-symbol-function
-      ;; 							(list 'quote (second exp))
-      ;; 							(list '%function (second exp))))
-      ;; 					:eval-at-load t))
-      )))
+      (%%compiler-defun	(clcomp-compile nil (list 'lambda nil
+						  (list '%set-symbol-function
+							(list 'quote (second exp))
+							(list '%function (second exp))))
+					:eval-at-load t)))))
 
 
 ;; FIXME, implement eval as load time fixup eval

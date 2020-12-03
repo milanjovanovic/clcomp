@@ -231,7 +231,7 @@
 	      ((eq first '%compile-time-constant) ; this is used for VMM allocated objects
 	       (create-compile-time-constant-node form))
 	      ((eq first '%function) ; using this to set SYMBOL-VALUE at load time when defining function
-	       o(create-fun-rip-relative-node form))
+	       (create-fun-rip-relative-node form))
 	      ((eq first 'if)
 	       (create-if-node form environment))
 	      ((or (eq first 'let)

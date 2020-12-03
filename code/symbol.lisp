@@ -41,8 +41,8 @@
   (%set-symbol-function symbol value))
 
 (defun %defparameter (symbol value)
-  (declare (inline set-symbol-value))
-  (set-symbol-value symbol value))
+  (declare (inline %set-symbol-value))
+  (%set-symbol-value symbol value))
 
 (defun %set-symbol-package (symbol package)
   (declare (inline %set-symbol-package))

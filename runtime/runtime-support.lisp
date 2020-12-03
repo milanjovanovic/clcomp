@@ -32,6 +32,11 @@
 (defun %%compiler-defun (fun-name)
   (declare (ignore fun-name)))
 
+(defun %%get-struct-slots (struct)
+  (let ((info (%%get-struct-info struct)))
+    (when info
+      (third info))))
+
 (defun %%defsetf (getter setter)
   (let ((current (assoc getter *defsetfs*)))
     (if current
