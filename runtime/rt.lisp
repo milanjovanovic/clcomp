@@ -287,6 +287,7 @@
     (clcomp-compile-file (format nil "~a/code/ffi.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/symbol.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/char.lisp" *clcomp-home*))
+    (clcomp-compile-file (format nil "~a/runtime/runtime-support.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/struct.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/io.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/tests.lisp" *clcomp-home*))

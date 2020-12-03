@@ -18,26 +18,31 @@
 		 (%apply function (cons arg arguments)))))))
 
 (defun funcall (fun &rest args)
-  (apply fun args))
+  (if (symbolp fun)
+      (apply (symbol-function fun) args)
+      (apply fun args)))
 
 (defun type-of (x)
   (if (null x)
       'null
-      (cond ((consp x) 'cons)
+      (cond ((eq x t) t)
+	    ((consp x) 'cons)
 	    ((fixnump x) 'fixnum)
 	    ((characterp x) 'character)
+	    ((keywordp x) 'keyword)
 	    ((symbolp x) 'symbol)
 	    ((stringp x) (list 'simple-array 'character (list (array-total-size x)))) ; FIXME, after fixing make-string/symbols
 					; we can use %ARRAY-TYPE here
 	    ((arrayp x) (%array-type x))
 	    (t 'unknown))))
 
+;;; Not so simple to implement
 (defun typep (object type)
-  "FIXME")
+  (error "Not implemented"))
 
-;; this is not real CL CHECK-TYPE
+;;; FIXME
 (defun check-type (object type)
-  "FIXME")
+  t)
 
 (defun eq (x y)
   (declare (inline eq))
@@ -81,5 +86,8 @@
 	((characterp x) (char-code x))
 	((symbolp x) 100)
 	((arrayp x) 200)
-	(t (error "unknown type"))))
+	(t (error "Unknown type"))))
 
+
+(defun in-package (package)
+  package)

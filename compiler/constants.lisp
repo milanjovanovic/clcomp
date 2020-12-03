@@ -41,7 +41,7 @@
 
 
 (defparameter *array-header-size* 4) ;; look at lispo.h
-(defparameter *struct-header-size* 2)
+(defparameter *struct-header-size* 3)
 
 (defun fixnumize (num)
   (if (and (> num *most-negative-fixnum*)

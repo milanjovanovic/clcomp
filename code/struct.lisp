@@ -1,10 +1,14 @@
-(defun %allocate-struct (slot-count type)
+(defun %allocate-struct (slot-count type layout)
   (declare (inline %allocate-struct))
-  (%allocate-struct slot-count type))
+  (%allocate-struct slot-count type layout))
 
 (defun %struct-type (struct)
   (declare (inline %struct-type))
   (%struct-type struct))
+
+(defun %struct-layout (struct)
+  (declare (inline %struct-layout))
+  (%struct-layout struct))
 
 (defun %structp (obj)
   (declare (inline %structp))

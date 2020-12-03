@@ -4,23 +4,30 @@
 
 (defparameter *defsetfs* nil)
 
-(defparameter *macros* (make-hash-table))
-
 (defparameter *dynamic-variables* nil)
 
 (defun %%get-struct-info (struct)
   (assoc struct *structs* ))
 
-(defun %%define-struct (name parent slots)
-  (let ((struct-info (%%get-struct-info name)))
-    (if struct-info
-	(rplacd struct-info (list parent slots))
-	(push (list name parent slots) *structs*))))
+(defun %%make-all-parents-list (struct)
+  (let* ((struct-info (%%get-struct-info struct))
+	 (parents (second struct-info)))
+    (if parents
+	(cons struct parents)
+	(list struct))))
 
-(defun %%get-struct-slots (struct)
+(defun %%define-struct (name parent slots)
+  (let ((struct-info (%%get-struct-info name))
+	(all-parents (when parent
+		       (%%make-all-parents-list parent))))
+    (if struct-info
+	(rplacd struct-info (list (list all-parents slots)))
+	(setf *structs* (cons (list name all-parents slots) *structs*)))))
+
+(defun %%get-struct-parents (struct)
   (let ((struct-data (assoc struct *structs*)))
     (when struct-data
-      (nth 2 struct-data))))
+      (nth 1 struct-data))))
 
 (defun %%compiler-defun (fun-name)
   (declare (ignore fun-name)))
@@ -29,8 +36,13 @@
   (let ((current (assoc getter *defsetfs*)))
     (if current
 	(setf (cdr current) setter)
-	(push (cons getter setter) *defsetfs*))))
+	(setf *defsetfs* (cons (cons getter setter) *defsetfs*)))))
 
 (defun %%compiler-defparameter (s)
   (unless (find s *dynamic-variables*)
-    (push s *dynamic-variables*)))
+    (setf *dynamic-variables*
+	  (cons s *dynamic-variables*))))
+
+;; FIXME, use MEMBER
+(defun %%struct-layout-has-type (type layout)
+  (find type layout))

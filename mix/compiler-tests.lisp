@@ -17,6 +17,7 @@
      (clcomp-compile-file (format nil "~a/code/ffi.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/symbol.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/char.lisp" *clcomp-home*))
+    (clcomp-compile-file (format nil "~a/runtime/runtime-support.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/struct.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/io.lisp" *clcomp-home*))
     (clcomp-compile-file (format nil "~a/code/tests.lisp" *clcomp-home*))
@@ -280,6 +281,21 @@
 					     (= (foo-a foo) 1)
 					     (= (foo-b foo) 2)))))
 
+(define-compiler-test "struct-test-2" t (lambda ()
+					  (let ((foo (make-foo :a 1 :b 2))
+						(bar (make-bar :a 10 :b 20 :c 30))
+						(baz (make-baz :a 100 :b 200 :c 300)))
+					    (and
+					     (foo-p foo)
+					     (foo-p bar)
+					     (foo-p baz)
+					     (bar-p bar)
+					     (bar-p baz)
+					     (baz-p baz)
+					     (null (baz-d baz))
+					     (= 300 (bar-c baz))
+					     (= 100 (foo-a baz))))))
+
 
 (define-compiler-test "dynamic-var-1" t (lambda ()
 					  (let ((x (baz 1 2 3)))
@@ -290,7 +306,7 @@
 					(equal (bar 1 2 3) (list 1 2 3 10))
 					(equal (bar 1 2 3 4) (list 1 2 3 4)))))
 
-(define-compiler-test "bootstrap-symbols" t (lambda ()
+(define-compiler-test "bootstrap-symbols-1" t (lambda ()
 					      (and
 					       (eq 'character 'character)
 					       (eq 'simple-array 'simple-array)
@@ -298,7 +314,15 @@
 					       (equal "CL" (symbol-package 'simple-array)))))
 
 
-(define-compiler-test "bootstrap-symbols" t (lambda ()
+(define-compiler-test "quoted-objects-1" t (lambda ()
+					     (and
+					      (eq ':foo :foo)
+					      (equal '"bla" "bla")
+					      (eq nil 'nil)
+					      (eq t 't))))
+
+
+(define-compiler-test "bootstrap-symbols-2" t (lambda ()
 					      (and
 					       (not (eq :foo 'foo))
 					       (not (eq 'character :character))

@@ -148,6 +148,19 @@
 	   (null place))
        (cadr place))))
 
+
+;; FIXME, just simple version on list so we can compile
+(defun find (item sequence &key from-end test test-not start end key)
+  (dolist (e sequence)
+    (when (eql e item)
+      (return-from find e))))
+
+;;FIXME for now just what we need in runtime-support.lisp
+(defun assoc (item alist &key key test test-not)
+  (dolist (elem alist)
+    (when (eq (car elem) item)
+      (return-from assoc elem))))
+
 (defun cars-and-cdrs (lists)
   (let ((cars nil)
 	(cdrs nil))

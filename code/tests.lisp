@@ -50,6 +50,8 @@
 
 (defstruct (bar (:include foo)) c)
 
+(defstruct (baz (:include bar)) d)
+
 (defparameter *x* 100)
 
 (defun baz (a b &optional c (d *x*))

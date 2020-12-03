@@ -1,16 +1,24 @@
 (in-package :clcomp)
 
 (define-vop %allocate-struct (res :register) ((slots :register)
-					      (type :register)) 
-  (inst :mov *tmp-reg* (@ *heap-header-reg*))
-  (inst :mov res *tmp-reg*)
-  (inst :shr slots *tag-size*)
-  (inst :lea *tmp-reg* (@ *tmp-reg* slots *word-size* (* *word-size* *struct-header-size*)))
-  (inst :mov (@ *heap-header-reg*) *tmp-reg*)
-  (inst :mov (@ res) (get-extended-tag 'struct))
-  (inst :mov (@ res nil nil *word-size*) type)
-  (inst :shl slots *tag-size*)
-  (inst :add res *pointer-tag*))
+					      (type :register :stack)
+					      (layout :register :stack))
+  (let ((type-is-reg (is-register type))
+	(layout-is-reg (is-register layout)))
+    (inst :mov *tmp-reg* (@ *heap-header-reg*))
+    (inst :mov res *tmp-reg*)
+    (inst :shr slots *tag-size*)
+    (inst :lea *tmp-reg* (@ *tmp-reg* slots *word-size* (* *word-size* *struct-header-size*)))
+    (inst :mov (@ *heap-header-reg*) *tmp-reg*)
+    (inst :mov (@ res) (get-extended-tag 'struct))
+    (unless type-is-reg
+      (inst :mov *tmp-reg* type))
+    (inst :mov (@ res nil nil *word-size*) (if type-is-reg type *tmp-reg*))
+    (unless layout-is-reg
+      (inst :mov *tmp-reg* layout))
+    (inst :mov (@ res nil nil (* 2 *word-size*)) (if layout-is-reg layout *tmp-reg*))
+    (inst :shl slots *tag-size*)
+    (inst :add res *pointer-tag*)))
 
 (define-vop %structp (res :register) ((arg :register))
   (let ((is-pointer-label (make-vop-label "is-pointer"))
@@ -32,6 +40,9 @@
 
 (define-vop %struct-type (res :register) ((struct :register))
   (inst :mov res (@ struct nil nil (- *word-size* *pointer-tag*))))
+
+(define-vop %struct-layout (res :register) ((struct :register))
+  (inst :mov res (@ struct nil nil (- (* 2 *word-size*) *pointer-tag*))))
 
 (define-vop %get-struct-slot (res :register) ((struct :register)
 					      (slot-index :register :stack))

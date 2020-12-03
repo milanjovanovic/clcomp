@@ -414,6 +414,15 @@
   (make-go-ir component (get-label-ir-symbol (go-node-label-node node) environments))
   nil)
 
+(defun emit-fun-rip-relative-fixup-ir (component node environments)
+  (declare (ignore environments))
+  (let ((location (make-temp-location))
+	(rip-location (make-rip-relative-location :location (fun-rip-relative-node-form node))))
+    (push
+     (make-fun-rip-relative :name (fun-rip-relative-node-form node)) (ir-component-rips component))
+    (make-load-ir component location rip-location)
+    location))
+
 ;;; lambda will create new component
 (defun emit-lambda-ir (component node)
   (let ((lambda-comp (make-ir-component))
@@ -441,7 +450,8 @@
     (go-node (emit-go-ir component node environments))
     (ref-constant-node (emit-load-time-component component node))
     (compile-time-constant-node (emit-compile-time-constant-ir component node environments))
-      ;; (symbol-raw-node (emit-raw-symbol-component component node))
+    (fun-rip-relative-node (emit-fun-rip-relative-fixup-ir component node environments))   
+    ;; (symbol-raw-node (emit-raw-symbol-component component node))
     (otherwise (error "Unknown node type"))))
 
 ;;; entry node need to be lambda

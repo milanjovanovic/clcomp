@@ -24,7 +24,21 @@
 
 (defun symbolp (symbol)
   (declare (inline symbolp))
-  (symbolp symbol))
+  (or (eq t symbol)
+      (eq nil symbol)
+      (symbolp symbol)))
+
+(defun keywordp (symbol)
+  (and (symbolp symbol)
+       (equal (symbol-package symbol) "KEYWORD")))
+
+(defun %set-symbol-value (symbol value)
+  (declare (inline %set-symbol-value))
+  (%set-symbol-value symbol value))
+
+(defun %set-symbol-function (symbol value)
+  (declare (inline %set-symbol-function))
+  (%set-symbol-function symbol value))
 
 (defun %defparameter (symbol value)
   (declare (inline set-symbol-value))

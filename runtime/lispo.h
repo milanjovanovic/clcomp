@@ -51,6 +51,7 @@ struct array {
 
 struct structure {
   lispobj tag;
+  lispobj layoyt;
   lispobj struct_type;
   lispobj elements;
 };

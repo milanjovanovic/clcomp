@@ -25,12 +25,17 @@
 (define-vop symbol-value (res :register) ((symbol :register))
   (inst :mov res (@ symbol nil nil (- *word-size* *symbol-tag*))))
 
-(define-vop set-symbol-value (res :register) ((symbol :register) (value :register))
+(define-vop %set-symbol-value (res :register) ((symbol :register) (value :register))
   (inst :mov (@ symbol nil nil (- *word-size* *symbol-tag*)) value)
   (inst :mov res value))
 
 (define-vop symbol-function (res :register) ((symbol :register))
   (inst :mov res (@ symbol nil nil (- (* 2 *word-size*) *symbol-tag*))))
+
+(define-vop %set-symbol-function (res :register) ((symbol :register)
+						  (value :register))
+  (inst :mov (@ symbol nil nil (- (* 2 *word-size*) *symbol-tag*)) value)
+  (inst :mov res value))
 
 (define-vop symbol-plist (res :register) ((symbol :register))
   (inst :mov res (@ symbol nil nil (- (* 3 *word-size*) *symbol-tag*))))

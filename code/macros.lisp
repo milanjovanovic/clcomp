@@ -1,6 +1,8 @@
 (in-package :clcomp)
 (declaim (optimize (speed 0) (safety 3) (debug 3)))
 
+(defparameter *macros* (make-hash-table))
+
 (defun macro-defparameter (form)
   (list 'progn
 	(list 'eval-when (list ':compile-toplevel)
@@ -90,20 +92,12 @@
       (first (second form))
       (second form)))
 
-
-;;; FIXME, this just returns one parent type
-(defun get-struct-type-list (parent)
-  (when parent
-    parent))
-
 (defun create-%make-struct-body (struct slots parent-struct)
   (let ((constructor-name (intern (concatenate 'string "MAKE-" (symbol-name struct)))))
     (list 'defun constructor-name (cons '&key slots)
 	  (list 'let (list (list 's (list '%allocate-struct (length slots)
-					  (if parent-struct
-					      (list 'cons (list 'quote struct)
-						    (list 'quote parent-struct))
-					      (list 'quote struct)))))
+					  (list 'quote struct)
+					  (list 'load-time-value (list '%%get-struct-parents (list 'quote struct))))))
 		(cons 'progn (reverse (let ((set-form nil)
 					    (index 0))
 					(dolist (slot slots)
@@ -117,12 +111,11 @@
     ;; FIXME, %structp can return NIL or struct type cons
     (list 'defun type-predicate-name (list 'obj)
 	  (list 'and (list '%structp 'obj)
-		(list 'let (list (list 'stype (list '%struct-type 'obj)))
-		      (list 'if (list 'consp 'stype)
-			    (list 'or (list 'eq (list 'quote struct) (list 'car 'stype))
-				  (list 'eq (list 'quote struct) (list 'cdr 'stype)))
-			    (list 'eq (list 'quote struct) 'stype)))))))
+		(list 'or
+		      (list 'eq (list 'quote struct) (list '%struct-type 'obj))
+		      (list '%%struct-layout-has-type (list 'quote struct) (list '%struct-layout 'obj)))))))
 
+;;; $struct-p is wrong, need to check struct-layout
 (defun macro-defstruct (form)
   (let* ((name (get-struct-name form))
 	 (parent (get-parent-struct form))
@@ -134,7 +127,7 @@
       (error (concatenate 'string "Unknown parent struct " (symbol-name parent))))
     (append (list 'progn
 		  (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
-			(list '%%define-struct name (get-struct-type-list parent) slots))
+			(list '%%define-struct name parent slots))
 		  (create-%make-struct-body name slots parent))
 	    (list
 	     (create-struct-type-predicate name))
@@ -145,12 +138,12 @@
 		      (writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
 		  (push (list 'defun reader-sym
 			      (list 'instance)
-			      (list 'check-type 'instance (list 'quote name))
+			      ;; (list 'check-type 'instance (list 'quote name))
 			      (list '%get-struct-slot 'instance index))
 			slot-form)
 		  (push (list 'defun writer-sym
 			      (list 'instance 'value)
-			      (list 'check-type 'instance (list 'quote name))
+			      ;; (list 'check-type 'instance (list 'quote name))
 			      (list '%set-struct-slot 'instance index 'value))
 			slot-form)
 		  (push (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
@@ -310,10 +303,15 @@
 ;; FIXME, %rt-defun ?!?!
 (defun %clcomp-macroexpand-defun (form env)
   (list 'progn (list 'eval-when '(:compile-toplevel) (list '%%compiler-defun
-							   (clcomp-macroexpand (list 'quote (second form))
+							   (clcomp-macroexpand (second form)
 									       env)))
 	(list '%defun (second form)
 	      (clcomp-macroexpand (%parse-defun-to-lambda form) env))))
+
+
+(defun %clcomp-macroexpand-$defun (form env)
+  (list '%defun (second form)
+	(clcomp-macroexpand (%parse-defun-to-lambda form) env)))
 
 (defun %clcomp-macroexpand-eval-when (form env)
   (list 'eval-when (second form)
@@ -506,6 +504,7 @@
 		(return-from (%clcomp-macroexpand-return-from form env))
 		(progn (%clcomp-macroexpand-progn form env))
 		(defun (%clcomp-macroexpand-defun form env))
+		($defun (%clcomp-macroexpand-$defun form env))
 		(eval-when (%clcomp-macroexpand-eval-when form env))
 		(lambda (%clcomp-macroexpand-lambda form env))
 		(setf (%clcomp-macroexpand-setf form env))

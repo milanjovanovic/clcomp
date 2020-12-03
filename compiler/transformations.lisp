@@ -45,12 +45,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; transform sexp expression to structures tree
 
+(defstruct fun-rip-relative-node form)
 (defstruct compile-time-constant-node form)
 (defstruct immediate-constant-node value)
 (defstruct ref-constant-node form node)
-;; (defstruct global-reference-node form type)
 (defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
-;; (defstruct dynamic-var-node name form)
 (defstruct if-node test-form true-form false-form)
 (defstruct let-node bindings form sequential)
 (defstruct progn-node forms)
@@ -146,9 +145,9 @@
 	((characterp form)
 	 (make-immediate-constant-node :value (characterize form)))
 	((stringp form)
-	 (parse-and-create-ref-constant-node form))
+	 (create-ref-constant-node form))
 	((keywordp form)
-	 (parse-and-create-ref-constant-node form))
+	 (create-ref-constant-node form))
 	(t (error "Unknown constant form"))))
 
 (defun create-tagbody-node (forms environment)
@@ -159,8 +158,10 @@
 				    (rest forms))))
 
 (defun create-setq-node (form environment)
-  ;; FIXME, can be dynamic var
-  (make-setq-node :var (make-lexical-var-node :name (second form)) :form (create-node (third form) environment)))
+  (let ((var (second form)))
+    (if (find var *dynamic-variables*)
+	(create-node (list '%set-symbol-value (list 'quote var) (third form)) environment)
+	(make-setq-node :var (make-lexical-var-node :name (second form)) :form (create-node (third form) environment)))))
 
 (defun create-go-node (form)
   (make-go-node :label-node (make-label-node :label (second form))))
@@ -189,25 +190,27 @@
 										       (create-macros-env t t)))))))
 	  (error "Missing binding"))))
 
-(defun parse-and-create-ref-constant-node (form)
-  (if (and (consp form) (symbolp (second form)))
-      ;; (make-global-reference-node :form (second form) :type 'symbol)
-      ;; do SYMBOL the same way as STRING
-      (if (bootstraped-object-p (second form))
-	  (make-compile-time-constant-node :form (second form))
-	  (make-ref-constant-node
-	   :form form
-	   :node (create-node (clcomp-macroexpand (list 'lambda nil
-							form)
-						  (create-macros-env t t)))))
-      (if (and (or (stringp form) (keywordp form))
-	       (bootstraped-object-p form))
-	  (make-compile-time-constant-node :form form)
-	  (make-ref-constant-node
-	   :form form
-	   :node (create-node (clcomp-macroexpand (list 'lambda nil
-							form)
-						  (create-macros-env t t)))))))
+
+(defun parse-and-create-quoted-node (form)
+  (if (consp form)
+      (if (constantp (second form))
+	  (create-node (second form))
+	  (if (bootstraped-object-p (second form))
+	      (make-compile-time-constant-node :form (second form))
+	      (create-ref-constant-node form)))
+      (error "Should't happen !")))
+
+
+(defun create-ref-constant-node (form)
+  (make-ref-constant-node
+   :form form
+   :node (create-node (clcomp-macroexpand (list 'lambda nil
+						form)
+					  (create-macros-env t t)))))
+
+(defun create-fun-rip-relative-node (form)
+  (make-fun-rip-relative-node :form (second form)))
+
 
 (defun create-node (form &optional environment)
   (if (atom form)
@@ -217,16 +220,18 @@
 	     (create-lexical-or-symbol-value-node form environment))
 	    (t (error "Unknown atom form ")))
       (let ((first (first form)))
-	(cond ((eq first '%compile-constant) ;; FIXME, need this for now, just for testing
+	(cond ((eq first '%compile-constant)
 	       (make-immediate-constant-node :value (second form)))
 	      ((eq first 'quote)
-	       (parse-and-create-ref-constant-node form))
+	       (parse-and-create-quoted-node form))
 	      ((eq first 'lambda)
 	       (create-lambda-node form environment))
 	      ((eq first 'load-time-value)
 	       (create-load-time-value-node form))
-	      ((eq first '%compile-time-constant)
+	      ((eq first '%compile-time-constant) ; this is used for VMM allocated objects
 	       (create-compile-time-constant-node form))
+	      ((eq first '%function) ; using this to set SYMBOL-VALUE at load time when defining function
+	       o(create-fun-rip-relative-node form))
 	      ((eq first 'if)
 	       (create-if-node form environment))
 	      ((or (eq first 'let)
@@ -241,8 +246,3 @@
 	      ((eq first 'go)
 	       (create-go-node form))
 	      (t (create-call-node form environment))))))
-
-;;; TODO
-;; RETURN
-;; check syntax
-;; check for t nil as arguments
