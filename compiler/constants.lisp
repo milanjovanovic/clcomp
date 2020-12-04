@@ -19,9 +19,9 @@
 
 
 (defparameter *extended-tags*
-  '((simple-array 209)
-    (string 217)
-    (struct 240)))
+  '((struct 199)
+    (simple-array 209)
+    (string 217)))
 
 (defparameter *largest-extended-tag* 249)
 

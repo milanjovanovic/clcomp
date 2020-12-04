@@ -1,5 +1,5 @@
-;; we need $DEFUN insteda of DEFUN because at this point we still don't have ENV setup
-;; side  effect that we can't use FUNCALL on functions defined with $DEFUN
+;; we need $DEFUN instead of DEFUN because at this point we still don't have ENV setup
+;; side  effect is that we can't use FUNCALL on symbol for functions defined with $DEFUN
 ;; FIXME
 ($defun %get-env ()
   (declare (inline %get-env))

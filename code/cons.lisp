@@ -45,6 +45,11 @@
 (defun cadddr (cons)
   (car (cdr (cdr (cdr cons)))))
 
+(defun nthcdr (n list)
+  (do ((i 0 (+ i 1))
+       (cdr list (cdr cdr)))
+      ((or (null cdr) (= i n)) cdr)))
+
 (defun rplaca (cons e)
   (declare (inline listp rplaca))
   (if (listp cons)
@@ -148,18 +153,71 @@
 	   (null place))
        (cadr place))))
 
+(defun %list-find (item list from-end test test-not start end key)
+  (let* ((test (or test 'eql))
+	 (start (or start 0))
+	 (end (or end -1))
+	 (list (if start
+		   (nthcdr start list)
+		   list))
+	 (index (+ 0 (if start start 0)))
+	 (elem nil))
+    (dolist (e list)
+      (when (= index end)
+	(return-from %list-find elem))
+      (let* ((ek (if key (funcall key e) e))
+	     (res (if test-not
+		      (not (funcall test-not item ek))
+		      (funcall test item ek))))
+	(when res
+	  (if from-end
+	      (setf elem e)
+	      (return-from %list-find e)))
+	(setf index (+ index 1))))
+    elem))
 
-;; FIXME, just simple version on list so we can compile
-(defun find (item sequence &key from-end test test-not start end key)
-  (dolist (e sequence)
-    (when (eql e item)
-      (return-from find e))))
+(defun %array-find (item array from-end test test-not start end key)
+  (let* ((array-last-index (- (array-total-size array) 1))
+	 (test (or test 'eql))
+	 (start (or start 0))
+	 (end (or end -1))
+	 (elem nil))
+    (do* ((index start (+ 1 index))
+	  (e (aref array index) (aref array index)))
+	 (nil)
+      (when (= index end)
+	(return-from %array-find elem))
+      (let* ((ek (if key (funcall key e) e))
+	     (res (if test-not
+		      (not (funcall test-not item ek))
+		      (funcall test item ek))))
+	(when res
+	  (if from-end
+	      (setf elem e)
+	      (return-from %array-find e)))
+	(when (= index array-last-index)
+	  (return-from %array-find elem))))))
 
-;;FIXME for now just what we need in runtime-support.lisp
-(defun assoc (item alist &key key test test-not)
+(defun find (item sequence &key from-end (test 'eql) test-not start end key)
+  (when sequence
+    (cond ((listp sequence)
+	   (%list-find item sequence from-end test test-not start end key ))
+	  ((arrayp sequence)
+	   (%array-find item sequence from-end test test-not start end key ))
+	  (t (error "Not a SEQUENCE")))))
+
+(defun assoc (item alist &key key (test 'eql) test-not)
   (dolist (elem alist)
-    (when (eq (car elem) item)
-      (return-from assoc elem))))
+    (let* ((kelem (if key (funcall key elem) elem))
+	   (res (if test-not
+		    (not (funcall test-not item (car kelem)))
+		    (funcall test item (car kelem)))))
+      (when res
+	(return-from assoc elem)))))
+
+;;; FIXME
+(defun member (item list &key key (test 'eql) test-not)
+  (error "Not implemented yet"))
 
 (defun cars-and-cdrs (lists)
   (let ((cars nil)

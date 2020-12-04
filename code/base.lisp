@@ -36,13 +36,26 @@
 	    ((arrayp x) (%array-type x))
 	    (t 'unknown))))
 
-;;; Not so simple to implement
+;;;FIXME, just simple implementation for now
 (defun typep (object type)
-  (error "Not implemented"))
+  (if (consp type)
+      (error "Not implemented yet")
+      (if (eq type t)
+	  t
+	  (cond 
+	    ((or (eq type 'fixnum)
+		 (eq type 'number)
+		 (eq type 'integer)) (fixnump object)) ;; FIXME, for now we only have fuxnum
+	    ((eq type 'cons) (consp object))
+	    ((eq type 'list) (listp object))
+	    ((eq type 'keyword) (keywordp object))
+	    ((eq type 'symbol) (symbolp object))
+	    ((eq type 'array) (arrayp object))
+	    (t (eq type (type-of object)))))))
 
-;;; FIXME
+;;; FIXME, should be a macro
 (defun check-type (object type)
-  t)
+  (error "Not implemented yet"))
 
 (defun eq (x y)
   (declare (inline eq))

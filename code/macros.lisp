@@ -66,12 +66,17 @@
 	      (list 'if f f (cons 'or (cddr form)))))))
 (setf (gethash 'or *macros*) 'macro-or)
 
+(defun macro-unless (form)
+  (list 'if (second form)
+	nil
+	(cons 'progn (cddr form))))
+(setf (gethash 'unless *macros*) 'macro-unless)
+
 (defun macro-named-lambda (form)
   (list 'lambda (third form)
 	(fourth form)
 	(cons 'block (cons (second form) (cddddr form)))))
 (setf (gethash 'named-lambda *macros*) 'macro-named-lambda)
-
 
 (defun macro-and (form)
   (if (= 2 (length form))
@@ -113,9 +118,9 @@
 	  (list 'and (list '%structp 'obj)
 		(list 'or
 		      (list 'eq (list 'quote struct) (list '%struct-type 'obj))
-		      (list '%%struct-layout-has-type (list 'quote struct) (list '%struct-layout 'obj)))))))
+		      (list '%%struct-layout-has-type (list 'quote struct) (list '%struct-layout 'obj)))
+		t))))
 
-;;; $struct-p is wrong, need to check struct-layout
 (defun macro-defstruct (form)
   (let* ((name (get-struct-name form))
 	 (parent (get-parent-struct form))
@@ -138,12 +143,12 @@
 		      (writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
 		  (push (list 'defun reader-sym
 			      (list 'instance)
-			      ;; (list 'check-type 'instance (list 'quote name))
+			      (list '%check-struct-type 'instance (list 'quote name))
 			      (list '%get-struct-slot 'instance index))
 			slot-form)
 		  (push (list 'defun writer-sym
 			      (list 'instance 'value)
-			      ;; (list 'check-type 'instance (list 'quote name))
+			      (list '%check-struct-type 'instance (list 'quote name))
 			      (list '%set-struct-slot 'instance index 'value))
 			slot-form)
 		  (push (list 'eval-when (list :compile-toplevel :load-toplevel :execute)

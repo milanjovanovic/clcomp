@@ -21,3 +21,8 @@
 (defun %set-struct-slot (struct slot-index value)
   (declare (inline %set-struct-slot))
   (%set-struct-slot struct slot-index value))
+
+(defun %check-struct-type (instance type)
+  (unless (or (eq type (%struct-type instance))
+	      (%%struct-layout-has-type type (%struct-layout instance)))
+    (error (concatenate 'string "Argument is not a " (symbol-name type)))))
