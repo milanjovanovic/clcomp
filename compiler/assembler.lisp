@@ -5,6 +5,7 @@
 ;;; BASIC ARCH DEFINITIONS
 
 (defparameter *registers* (make-hash-table))
+(defparameter *xmm-registers* (make-hash-table))
 
 (defun defregister (registers register-bits extend-bit)
   (let ((bits 128))
@@ -13,7 +14,8 @@
       (setf (gethash register *registers*) (list register-bits extend-bit bits registers)))))
 
 (defun get-register (register)
-  (gethash register *registers*))
+  (or (gethash register *registers*)
+      (gethash register *xmm-registers*)))
 
 (defun get-register-bits (register)
   (first (get-register register)))
@@ -58,6 +60,33 @@
 (defregister '(:r14 :r14d :r14w :r14l) #b110 #b1)
 (defregister '(:r15 :r15d :r15w :r15l) #b111 #b1)
 
+
+(defun def-xmm-register (register register-bits extend-bit)
+  (setf (gethash  register *xmm-registers*) (list register-bits extend-bit)))
+
+(defun get-xmm-register (register)
+  (gethash register *xmm-registers*))
+
+(def-xmm-register :xmm0 #b000 #b0)
+(def-xmm-register :xmm1 #b001 #b0)
+(def-xmm-register :xmm2 #b010 #b0)
+(def-xmm-register :xmm3 #b011 #b0)
+(def-xmm-register :xmm4 #b100 #b0)
+(def-xmm-register :xmm5 #b101 #b0)
+(def-xmm-register :xmm6 #b110 #b0)
+(def-xmm-register :xmm7 #b111 #b0)
+(def-xmm-register :xmm8 #b000 #b1)
+(def-xmm-register :xmm9 #b001 #b1)
+(def-xmm-register :xmm10 #b010 #b1)
+(def-xmm-register :xmm11 #b011 #b1)
+(def-xmm-register :xmm12 #b100 #b1)
+(def-xmm-register :xmm13 #b101 #b1)
+(def-xmm-register :xmm14 #b110 #b1)
+(def-xmm-register :xmm15 #b111 #b1)
+
+
+
+
 ;;; for runtime register selecting
 ;;;
 (defun %q (reg)
@@ -83,15 +112,19 @@
   (or (eq reg :rsp)
       (eq reg :r12)))
 
-(defparameter *tmpl-reg-operands* '(:reg8 :reg16 :reg32 :reg64))
+(defparameter *tmpl-reg-operands* '(:reg8 :reg16 :reg32 :reg64 :xmmreg))
 
 (defun register-type (register)
-  (let ((register-bits (get-register-size register)))
-    (case register-bits
-      (8 :reg8)
-      (16 :reg16)
-      (32 :reg32)
-      (64 :reg64))))
+  (let ((register-bits (get-register-size register))
+	(xmm-reg-config (get-xmm-register register)))
+    (if register-bits
+	(case register-bits
+	  (8 :reg8)
+	  (16 :reg16)
+	  (32 :reg32)
+	  (64 :reg64))
+	(when xmm-reg-config
+	  :xmmreg))))
 
 (defun is-64bit (register-operand)
   (eq :reg64 (register-type register-operand)))
@@ -148,7 +181,7 @@
     ((qword :qword) 64)))
 
 (defun is-nbyte-descriptor (what)
-  (member what '(:byte :word :dword :qword)))
+  (member what '(:byte :word :dword :qword :xmmword)))
 
 (defun imm-is-of-type (immediate type)
   (let ((unsigned-template (unsigned-immediate-template-p type)))
@@ -291,8 +324,8 @@
 
 (defun tmpl-op-address? (template-operand)
   (if (consp template-operand)
-      (intersection template-operand '(:addr8 :addr16 :addr32 :addr64 :addr))
-      (member template-operand '(:addr8 :addr16 :addr32 :addr64 :addr))))
+      (intersection template-operand '(:addr8 :addr16 :addr32 :addr64 :addr :xmmaddr))
+      (member template-operand '(:addr8 :addr16 :addr32 :addr64 :addr :xmmaddr))))
 
 (defun match-immediate-type (type operand)
   (and (numberp operand)
@@ -312,6 +345,10 @@
 	       (= (length operand) 5)
 	       (= (address-bits type)
 		  (nbyte-bits (first operand)))))
+	 ((eq type :xmmaddr)
+	  (and (typep operand 'list)
+	       (= (length operand) 5)
+	       (eq (first operand) :xmmword)))
 	 ((immediate-template-operand? type)
 	  (and (typep operand 'number)
 	       (imm-is-of-type operand type)))
@@ -347,7 +384,7 @@
 	 (if (is-register operand)
 	     0
 	     10))
-	((member template-operand '(:addr :addr64 :addr32 :addr16 :addr8))
+	((member template-operand '(:addr :addr64 :addr32 :addr16 :addr8 :xmmaddr))
 	 (if (op-address? operand)
 	     0
 	     10))
@@ -499,6 +536,7 @@
 	     (progn
 	       (setf (ldb *modrm.rm.byte* modrm) (get-register-bits base))
 	       (when (extended-register? base)
+		 (setf rex (or rex *rex*))
 		 (setf (ldb (rex-ext-byte *modrm.rm.position*) rex) #b1))
 	       (list rex modrm sib displacement))))
 	
@@ -564,11 +602,12 @@
 	  (if addr-operand
 	      (progn
 		(when (and (eq (ea-address-size addr-operand) :qword)
+			   (not (eq (ea-address-size addr-operand) :xmmword))
 			   (not (contain-flag '+v64 flags)))
 		  (setf rex (or rex *rex*))
 		  (setf (ldb *rex.w.byte* rex) #b1))		
-	       (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm addr-operand)
-		 (list opcode rex modrm sib displacement immediate)))
+		(destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm addr-operand)
+		  (list opcode rex modrm sib displacement immediate)))
 	      (progn
 		(when modrm
 		  (setf (ldb *modrm.mod.byte* modrm) #b11))
@@ -594,6 +633,7 @@
 	((op-address? operand)
 	 (let ((rex (or rex (rex #b0 #b0 #b0 #b0))))
 	   (when (and (eq (ea-address-size operand) :qword)
+		      (not (eq (ea-address-size operand) :xmmword))
 	   	      (not (contain-flag '+v64 flags)))
 	     (setf (ldb *rex.w.byte* rex) #b1))
 	   (destructuring-bind (rex modrm sib displacement) (encode-effective-memory-address rex modrm operand)

@@ -115,6 +115,16 @@
    (list (make-instruction :sar :R12 :CL) '(#x49 #xd3 #xfc))
    (list (make-instruction :sar :RCX :CL) '(#x48 #xd3 #xf9))
    (list (make-instruction :sar :R14 :CL) '(#x49 #xd3 #xfe))
+
+   ;; SSE1
+   (list (make-instruction :movups :xmm0 (@ :xmmword :rax nil nil nil)) '(#x0f #x10 #x00))
+   (list (make-instruction :movups :xmm1 (@ :xmmword :rax nil nil nil)) '(#x0f #x10 #x08))
+   (list (make-instruction :movups :xmm10 (@ :xmmword :rax nil nil nil)) '(#x44 #x0f #x10 #x10))
+   (list (make-instruction :movups :xmm10 (@ :xmmword :r10 nil nil nil)) '(#x45 #x0f #x10 #x12))
+   
+   (list (make-instruction :movups :xmm0 (@ :xmmword :r10 nil nil nil)) '(#x41 #x0f #x10 #x02))
+   (list (make-instruction :movups :xmm14 :xmm12) '(#x45 #x0f #x10 #xf4 ))
+   (list (make-instruction :movups :xmm0 (@ :xmmword :rip nil nil 10)) '(#x0f #x10 #x05 #x0a #x00 #x00 #x00))
    ))
 
 (defun run-instruction-tests ()

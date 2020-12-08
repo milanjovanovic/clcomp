@@ -2,6 +2,11 @@
 
 ;;; instruction templates
 
+;;;; NOTE
+;;;; it's *CRUCIA(L in assembler to match operands with documentation
+;;;; if arguments are MEM/REG in documentation arguments are in different order in ModRM byte
+;;; (:reg64 (:reg64 :addr)) -> example, if we have (:reg64 :reg64) assembler will produce different bytecode
+;;; 
 ;;; ADD
 (define-inst-template :add ((:reg64 :addr) :reg64) ()
 		      nil nil #x01 nil)
@@ -283,3 +288,11 @@
 
 (define-inst-template :ud2 () ()
 		      nil nil '(#x0f #x0b) nil)
+
+
+;;; SSE1
+(define-inst-template :cvtsi2ss (:xmmreg :reg64) ()
+		      #xf3 #x0f #x2a nil)
+
+(define-inst-template :movups (:xmmreg (:xmmreg :xmmaddr)) ()
+		      nil #x0f #x10 nil)
