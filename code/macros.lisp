@@ -85,9 +85,6 @@
 		       (cdddr form)))))
 (setf (gethash 'and *macros*) 'macro-and)
 
-;;; only simple form for now (defstruct name a b c)
-
-;; FIXME, expects :include to be second form
 (defun get-parent-struct (form)
   (when (consp (second form))
     (getf (second (second form)) :include)))
@@ -96,6 +93,11 @@
   (if (consp (second form))
       (first (second form))
       (second form)))
+
+(defun %slot-def-name (slot)
+  (if (consp slot)
+      (first slot)
+      slot))
 
 (defun create-%make-struct-body (struct slots parent-struct)
   (let ((constructor-name (intern (concatenate 'string "MAKE-" (symbol-name struct)))))
@@ -106,7 +108,7 @@
 		(cons 'progn (reverse (let ((set-form nil)
 					    (index 0))
 					(dolist (slot slots)
-					  (push (list '%set-struct-slot 's index slot) set-form)
+					  (push (list '%set-struct-slot 's index (%slot-def-name slot)) set-form)
 					  (incf index))
 					set-form)))
 		's))))
@@ -138,31 +140,27 @@
 	     (create-struct-type-predicate name))
 	    (let ((slot-form nil)
 		  (index 0))
-	      (dolist (slot slots)
-		(let ((reader-sym (intern (concatenate 'string (symbol-name name) "-" (symbol-name slot))) )
-		      (writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
-		  (push (list 'defun reader-sym
-			      (list 'instance)
-			      (list '%check-struct-type 'instance (list 'quote name))
-			      (list '%get-struct-slot 'instance index))
-			slot-form)
-		  (push (list 'defun writer-sym
-			      (list 'instance 'value)
-			      (list '%check-struct-type 'instance (list 'quote name))
-			      (list '%set-struct-slot 'instance index 'value))
-			slot-form)
-		  (push (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
-			      (list 'defsetf reader-sym writer-sym)) slot-form))
+	      (dolist (slotf slots)
+		(let ((slot (if (consp slotf)
+				(first slotf)
+				slotf)))
+		  (let ((reader-sym (intern (concatenate 'string (symbol-name name) "-" (symbol-name slot))) )
+			(writer-sym (intern (concatenate 'string "SET-" (symbol-name name) "-" (symbol-name slot)))))
+		    (push (list 'defun reader-sym
+				(list 'instance)
+				(list '%check-struct-type 'instance (list 'quote name))
+				(list '%get-struct-slot 'instance index))
+			  slot-form)
+		    (push (list 'defun writer-sym
+				(list 'instance 'value)
+				(list '%check-struct-type 'instance (list 'quote name))
+				(list '%set-struct-slot 'instance index 'value))
+			  slot-form)
+		    (push (list 'eval-when (list :compile-toplevel :load-toplevel :execute)
+				(list 'defsetf reader-sym writer-sym)) slot-form)))
 		(setf index (+ 1 index)))
 	      (reverse slot-form)))))
 (setf (gethash 'defstruct *macros*) 'macro-defstruct)
-
-(defun macro-unless (form)
-  (list 'if (second form)
-	nil
-	(third form)))
-(setf (gethash 'unless *macros*) 'macro-unless)
-
 
 (defun macro-when (form)
   (list 'if (second form)

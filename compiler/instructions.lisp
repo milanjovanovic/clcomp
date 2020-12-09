@@ -60,9 +60,18 @@
 (define-inst-template :neg (:reg64) ()
 		      nil nil #xF7 #x18)
 
-;;; IMUL
+;;; MUL
 (define-inst-template :imul (:reg64 (:reg64 :addr)) ()
 		      nil #x0F #xAF nil)
+
+
+;;; DIV
+(define-inst-template :idiv (:rax (:reg64 :addr)) ()
+		      nil nil #xF7 #x38)
+
+
+(define-inst-template :cqo () ()
+		      nil nil '(#x48 #x99) nil)
 
 ;;; LOGICAL
 (define-inst-template :xor ((:reg64 :addr) :reg64) ()

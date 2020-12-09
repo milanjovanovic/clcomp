@@ -128,6 +128,14 @@
     (logand (ash integer (- start))
 	    (- (ash 1 size) 1))))
 
+(defun evenp (number)
+  (declare (inline %fixnum-evenp))
+  (%fixnum-evenp number))
+
+(defun oddp (number)
+  (declare (inline %fixnum-evenp))
+  (not (%fixnum-evenp number)))
+
 ;; (defun dpb (newbyte bytespec integer)
 ;;   (logior (ash newbyte (cdr bytespec) integer)))
 

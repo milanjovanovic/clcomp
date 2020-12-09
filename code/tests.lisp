@@ -52,6 +52,9 @@
 
 (defstruct (baz (:include bar)) d)
 
+(defstruct bla (a 1) (b 2))
+(defstruct (cla (:include bla)) (c 10))
+
 (defparameter *x* 100)
 
 (defun baz (a b &optional c (d *x*))

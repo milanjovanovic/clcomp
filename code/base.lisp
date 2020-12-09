@@ -7,15 +7,18 @@
   (%apply function args))
 
 (defun apply (function arg &rest arguments)
-  (cond ((atom arguments)
-	 (%apply function arg))
-	((atom (cdr arguments))
-	 (%apply function (cons arg (car arguments))))
-	(t (do* ((a1 arguments a2)
-		 (a2 (cdr arguments) (cdr a2)))
-		((atom (cdr a2))
-		 (rplacd a1 (car a2))
-		 (%apply function (cons arg arguments)))))))
+  (let ((function (if (symbolp function)
+		      (symbol-function function)
+		      function)))
+    (cond ((atom arguments)
+	   (%apply function arg))
+	  ((atom (cdr arguments))
+	   (%apply function (cons arg (car arguments))))
+	  (t (do* ((a1 arguments a2)
+		   (a2 (cdr arguments) (cdr a2)))
+		  ((atom (cdr a2))
+		   (rplacd a1 (car a2))
+		   (%apply function (cons arg arguments))))))))
 
 (defun funcall (fun &rest args)
   (if (symbolp fun)
@@ -51,6 +54,8 @@
 	    ((eq type 'keyword) (keywordp object))
 	    ((eq type 'symbol) (symbolp object))
 	    ((eq type 'array) (arrayp object))
+	    ;; FIXME, what about STRUCTURES here ???
+	    ((%structp object) "FIXME")
 	    (t (eq type (type-of object)))))))
 
 ;;; FIXME, should be a macro
@@ -93,6 +98,7 @@
 
 (defun sxhash (x)
   (cond ((null x) 0)
+	((eq x t) 1)
 	((fixnump x) (abs x))
 	((consp x) (%sxhash-cons x))
 	((stringp x) (%sxhash-string x))
