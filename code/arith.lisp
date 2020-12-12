@@ -136,6 +136,10 @@
   (declare (inline %fixnum-evenp))
   (not (%fixnum-evenp number)))
 
+(defun rem (n1 n2)
+  (declare (inline %fixnum-fixnum-remainder))
+  (%fixnum-fixnum-remainder n1 n2))
+
 ;; (defun dpb (newbyte bytespec integer)
 ;;   (logior (ash newbyte (cdr bytespec) integer)))
 

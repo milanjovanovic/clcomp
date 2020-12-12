@@ -144,6 +144,6 @@
   (inst :cqo)
   (inst :idiv :rax arg2)
   (inst :mov res :rax)
-  (inst :sar res *tag-size*)
+  (inst :shl res *tag-size*)
   (inst :pop :rdx)
   (inst :pop :rax))
