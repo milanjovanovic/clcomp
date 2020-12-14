@@ -50,6 +50,7 @@
 (defstruct immediate-constant-node value)
 (defstruct ref-constant-node form node)
 (defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
+(defstruct lexical-binding-node name form)
 (defstruct if-node test-form true-form false-form)
 (defstruct let-node bindings form sequential)
 (defstruct progn-node forms)
@@ -97,8 +98,8 @@
 
 (defun create-lexical-or-dynamic-node (form environment)
   (if (lexical-binding-exist environment (first form))
-      (make-lexical-var-node :name (first form) :form (create-node (second form) environment))
-      (make-lexical-var-node :name (first form) :form (create-node (second form) environment))
+      (make-lexical-binding-node :name (first form) :form (create-node (second form) environment))
+      (make-lexical-binding-node :name (first form) :form (create-node (second form) environment))
       ;; FIXME, need dynamic environment here to know if variable already has dynamic binding
       ;; (make-dynamic-var-node :name (first form) :form (create-node (second form)))
       ))
