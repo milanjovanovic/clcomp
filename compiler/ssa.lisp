@@ -14,6 +14,8 @@
 
 (defstruct ssa-form index)
 (defstruct (ssa-load (:include ssa-form)) to from)
+(defstruct (ssa-go (:include ssa-form)) label)
+(defstruct (ssa-label (:include ssa-form)) label)
 
 (defstruct (ssa-fun-call (:include ssa-form)) fun)
 (defstruct (ssa-unknown-values-fun-call (:include ssa-form)) fun)
@@ -64,7 +66,8 @@
 
 (defparameter *ir-index-counter* 0)
 (defun emit (lambda-ssa ssa block)
-  (declare (ignore lambda-ssa))
+  (declare (ignore lambda-ssa)
+	   (optimize (debug 3)))
   (when (ssa-form-p ssa)
     (setf (ssa-form-index ssa) *ir-index-counter*)
     (incf *ir-index-counter*))
@@ -150,7 +153,8 @@
 (defun emit-lexical-var-node (node lambda-ssa place block)
   (if place
       (emit lambda-ssa (make-ssa-load :to place :from (make-var-place :name (lexical-var-node-name node))) block )
-      (emit lambda-ssa (make-var-place :name (lexical-var-node-name node)) block)))
+      (emit lambda-ssa (make-var-place :name (lexical-var-node-name node)) block))
+  block)
 
 (defun emit-progn-node-ssa (node lambda-ssa place block)
   (do* ((forms (progn-node-forms node) (cdr forms))
@@ -168,7 +172,8 @@
   (pop-labels-env lambda-ssa)
   (if place
       (emit lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
-      (emit lambda-ssa (make-immediate-constant :constant *nil*) block)))
+      (emit lambda-ssa (make-immediate-constant :constant *nil*) block))
+  block)
 
 (defun emit-tagbody-label-node-ssa (node lambda-ssa place block)
   (declare (ignore place))
@@ -176,13 +181,16 @@
     (ssa-add-block lambda-ssa new-block)
     (ssa-connect-blocks block new-block)
     (ssa-add-block-label lambda-ssa new-block (label-node-label node))
+    (emit lambda-ssa (make-ssa-label :label (label-node-label node)) new-block)
     new-block))
 
 (defun emit-go-node-ssa (node lambda-ssa place block)
   (declare (ignore place))
-  (let ((new-block (make-new-ssa-block)))
+  (let ((new-block (make-new-ssa-block))
+	(label-name (label-node-label (go-node-label-node node)) ))
     (ssa-add-block lambda-ssa new-block)
-    (insert-block-jump block (ssa-find-block-index-by-label lambda-ssa (label-node-label (go-node-label-node node))))
+    (insert-block-jump block (ssa-find-block-index-by-label lambda-ssa label-name))
+    (emit lambda-ssa (make-ssa-go :label label-name) block)
     new-block))
 
 (defun emit-setq-node-ssa (node lambda-ssa place block)
