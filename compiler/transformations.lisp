@@ -44,23 +44,23 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; transform sexp expression to structures tree
-
-(defstruct fun-rip-relative-node form)
-(defstruct compile-time-constant-node form)
-(defstruct immediate-constant-node value)
-(defstruct ref-constant-node form node)
-(defstruct lexical-var-node name form rest) ; FIXME, make-fun-argument-node
-(defstruct lexical-binding-node name form)
-(defstruct if-node test-form true-form false-form)
-(defstruct let-node bindings form sequential)
-(defstruct progn-node forms)
-(defstruct call-node function arguments)
-(defstruct block-node name form)
-(defstruct lambda-node name arguments declarations body)
-(defstruct tagbody-node forms)
-(defstruct go-node label-node)
-(defstruct label-node label)
-(defstruct setq-node var form)
+(defstruct tnode)
+(defstruct (fun-rip-relative-node (:include tnode)) form)
+(defstruct (compile-time-constant-node (:include tnode)) form)
+(defstruct (immediate-constant-node (:include tnode)) value)
+(defstruct (ref-constant-node (:include tnode)) form node)
+(defstruct (lexical-var-node (:include tnode)) name form rest) ; FIXME, make-fun-argument-node
+(defstruct (lexical-binding-node (:include tnode)) name form)
+(defstruct (if-node (:include tnode)) test-form true-form false-form)
+(defstruct (let-node (:include tnode)) bindings form sequential)
+(defstruct (progn-node (:include tnode)) forms)
+(defstruct (call-node (:include tnode)) function arguments)
+(defstruct (block-node (:include tnode)) name form)
+(defstruct (lambda-node (:include tnode)) name arguments declarations body)
+(defstruct (tagbody-node (:include tnode)) forms)
+(defstruct (go-node (:include tnode)) label-node)
+(defstruct (label-node (:include tnode)) label)
+(defstruct (setq-node (:include tnode)) var form)
 
 (defun lexical-binding-exist (environment var)
   (dolist (bindings environment)
