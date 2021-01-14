@@ -15,14 +15,16 @@
 (defstruct slabels alist)
 (defstruct ssa-env labels)
 (defstruct lambda-ssa blocks (env (make-ssa-env)))
-(defstruct ssa-block index ir succ jump (defined (make-hash-table)) phis)
+(defstruct ssa-block index ir ssa succ jump defined)
 
 (defstruct ssa-form index)
 (defstruct (ssa-load (:include ssa-form)) to from)
 (defstruct (ssa-go (:include ssa-form)) label)
 (defstruct (ssa-label (:include ssa-form)) label)
 (defstruct (ssa-value (:include ssa-form)) value)
-(defstruct (ssa-return (:include ssa-form)))
+
+(defstruct (ssa-multiple-return (:include ssa-form)))
+(defstruct (ssa-single-return (:include ssa-form)) value)
 
 (defstruct (ssa-fun-call (:include ssa-form)) fun)
 (defstruct (ssa-unknown-values-fun-call (:include ssa-form)) fun)
@@ -33,6 +35,12 @@
 (defun generate-temp-place (&optional (s "T-"))
   (prog1
       (make-temp-place :name (make-symbol (concatenate 'string s (write-to-string *ssa-symbol-counter*))))
+    (incf *ssa-symbol-counter*)))
+
+(defparameter *if-label-counter* 0)
+(defun generate-if-label-symbol ()
+  (prog1
+      (make-symbol (concatenate 'string "IF-NEXT-BLOCK-LABEL-" (write-to-string *ssa-symbol-counter*)))
     (incf *ssa-symbol-counter*)))
 
 (defparameter *ssa-block-counter* 0)
@@ -86,6 +94,7 @@
 	 (test-place (generate-temp-place))
 	 (false-block (make-new-ssa-block))
 	 (true-block (make-new-ssa-block))
+	 (if-label-symbol (generate-if-label-symbol))
 	 (next-block (unless leaf (make-new-ssa-block))))
     (unless leaf
       (ssa-connect-blocks true-block next-block))
@@ -99,6 +108,8 @@
     (emit-ssa (if-node-false-form if-node) lambda-ssa leaf place false-block)
     (insert-block-jump block (ssa-block-index true-block))
     (unless leaf
+      (emit lambda-ssa (make-ssa-label :label if-label-symbol) next-block)
+      (emit lambda-ssa (make-ssa-go :label if-label-symbol) false-block)
       (insert-block-jump false-block (ssa-block-index next-block)))
     (emit lambda-ssa
 	  (make-ssa-if
@@ -112,12 +123,13 @@
     (immediate-constant-node
      (emit lambda-ssa (make-ssa-load :to place
     				     :from node) block)
-     (when leaf (emit lambda-ssa (make-ssa-return) block))
+     (when leaf
+       (emit lambda-ssa (make-ssa-single-return :value place) block))
      block)
     (lexical-var-node
      (emit lambda-ssa (make-ssa-load :to place
     				     :from (make-var-place :name (lexical-var-node-name node))) block)
-     (when leaf (emit lambda-ssa (make-ssa-return) block))
+     (when leaf (emit lambda-ssa (make-ssa-single-return :value place) block))
      block)
     (t (emit-ssa node lambda-ssa leaf place block))))
 
@@ -151,7 +163,7 @@
 		(make-ssa-unknown-values-fun-call :fun fun)
 		block)
 	  (when leaf
-	    (emit lambda-ssa (make-ssa-return) block))
+	    (emit lambda-ssa (make-ssa-multiple-return) block))
 	  block)
 	(progn
 	  (emit lambda-ssa (make-ssa-fun-call :fun fun) block)
@@ -173,18 +185,18 @@
 (defun emit-immediate-node-ssa (node lambda-ssa leaf place block)
   (if place
       (emit lambda-ssa (make-ssa-load :to place :from node) block)
-      (progn
-	(emit lambda-ssa (make-ssa-value :value node) block)
-	(when leaf
-	  (emit lambda-ssa (make-ssa-return) block))))
+      (if leaf
+	  (emit lambda-ssa (make-ssa-single-return :value node) block)
+	  (emit lambda-ssa (make-ssa-value :value node) block)))
   block)
 
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
   (if place
       (emit lambda-ssa (make-ssa-load :to place :from (make-var-place :name (lexical-var-node-name node))) block )
-      (progn (emit lambda-ssa (make-ssa-value :value
-					      (make-var-place :name (lexical-var-node-name node))) block)
-	     (when leaf (emit lambda-ssa (make-ssa-return) block))))
+      (if leaf
+	  (emit lambda-ssa (make-ssa-single-return :value (make-var-place :name (lexical-var-node-name node))) block)
+	  (emit lambda-ssa (make-ssa-value :value
+					   (make-var-place :name (lexical-var-node-name node))) block)))
   block)
 
 (defun emit-progn-node-ssa (node lambda-ssa leaf place block)
@@ -197,37 +209,39 @@
 
 (defun emit-tagbody-node-ssa (node lambda-ssa leaf place block)
   (push-labels-env lambda-ssa)
-  (dolist (form-node (tagbody-node-forms node))
-    (let ((new-block (emit-ssa form-node lambda-ssa nil nil block)))
-      (setf block new-block)))
-  (pop-labels-env lambda-ssa)
-  (if place
-      (emit lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
-      (progn
-	(emit lambda-ssa (make-immediate-constant :constant *nil*) block)
-	(when leaf
-	  (emit lambda-ssa (make-ssa-return) block))))
-  block)
-
-(defun emit-tagbody-label-node-ssa (node lambda-ssa leaf place block)
-  (declare (ignore leaf))
-  (declare (ignore place))
-  (let ((new-block (make-new-ssa-block)))
-    (ssa-add-block lambda-ssa new-block)
-    (ssa-connect-blocks block new-block)
-    (ssa-add-block-label lambda-ssa new-block (label-node-label node))
-    (emit lambda-ssa (make-ssa-label :label (label-node-label node)) new-block)
-    new-block))
+  (let ((labels-blocks (make-hash-table))
+	(current-block block))
+    (dolist (node (tagbody-node-forms node))
+      (when (label-node-p node)
+	(let ((label-block (make-new-ssa-block)))
+	  (ssa-add-block-label lambda-ssa label-block (label-node-label node))
+	  (setf (gethash (label-node-label node) labels-blocks) label-block))))
+    (dolist (form-node (tagbody-node-forms node))
+      (if (label-node-p form-node)
+	  (let ((lblock (gethash (label-node-label form-node) labels-blocks)))
+	    ;; connect previus block with this label block only if there is no direct jump from previous to other block
+	    (ssa-add-block lambda-ssa lblock)
+	    (when (null (ssa-block-jump current-block))
+	      (ssa-connect-blocks current-block lblock))
+	    (setf current-block lblock)
+	    (emit lambda-ssa (make-ssa-label :label (label-node-label form-node)) current-block))
+	  (setf current-block (emit-ssa form-node lambda-ssa nil nil current-block))))
+    (pop-labels-env lambda-ssa)
+    (if place
+	(emit lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
+	(if leaf
+	    (emit lambda-ssa (make-ssa-single-return :value (make-immediate-constant :constant *nil*)) block)
+	    (emit lambda-ssa (make-immediate-constant :constant *nil*) block)))
+    current-block))
 
 (defun emit-go-node-ssa (node lambda-ssa leaf place block)
-  (declare (ignore leaf))
-  (declare (ignore place))
-  (let ((new-block (make-new-ssa-block))
-	(label-name (label-node-label (go-node-label-node node)) ))
-    (ssa-add-block lambda-ssa new-block)
+  (declare (ignore leaf place))
+  (let ((label-name (label-node-label (go-node-label-node node)) ))
     (insert-block-jump block (ssa-find-block-index-by-label lambda-ssa label-name))
     (emit lambda-ssa (make-ssa-go :label label-name) block)
-    new-block))
+    ;; reset successor to nil, if we have GO direct successor in this block is never active
+    (setf (ssa-block-succ block) nil)
+    block))
 
 (defun emit-setq-node-ssa (node lambda-ssa leaf place block)
   (let ((new-block (maybe-emit-direct-load (setq-node-form node)
@@ -259,7 +273,6 @@
     (lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))
     (immediate-constant-node (emit-immediate-node-ssa node lambda-ssa leaf place block))
     (tagbody-node (emit-tagbody-node-ssa node lambda-ssa leaf place block))
-    (label-node (emit-tagbody-label-node-ssa node lambda-ssa leaf place block))
     (go-node (emit-go-node-ssa node lambda-ssa leaf place block))
     (setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))))
 
@@ -275,7 +288,28 @@
 ;;; value numbering
 
 ;;; TESTING
-(defstruct value-numbering-env predecessors blocks-map)
+(defstruct transform-env predecessors blocks-map)
+(defstruct phi operands)
+
+(defun phi-add-operand (phi operand)
+  (push operand (phi-operands phi)))
+
+(defun get-block-def (block symbol)
+  (cdr (assoc symbol (ssa-block-defined block))))
+
+(defun set-block-def (block var value)
+  (let ((cons (assoc var (ssa-block-defined block))))
+    (if cons
+	(setf (cdr cons) value)
+	(setf (ssa-block-defined block)
+	      (acons var value (ssa-block-defined block))))
+    value))
+
+(defun get-block-predecessors (block env)
+  (second (assoc (ssa-block-index block) (transform-env-predecessors env))))
+
+(defun get-block-by-index (index env)
+  (gethash index (transform-env-blocks-map env)))
 
 (defun ssa-add-predecessor (predecessors block-index predecessor)
   (let ((p (assoc block-index predecessors)))
@@ -300,39 +334,86 @@
 	(when jump
 	  (setf predecessors
 		(ssa-add-predecessor predecessors jump (ssa-block-index block))))))
-    (make-value-numbering-env :predecessors predecessors
-			      :blocks-map blocks-map)))
+    (make-transform-env :predecessors predecessors
+			:blocks-map blocks-map)))
 
-
-(defun ssa-define-place (place block env)
+(defun ssa-write-variable (place block env)
   (declare (ignore env))
+  (let ((vplace (generate-temp-place "V-")))
+    (set-block-def block (named-place-name place) vplace)))
+
+(defun try-remove-trivial-phi (phi)
+  (declare (optimize debug))
+  (let ((same nil))
+    (dolist (operand (phi-operands phi))
+      (when (not (or (eq same operand)
+		     (eq operand phi)))
+	(if (not (eq nil operand))
+	    (return-from try-remove-trivial-phi phi)
+	    (setf same operand))))
+    ;; instead of list operands will be atom value
+    (setf (phi-operands phi) same)))
+
+(defun phi-add-operands (place phi predecessors env)
+  (declare (optimize (speed 0) (debug 3)))
+  (dolist (pblock predecessors)
+    (phi-add-operand phi (ssa-read-variable place (get-block-by-index pblock env) env)))
+  (try-remove-trivial-phi phi))
+
+(defun read-variable-recursive (place block env)
+  (let ((predecessors (get-block-predecessors block env)))
+    (when predecessors
+      (if (= (length predecessors) 1)
+	  (set-block-def block (named-place-name place)
+			 (ssa-read-variable place (get-block-by-index (first predecessors) env) env))
+	  (let ((phi (make-phi)))
+	    (set-block-def block (named-place-name place) phi)
+	    (set-block-def block (named-place-name place)
+			   (phi-add-operands place phi predecessors env)))))))
+
+(defun ssa-read-variable (place block env)
+  (declare (optimize (speed 0)))
+  (or (get-block-def block (named-place-name place)) 
+      (read-variable-recursive place block env)))
+
+(defun transform-write (place block env)
+  (declare (optimize (speed 0)))
   (typecase place
-    (named-place (let ((p (generate-temp-place "V-")))
-		   (setf (gethash (named-place-name place)
-				  (ssa-block-defined block)) p)))
+    (named-place
+     (ssa-write-variable place block env))
     (t place)))
 
-(defun ssa-read-place (place block env)
-  (declare (ignore env))  
+(defun transform-read  (place block env)
+  (declare (optimize (speed 0)))
   (typecase place
-    (named-place (or (gethash (named-place-name place) (ssa-block-defined block))
-		     '?))
+    (named-place (ssa-read-variable place block env))
     (t place)))
 
-(defun ssa-transform-ir (block ir env)
-  (typecase ir
-    (ssa-load (print
-	       (make-ssa-load :index (ssa-load-index ir)
-			      :to (ssa-define-place (ssa-load-to ir) block env )
-			      :from (ssa-read-place (ssa-load-from ir) block env ))))
-    (t (print ir))))
+(defun ssa-transform-block-ir (b env)
+  (let ((ssa-ir nil))
+    (dolist (ir (ssa-block-ir b))
+      (let ((irssa (etypecase ir
+		     (ssa-load (make-ssa-load :index (ssa-load-index ir)
+					      :to (transform-write (ssa-load-to ir) b env)
+					      :from (transform-read (ssa-load-from ir) b env)))
+		     (ssa-value (make-ssa-value :index (ssa-value-index ir)
+						:value (transform-read (ssa-value-value ir) b env)))
+		     (ssa-if (make-ssa-if :index (ssa-if-index ir)
+					  :test (transform-read (ssa-if-test ir) b env)
+					  :true-block (ssa-if-true-block ir)))
+		     (ssa-single-return (make-ssa-single-return :index (ssa-single-return-index ir)
+								:value (transform-read (ssa-single-return-value ir) b env)))
+		     (t ir))))
+	(push irssa ssa-ir)))
+    (setf (ssa-block-ssa b) (reverse ssa-ir))))
 
 (defun do-value-numbering (lambda-ssa)
+  (declare (optimize (debug 3) (speed 0)))
   (let ((*ssa-symbol-counter* 0)
 	(env (ssa-make-value-numbering-env lambda-ssa)))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
-      (dolist (ir (ssa-block-ir b))
-	(ssa-transform-ir b ir env)))))
+      (ssa-transform-block-ir b env)))
+  lambda-ssa)
 
 (defun ssa-parse-lambda (lambda-node)
   (let* ((*ssa-block-counter* 0)
@@ -343,4 +424,4 @@
     (ssa-add-block lambda-ssa entry-block)
     (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
-    (transform-to-ssa (ssa-normalize-lambda-ssa lambda-ssa))))
+    (ssa-normalize-lambda-ssa lambda-ssa)))
