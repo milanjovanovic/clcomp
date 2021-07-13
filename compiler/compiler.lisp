@@ -1,6 +1,7 @@
 (in-package #:clcomp)
 
-(declaim (optimize (speed 0) (debug 3)))
+(eval-when (:compile-toplevel :load-toplevel :execute)
+ (declaim (optimize (speed 0) (debug 3))))
 
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *stack-pointer-reg* :RSP)

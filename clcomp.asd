@@ -22,6 +22,7 @@
 	       (:file "compiler/x8664/char")
 	       (:file "compiler/x8664/struct")
 	       (:file "compiler/transformations")
+	       (:file "compiler/ssa")
 	       (:file "compiler/ir")
 	       (:file "compiler/assembling")
 	       (:file "compiler/compiler")
