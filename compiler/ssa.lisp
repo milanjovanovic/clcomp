@@ -44,6 +44,9 @@
 (defstruct (compile-time-fixup (:include fixup)))
 (defstruct (eval-at-load-time-fixup (:include fixup)))
 
+
+(defparameter *debug-stream* t)
+
 (defparameter *ssa-symbol-counter* 0)
 (defun generate-temp-place (&optional (s "T-"))
   (prog1
@@ -54,6 +57,11 @@
 (defun generate-if-label-symbol ()
   (prog1
       (make-symbol (concatenate 'string "IF-NEXT-BLOCK-LABEL-" (write-to-string *ssa-symbol-counter*)))
+    (incf *ssa-symbol-counter*)))
+
+(defun generate-label-symbol ()
+  (prog1
+      (make-symbol (concatenate 'string "REPLACE-LABEL-" (write-to-string *ssa-symbol-counter*)))
     (incf *ssa-symbol-counter*)))
 
 (defparameter *ssa-block-counter* 0)
@@ -84,6 +92,8 @@
   (setf (ssa-block-cond-jump block) jump-block-index))
 
 (defun insert-block-unconditional-jump (block jump-block-index)
+  (if (ssa-block-uncond-jump block)
+      (error "Unconditional jump already exist !"))
   (setf (ssa-block-uncond-jump block) jump-block-index))
 
 (defun pop-labels-env (lambda-ssa)
@@ -125,12 +135,36 @@
 
 (defparameter *ir-index-counter* 0)
 (defun emit (lambda-ssa ssa block)
-  (declare (ignore lambda-ssa)
-	   (optimize (debug 3)))
+  (declare (ignore lambda-ssa))
   (when (ssa-form-p ssa)
     (setf (ssa-form-index ssa) *ir-index-counter*)
     (incf *ir-index-counter*))
   (push ssa (ssa-block-ir block)))
+
+(defun emit-first (lambda-ssa ssa block)
+  (declare (ignore lambda-ssa))
+  (when (ssa-form-p ssa)
+    (setf (ssa-form-index ssa) *ir-index-counter*)
+    (incf *ir-index-counter*))
+  (setf (ssa-block-ir block)
+	(cons ssa (ssa-block-ir block))))
+
+(defun ssa-block-last-instruction (block)
+  (car (last (ssa-block-ir block))))
+
+(defun ssa-block-first-instruction (block)
+  (car (ssa-block-ir block)))
+
+(defun is-last-instr-jump (block)
+  (and (ssa-go-p (ssa-block-last-instruction block))
+       (ssa-block-last-instruction block)))
+
+(defun is-first-instr-label (block)
+  (and (ssa-label-p (ssa-block-first-instruction block))
+       (ssa-block-first-instruction block)))
+
+(defun remove-last-instruction (block)
+  (setf (ssa-block-ir block) (butlast (ssa-block-ir block))))
 
 (defun emit-single-return-sequence (lambda-ssa place block)
   (emit lambda-ssa (make-ssa-load :to (make-return-value-place :index 0) :from place) block)
@@ -142,7 +176,6 @@
 	 (block (emit-ssa test-node lambda-ssa nil test-place block))
 	 (false-block (make-new-ssa-block))
 	 (true-block (make-new-ssa-block))
-	 ;; (if-label-symbol (generate-if-label-symbol))
 	 (next-block (unless leaf (make-new-ssa-block))))
     ;; FIXME, can happen that true-block and next-block are not near each other
     ;; so we need to insert JUMP here
@@ -162,26 +195,12 @@
 	    (ssa-maybe-connect-blocks true-form-ret-block next-block))
 	(if (blocks-have-same-index false-block false-form-ret-block)
 	    (insert-block-unconditional-jump false-block (ssa-block-index next-block))
-	    (insert-block-unconditional-jump false-form-ret-block (ssa-block-index next-block))
-	    ;; (ssa-maybe-connect-blocks false-block next-block)
-	    ;; (ssa-maybe-connect-blocks false-form-ret-block next-block)
-	    ;; (progn
-	    ;;   (emit lambda-ssa (make-ssa-label :label if-label-symbol) next-block)
-	    ;;   (emit lambda-ssa (make-ssa-go :label if-label-symbol) false-block)
-	    ;;   (insert-block-jump false-block (ssa-block-index next-block)))
-	    ;; (insert-block-jump false-form-ret-block (ssa-block-index next-block))
-	    )))
+	    (insert-block-unconditional-jump false-form-ret-block (ssa-block-index next-block)))))
     ;; it's important to add next-block after emiting IR for false and true blocks
     ;; if any of false/true blocks creates new blocks than we keep good block order
     (unless leaf
       (ssa-add-block lambda-ssa next-block))
-    ;; (emit-ssa (if-node-true-form if-node) lambda-ssa leaf place true-block)
-    ;; (emit-ssa (if-node-false-form if-node) lambda-ssa leaf place false-block)
     (insert-block-conditional-jump block (ssa-block-index true-block))
-    ;; (unless leaf
-    ;;   (emit lambda-ssa (make-ssa-label :label if-label-symbol) next-block)
-    ;;   (emit lambda-ssa (make-ssa-go :label if-label-symbol) false-block)
-    ;;   (insert-block-jump false-block (ssa-block-index next-block)))
     (emit lambda-ssa
 	  (make-ssa-if
 	   :test test-place
@@ -295,6 +314,7 @@
 	(setf block (emit-ssa form-node lambda-ssa nil nil block))
 	(setf block (emit-ssa form-node lambda-ssa leaf place block)))))
 
+
 (defun emit-tagbody-node-ssa (node lambda-ssa leaf place block)
   (push-labels-env lambda-ssa)
   (let ((labels-blocks (make-hash-table))
@@ -317,17 +337,18 @@
 		  (make-ssa-label :label (label-node-label form-node))
 		  lblock)
 	    (setf current-block lblock))
-	  (setf current-block (emit-ssa form-node lambda-ssa nil nil current-block))))
+	  (setf current-block (emit-ssa form-node lambda-ssa nil nil current-block)))
+      (setf block current-block))
     (pop-labels-env lambda-ssa)
     (if place
 	(emit lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
 	(if leaf
-	    ;; (emit lambda-ssa (make-ssa-single-return :value (make-immediate-constant :constant *nil*)) block)
 	    (emit-single-return-sequence lambda-ssa (make-immediate-constant :constant *nil*) block )
 	    (emit lambda-ssa (make-immediate-constant :constant *nil*) block)))
     current-block))
 
-;; FIXME, create new block and return it
+;;; FIXME, delete unreachable code
+;;; FIXME, dead code after go will be recorded in new SSA-BLOCK that will be lost without notification
 (defun emit-go-node-ssa (node lambda-ssa leaf place block)
   (declare (ignore leaf place))
   (let ((label-name (label-node-label (go-node-label-node node)) ))
@@ -384,24 +405,52 @@
     (ref-constant-node (emit-ref-constant-node-ssa node lambda-ssa leaf place block))
     (lambda-node "FIXME")))
 
-;;; FIXME, block successors and jumps are messed
-;;; SSA-BLOCK-JUMP undefined
-#+nil(defun ssa-maybe-fix-blocks-connections (lambda-ssa transform-env)
+;;; check all jumps/successors on blocks and reorder if necessary
+;; FIXME, for now we need to check if JUMP form is last block instruction
+;; maybe it's not if dead code exists
+;; dead code can't exist
+(defun maybe-remove-uncond-jump (b1 b2)
+  (when (and b2
+	     (= (ssa-block-uncond-jump b1) (ssa-block-index b2))
+	     (is-last-instr-jump b1))
+    (setf (ssa-block-succ b1) (ssa-block-uncond-jump b1))
+    (setf (ssa-block-uncond-jump b1) nil)
+    (remove-last-instruction b1)
+    (format *debug-stream* "Reseting block unconditional jump to NIL, setting successor to ~A~%" (ssa-block-succ b1))))
+
+(defun maybe-insert-jump-instruction-for-blocks (b1 b2 lambda-ssa)
+  (unless b2
+    (error "Successor block in NIL"))
+  (let ((label-instr (is-first-instr-label b2)))
+    (unless label-instr
+      (setf label-instr (make-ssa-label :label (generate-label-symbol)))
+      (emit-first lambda-ssa label-instr b2)
+      (label-ssa-block b2 (ssa-label-label label-instr)))	
+    (emit lambda-ssa (make-ssa-go :label (ssa-label-label label-instr)) b1)))
+
+(defun maybe-insert-jump-for-successor (b1 next-block lambda-ssa)
+  (let ((b1-succ (ssa-block-succ b1))
+	(next-block-index (and next-block (ssa-block-index next-block))))
+    (when (or (null next-block-index)
+	      (/= b1-succ next-block-index))
+      (insert-block-unconditional-jump b1 b1-succ)
+      (setf (ssa-block-succ b1) nil)
+      (format *debug-stream* "Changing block ~A successor to uncond-jump to ~A~%" (ssa-block-index b1) b1-succ)
+      (maybe-insert-jump-instruction-for-blocks b1 (ssa-find-block-by-index lambda-ssa b1-succ) lambda-ssa))))
+
+(defun ssa-maybe-fix-blocks-connections (lambda-ssa)
   (let ((blocks (lambda-ssa-blocks lambda-ssa)))
     (do* ((bs blocks (cdr bs))
 	  (b1 (first bs) (first bs))
 	  (b2 (second bs) (second bs)))
 	 ((null bs))
-      (when b2
-	(let ((b1-succ (ssa-block-succ b1))
-	      (b1-jump (ssa-block-jump b1))
-	      (b1-index (ssa-block-index b1))
-	      (b2-index (ssa-block-index b2)))
-	  (when (and b1-succ (/= b1-succ b2-index))
-	    (let ((b1-last-inst (car (last (ssa-block-ssa b1))))
-		  (b2-label-inst (first (ssa-block-ssa b2))))
-	      (when (ssa-go-p b1-last-inst)
-		(let ((go-label (ssa-go-label b1-last-inst))))))))))))
+      (let ((b1-succ (ssa-block-succ b1))
+	    ;; (b1-cond-jump (ssa-block-cond-jump b1))
+	    (b1-uncond-jump (ssa-block-uncond-jump b1)))
+	(when b1-succ
+	  (maybe-insert-jump-for-successor b1 b2 lambda-ssa))
+	(when b1-uncond-jump
+	  (maybe-remove-uncond-jump b1 b2))))))
 
 (defun ssa-normalize-lambda-ssa (lambda-ssa)
   (let ((blocks nil))
@@ -593,7 +642,6 @@
       (setf (gethash (ssa-block-index block) index-map) block))
     (setf (lambda-ssa-blocks-index lambda-ssa) index-map)))
 
-(defparameter *ssa* nil)
 (defun ssa-parse-lambda (lambda-node)
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
@@ -605,55 +653,13 @@
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (ssa-normalize-lambda-ssa lambda-ssa)
     (ssa-lambda-index-blocks lambda-ssa)
+    (ssa-maybe-fix-blocks-connections lambda-ssa)
     (let ((lambda-ssa-env (ssa-make-value-numbering-env lambda-ssa)))
       (do-value-numbering lambda-ssa lambda-ssa-env)
       (ssa-reset-original-ir lambda-ssa))
-    (setf *ssa* lambda-ssa)
     lambda-ssa))
 
 (defstruct intervals)
 
 (defun add-interval ())
 ;;; lifetime intervals
-
-(defun build-intervals (lambda-ssa)
-  (let ((ssa-blocks (lambda-ssa-blocks lambda-ss)))
-    (dolist (sblock ssa-blocks)
-      (let ((li))))))
-
-;; (defun get-block-live-in (ssa-block)
-;;   (or (ssa-block-live-in ssa-block)
-;;       ))
-
-#+nil(defun ssa-block-successors (ssa-block lambda-ssa)
-  (mapcar (lambda (index)
-	    (ssa-find-block-by-index lambda-ssa index))
-	  (remove-if #'null (list (ssa-block-jump ssa-block)
-				  (ssa-block-succ ssa-block)))))
-
-#+nil(defun ssa-build-intervals (lambda-ssa)
-  (dolist (ssa-block (reverse (lambda-ssa-blocks lambda-ssa)))
-    (let ((block-successors (ssa-block-successors ssa-block lambda-ssa)))
-      block-successors)))
-
-
-#+nil(ssa-parse-lambda (create-node (clcomp-macroexpand '(lambda (x)
-							     (let ((c 1))
-							       (if x
-								   (if x
-								       (setf c 2)
-								       (setf c 3))
-								   (setf c 3))
-							       (foo 4))))))
-
-#+nil(ssa-parse-lambda (create-node (clcomp-macroexpand '(lambda (x)
-					   (let ((c 1))
-					     (tagbody 
-					      start
-						(if x
-						    (if x
-							(setf c 2)
-							(setf c 3))
-						    (setf c 3))
-					      foo
-						(go start)))))))
