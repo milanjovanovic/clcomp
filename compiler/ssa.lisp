@@ -14,20 +14,23 @@
 (defstruct (return-value-place (:include fixed-place)) index)
 (defstruct (argument-count-place (:include fixed-place)))
 
-(defstruct (temp-place (:include named-place)))
+(defstruct (virtual-place (:include named-place)))
 (defstruct (var-place (:include named-place)))
 (defstruct (fixup-place (:include named-place)))
 
 (defstruct slabels alist)
 (defstruct ssa-env labels)
 (defstruct lambda-ssa blocks blocks-index (env (make-ssa-env)) fixups sub-lambdas)
-(defstruct ssa-block index ir ssa succ cond-jump uncond-jump label defined live-in)
+(defstruct ssa-block index ir ssa succ cond-jump uncond-jump label defined live-in virtuals)
 
 (defstruct ssa-form index)
-(defstruct (ssa-load (:include ssa-form)) to from)
+(defstruct (ssa-form-rw (:include ssa-form)))
+
+(defstruct (ssa-load (:include ssa-form-rw)) to from)
 (defstruct (ssa-go (:include ssa-form)) label)
 (defstruct (ssa-label (:include ssa-form)) label)
-(defstruct (ssa-value (:include ssa-form)) value)
+;;; do we need SSA-VALUE ??
+(defstruct (ssa-value (:include ssa-form-rw)) value)
 (defstruct (ssa-return (:include ssa-form)))
 
 (defstruct (ssa-multiple-return (:include ssa-form)))
@@ -38,7 +41,7 @@
 (defstruct (ssa-unknown-values-fun-call (:include ssa-fun-call)))
 (defstruct (ssa-known-values-fun-call (:include ssa-fun-call)) min-values)
 
-(defstruct (ssa-if (:include ssa-form)) test true-block)
+(defstruct (ssa-if (:include ssa-form-rw)) test true-block)
 
 (defstruct fixup name)
 (defstruct (compile-time-fixup (:include fixup)))
@@ -47,10 +50,14 @@
 
 (defparameter *debug-stream* t)
 
+(defun named-place-equal (n1 n2)
+  (eq (named-place-name n1)
+      (named-place-name n2)))
+
 (defparameter *ssa-symbol-counter* 0)
-(defun generate-temp-place (&optional (s "T-"))
+(defun generate-virtual-place (&optional (s "T-"))
   (prog1
-      (make-temp-place :name (make-symbol (concatenate 'string s (write-to-string *ssa-symbol-counter*))))
+      (make-virtual-place :name (make-symbol (concatenate 'string s (write-to-string *ssa-symbol-counter*))))
     (incf *ssa-symbol-counter*)))
 
 (defparameter *if-label-counter* 0)
@@ -150,10 +157,10 @@
 	(cons ssa (ssa-block-ir block))))
 
 (defun ssa-block-last-instruction (block)
-  (car (last (ssa-block-ir block))))
+  (car (last (ssa-block-ssa block))))
 
 (defun ssa-block-first-instruction (block)
-  (car (ssa-block-ir block)))
+  (car (ssa-block-ssa block)))
 
 (defun is-last-instr-jump (block)
   (and (ssa-go-p (ssa-block-last-instruction block))
@@ -164,7 +171,7 @@
        (ssa-block-first-instruction block)))
 
 (defun remove-last-instruction (block)
-  (setf (ssa-block-ir block) (butlast (ssa-block-ir block))))
+  (setf (ssa-block-ssa block) (butlast (ssa-block-ssa block))))
 
 (defun emit-single-return-sequence (lambda-ssa place block)
   (emit lambda-ssa (make-ssa-load :to (make-return-value-place :index 0) :from place) block)
@@ -172,7 +179,7 @@
 
 (defun emit-if-node-ssa (if-node lambda-ssa leaf place block)
   (let* ((test-node (if-node-test-form if-node))
-	 (test-place (generate-temp-place))
+	 (test-place (generate-virtual-place))
 	 (block (emit-ssa test-node lambda-ssa nil test-place block))
 	 (false-block (make-new-ssa-block))
 	 (true-block (make-new-ssa-block))
@@ -252,7 +259,7 @@
       (let ((direct-place (make-direct-place-or-nil arg)))
 	(if direct-place
 	    (push direct-place args-places)
-	    (let* ((place (generate-temp-place))
+	    (let* ((place (generate-virtual-place))
 		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
 	      (setf block new-block)
 	      (push place args-places)))))
@@ -452,22 +459,27 @@
 	(when b1-uncond-jump
 	  (maybe-remove-uncond-jump b1 b2))))))
 
+
 (defun ssa-normalize-lambda-ssa (lambda-ssa)
   (let ((blocks nil))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
       (setf (ssa-block-ir b)
 	    (reverse (ssa-block-ir b)))
       (push b blocks))
-    (setf (lambda-ssa-blocks lambda-ssa) blocks))
+    (setf (lambda-ssa-blocks lambda-ssa) blocks)
+    (let ((ir-index -1))
+      (dolist (b blocks)
+	;; reindex instruction
+	(dolist (ir (ssa-block-ir b))
+	  (setf (ssa-form-index ir) (incf ir-index ))))))
   lambda-ssa)
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; value numbering
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defstruct transform-env predecessors blocks-map)
-(defstruct phi operands (place (generate-temp-place)))
+(defstruct phi operands (place (generate-virtual-place)))
 
 
 (defun phi-add-operand (phi operand)
@@ -556,7 +568,7 @@
 
 (defun ssa-write-variable (place block env)
   (declare (ignore env))
-  (let ((vplace (generate-temp-place "V-")))
+  (let ((vplace (generate-virtual-place "V-")))
     (set-block-def block (named-place-name place) vplace)))
 
 (defun try-remove-trivial-phi (phi env)
@@ -619,8 +631,8 @@
 		     (ssa-if (make-ssa-if :index (ssa-if-index ir)
 					  :test (transform-read (ssa-if-test ir) b env)
 					  :true-block (ssa-if-true-block ir)))
-		     (ssa-single-return (make-ssa-single-return :index (ssa-single-return-index ir)
-								:value (transform-read (ssa-single-return-value ir) b env)))
+		     ;; (ssa-single-return (make-ssa-single-return :index (ssa-single-return-index ir)
+		     ;; 						:value (transform-read (ssa-single-return-value ir) b env)))
 		     (t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
@@ -642,6 +654,13 @@
       (setf (gethash (ssa-block-index block) index-map) block))
     (setf (lambda-ssa-blocks-index lambda-ssa) index-map)))
 
+
+(defun set-block-virtuals (lambda-ssa)
+  (dolist (block (lambda-ssa-blocks lambda-ssa))
+    (setf (ssa-block-virtuals block)
+	  (collect-block-virtuals block))))
+
+
 (defun ssa-parse-lambda (lambda-node)
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
@@ -657,9 +676,175 @@
     (let ((lambda-ssa-env (ssa-make-value-numbering-env lambda-ssa)))
       (do-value-numbering lambda-ssa lambda-ssa-env)
       (ssa-reset-original-ir lambda-ssa))
+    (set-block-virtuals lambda-ssa)
     lambda-ssa))
 
-(defstruct intervals)
+;;; interval building
+(defstruct interval name ranges)
+(defstruct range start end)
 
-(defun add-interval ())
-;;; lifetime intervals
+(defun ssa-place (place)
+  (typecase place
+    (virtual-place place)
+    (phi (phi-place place))))
+
+(defun ssa-form-write-place (ssa-form)
+  (etypecase ssa-form
+    (ssa-form-rw
+     (etypecase ssa-form
+       (ssa-load (ssa-load-to ssa-form))
+       (ssa-value nil)
+       (ssa-if nil)))
+    (t nil)))
+
+(defun ssa-form-read-place (ssa-form)
+  (etypecase ssa-form
+    (ssa-form-rw
+     (etypecase ssa-form
+       (ssa-load (ssa-load-from ssa-form))
+       (ssa-value (ssa-value-value ssa-form))
+       (ssa-if (ssa-if-test ssa-form))))
+    (t nil)))
+
+(defun collect-block-virtuals (block)
+  (let ((reads nil)
+	(writes nil))
+    (dolist (ir (ssa-block-ssa block))
+      (let ((write (ssa-form-write-place ir))
+	    (read (ssa-form-read-place ir)))
+	(when write
+	  (pushnew write writes))
+	(when read
+	  (pushnew read reads))))
+    (list reads writes)))
+
+(defun is-block-loop-header (block)
+  (or
+   (ssa-block-cond-jump block)
+   (ssa-block-uncond-jump block)))
+
+
+(defun ssa-block-successors (ssa-block lambda-ssa)
+  (mapcar (lambda (index)
+	    (ssa-find-block-by-index lambda-ssa index))
+	  (remove-if #'null (list (ssa-block-cond-jump ssa-block)
+				  (ssa-block-uncond-jump ssa-block)
+				  (ssa-block-succ ssa-block)))))
+
+(defun ssa-block-phis (sblock)
+  (let ((phis nil))
+    (dolist (pair (ssa-block-defined sblock))
+      (when (phi-p (cdr pair))
+	(push (cdr pair) phis )))
+    phis))
+
+(defun merge-all-blocks-live-in (successors-live-in)
+  (let ((live nil))
+    (dolist (li successors-live-in)
+      (setf live (union live li :test (lambda (x y)
+					(named-place-equal x y)))))
+    live))
+
+(defun remove-from-live (live place)
+  (remove place live))
+
+(defun live-add-phis-operands (live phis)
+  (dolist (phi phis)
+    (dolist (pop (phi-operands phi))
+      ;; FIXME, test if PLACE is important for BLOCK
+      (unless (find pop live :test #'named-place-equal)
+	(push pop live))))
+  live)
+
+(defun make-intervals ()
+  (make-hash-table))
+
+(defun get-interval (intervals name)
+  (gethash name intervals))
+
+(defun add-interval (intervals interval)
+  (setf (gethash (interval-name interval) intervals) interval))
+
+(defun add-range (intervals name start end)
+  (let ((interval (get-interval intervals name)))
+    (unless interval
+      (setf interval (make-interval :name name ))
+      (add-interval intervals interval))
+    (push (make-range :start start :end end)
+	  (interval-ranges interval))))
+
+(defun shorten-current-range (intervals place start)
+  (let* ((name (named-place-name place))
+	 (interval (get-interval intervals name)))
+    (when interval
+      (let ((range (first (interval-ranges interval))))
+	(setf (range-start range) start)))))
+
+(defun build-intervals (lambda-ssa)
+  (let ((intervals (make-intervals)))
+    (dolist (block (reverse (lambda-ssa-blocks lambda-ssa)))
+      (let* ((successor-blocks (ssa-block-successors block lambda-ssa))
+	     (successors-live-in (mapcar #'ssa-block-live-in successor-blocks))
+	     (live (merge-all-blocks-live-in successors-live-in)))
+
+	(when (= 0 (ssa-block-index block))
+	  (break))
+
+	(dolist (sb successor-blocks)
+	  (let ((phis (ssa-block-phis sb)))
+	    (setf live (live-add-phis-operands live phis))))
+	
+	(let ((start (ssa-form-index (ssa-block-first-instruction block)))
+	      (end (ssa-form-index (ssa-block-last-instruction block))))
+	  (dolist (place live)
+	    (let ((place-name (named-place-name place)))
+	      (add-range intervals place-name start end)))
+
+	  (dolist (instr (reverse (ssa-block-ssa block)))
+	    (let ((instr-index (ssa-form-index instr))
+		  (write (ssa-place (ssa-form-write-place instr)))
+		  (read (ssa-place (ssa-form-read-place instr))))
+	      (when write
+		(shorten-current-range intervals write instr-index)
+		(setf live (remove-from-live live write)))
+	      (when read
+		(add-range intervals (named-place-name read) start instr-index)
+		(pushnew read live :test #'equalp))))
+
+	  
+	  (dolist (phi (ssa-block-phis block))
+	    (let ((phi-place (phi-place phi)))
+	      (setf live (remove-from-live live phi-place))))
+
+	  (when (is-block-loop-header block)
+	    ;; FIXME, what when we have both cond and uncond JUMP
+	    (let ((block-end (ssa-find-block-by-index lambda-ssa (or (ssa-block-cond-jump block)
+								     (ssa-block-uncond-jump block)))))
+	
+	      (dolist (lplace live)
+		(add-range intervals (named-place-name lplace) start
+			   (ssa-form-index (ssa-block-last-instruction block-end)))))))
+	(setf (ssa-block-live-in block) live)))
+    intervals))
+
+
+
+#+nil(ssa-parse-lambda (create-node (clcomp-macroexpand '(lambda (x)
+							     (let ((c 1))
+							       (if x
+								   (if x
+								       (setf c 2)
+								       (setf c 3))
+								   (setf c 3))
+							       (foo 4))))))
+#+nil(ssa-parse-lambda (create-node (clcomp-macroexpand '(lambda (x)
+					   (let ((c 1))
+					     (tagbody 
+					      start
+						(if x
+						    (if x
+							(setf c 2)
+							(setf c 3))
+						    (setf c 3))
+					      foo
+						(go start)))))))
