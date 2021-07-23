@@ -50,10 +50,6 @@
 
 (defparameter *debug-stream* t)
 
-(defun named-place-equal (n1 n2)
-  (eq (named-place-name n1)
-      (named-place-name n2)))
-
 (defparameter *ssa-symbol-counter* 0)
 (defun generate-virtual-place (&optional (s "T-"))
   (prog1
@@ -349,9 +345,11 @@
     (pop-labels-env lambda-ssa)
     (if place
 	(emit lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
-	(if leaf
-	    (emit-single-return-sequence lambda-ssa (make-immediate-constant :constant *nil*) block )
-	    (emit lambda-ssa (make-immediate-constant :constant *nil*) block)))
+	(when leaf
+	  (emit-single-return-sequence lambda-ssa (make-immediate-constant :constant *nil*) block )
+	  ;; FIXME, need this ?
+	  ;; (emit lambda-ssa (make-immediate-constant :constant *nil*) block)
+	  ))
     current-block))
 
 ;;; FIXME, delete unreachable code
@@ -467,11 +465,12 @@
 	    (reverse (ssa-block-ir b)))
       (push b blocks))
     (setf (lambda-ssa-blocks lambda-ssa) blocks)
-    (let ((ir-index -1))
+    (let ((ir-index 0))
       (dolist (b blocks)
 	;; reindex instruction
 	(dolist (ir (ssa-block-ir b))
-	  (setf (ssa-form-index ir) (incf ir-index ))))))
+	  (setf (ssa-form-index ir) ir-index)
+	  (incf ir-index 2)))))
   lambda-ssa)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -479,7 +478,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defstruct transform-env predecessors blocks-map)
-(defstruct phi operands (place (generate-virtual-place)))
+(defstruct phi operands (place (generate-virtual-place "PHI-")))
 
 
 (defun phi-add-operand (phi operand)
@@ -660,7 +659,6 @@
     (setf (ssa-block-virtuals block)
 	  (collect-block-virtuals block))))
 
-
 (defun ssa-parse-lambda (lambda-node)
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
@@ -681,7 +679,10 @@
 
 ;;; interval building
 (defstruct interval name ranges)
-(defstruct range start end)
+(defstruct range start end use-positions)
+(defstruct use-pos index need-reg)
+(defstruct (use-write-pos (:include use-pos)))
+(defstruct (use-read-pos (:include use-pos)))
 
 (defun ssa-place (place)
   (typecase place
@@ -710,18 +711,18 @@
   (let ((reads nil)
 	(writes nil))
     (dolist (ir (ssa-block-ssa block))
-      (let ((write (ssa-form-write-place ir))
-	    (read (ssa-form-read-place ir)))
+      (let ((write (ssa-place (ssa-form-write-place ir)))
+	    (read (ssa-place (ssa-form-read-place ir))))
 	(when write
 	  (pushnew write writes))
 	(when read
 	  (pushnew read reads))))
     (list reads writes)))
 
-(defun is-block-loop-header (block)
-  (or
-   (ssa-block-cond-jump block)
-   (ssa-block-uncond-jump block)))
+(defun is-block-loop-header (block lambda-ssa)
+  (declare (ignore block lambda-ssa))
+  ;; FIXME, recognize if block is loop header
+  )
 
 
 (defun ssa-block-successors (ssa-block lambda-ssa)
@@ -741,23 +742,36 @@
 (defun merge-all-blocks-live-in (successors-live-in)
   (let ((live nil))
     (dolist (li successors-live-in)
-      (setf live (union live li :test (lambda (x y)
-					(named-place-equal x y)))))
+      (setf live (union live li :test #'equalp)))
     live))
 
 (defun remove-from-live (live place)
-  (remove place live))
+  (remove place live :test #'equalp))
 
-(defun live-add-phis-operands (live phis)
-  (dolist (phi phis)
-    (dolist (pop (phi-operands phi))
-      ;; FIXME, test if PLACE is important for BLOCK
-      (unless (find pop live :test #'named-place-equal)
-	(push pop live))))
+(defun live-add-phis-operands (live phis block)
+  (let ((block-virtuals (ssa-block-virtuals block)))
+    (dolist (phi phis)
+      (dolist (pop (phi-operands phi))
+	(when (and (not (find pop live :test #'equalp))
+		   (or (find pop (first block-virtuals) :test #'equalp)
+		       (find pop (second block-virtuals) :test #'equalp)))
+	  (push pop live)))))
   live)
 
 (defun make-intervals ()
   (make-hash-table))
+
+(defun make-use-positions ()
+  (make-hash-table))
+
+(defun add-use-positions (use-positions virtual use-position)
+  (let ((vname (named-place-name virtual)))
+    (setf (gethash vname use-positions)
+	  (cons use-position
+		(gethash vname use-positions)))))
+
+(defun get-use-positions (use-positions vname)
+  (gethash vname use-positions))
 
 (defun get-interval (intervals name)
   (gethash name intervals))
@@ -780,22 +794,75 @@
       (let ((range (first (interval-ranges interval))))
 	(setf (range-start range) start)))))
 
+(defun maybe-merge-ranges (ranges)
+  (let (merged-ranges)
+    (let* ((sorted (sort ranges #'< :key #'range-start))) 
+      (dolist (range sorted)
+	(let ((current-range (first merged-ranges)))
+	  (if (null current-range)
+	      (push range merged-ranges)
+	      (if (> (range-start range)
+		     (range-end current-range))
+		  (push range merged-ranges)
+		  (when (> (range-end range)
+			   (range-end current-range))
+		    (setf (range-end current-range)
+			  (range-end range))))))))
+    (reverse merged-ranges)))
+
+(defun try-intervals-merge (intervals)
+  (maphash (lambda (k interval)
+	     (declare (ignore k))
+	     (setf (interval-ranges interval)
+		   (maybe-merge-ranges (interval-ranges interval))))
+	   intervals)
+  intervals)
+
+
+(defun fill-use-positions (interval pos)
+  (let ((spos (sort pos #'< :key #'use-pos-index)))
+    (dolist (range (interval-ranges interval))
+      (do* ((sspos spos (cdr sspos))
+	    (pos (car sspos) (car sspos)))
+	   ((or
+	     (null pos)
+	     (when (< (use-pos-index pos)
+		      (range-start range))
+	       (error "Bad ranges/positions"))
+	     (> (use-pos-index pos)
+		(range-end range))))
+	(push pos (range-use-positions range))
+	(pop spos)))))
+
+(defun add-intervals-use-positions (intervals use-positions)
+  (prog1
+      intervals
+    (maphash (lambda (name interval)
+	       (fill-use-positions interval (get-use-positions use-positions name) ))
+	     intervals)))
+
+(defparameter *block-break* -1)
 (defun build-intervals (lambda-ssa)
-  (let ((intervals (make-intervals)))
+  (let ((intervals (make-intervals))
+	(use-positions (make-use-positions)))
     (dolist (block (reverse (lambda-ssa-blocks lambda-ssa)))
       (let* ((successor-blocks (ssa-block-successors block lambda-ssa))
 	     (successors-live-in (mapcar #'ssa-block-live-in successor-blocks))
 	     (live (merge-all-blocks-live-in successors-live-in)))
 
-	(when (= 0 (ssa-block-index block))
+	(when (= *block-break* (ssa-block-index block))
 	  (break))
-
+	
 	(dolist (sb successor-blocks)
 	  (let ((phis (ssa-block-phis sb)))
-	    (setf live (live-add-phis-operands live phis))))
+	    (setf live (live-add-phis-operands live phis block))))
+
+	(when (= *block-break* (ssa-block-index block))
+	  (break))
 	
 	(let ((start (ssa-form-index (ssa-block-first-instruction block)))
 	      (end (ssa-form-index (ssa-block-last-instruction block))))
+	  
 	  (dolist (place live)
 	    (let ((place-name (named-place-name place)))
 	      (add-range intervals place-name start end)))
@@ -806,45 +873,36 @@
 		  (read (ssa-place (ssa-form-read-place instr))))
 	      (when write
 		(shorten-current-range intervals write instr-index)
-		(setf live (remove-from-live live write)))
+		(setf live (remove-from-live live write))
+		(add-use-positions use-positions write (make-use-write-pos :index instr-index)))
 	      (when read
 		(add-range intervals (named-place-name read) start instr-index)
+		(add-use-positions use-positions read (make-use-read-pos :index instr-index))
 		(pushnew read live :test #'equalp))))
 
+	  (when (= *block-break* (ssa-block-index block))
+	    (break))
 	  
 	  (dolist (phi (ssa-block-phis block))
 	    (let ((phi-place (phi-place phi)))
 	      (setf live (remove-from-live live phi-place))))
 
-	  (when (is-block-loop-header block)
-	    ;; FIXME, what when we have both cond and uncond JUMP
-	    (let ((block-end (ssa-find-block-by-index lambda-ssa (or (ssa-block-cond-jump block)
-								     (ssa-block-uncond-jump block)))))
+	  ;; (when (is-block-loop-header block lambda-ssa)
+	  ;;   ;; FIXME, what when we have both cond and uncond JUMP
+	  ;;   (let ((block-end (ssa-find-block-by-index lambda-ssa (or (ssa-block-cond-jump block)
+	  ;; 							     (ssa-block-uncond-jump block)))))
 	
-	      (dolist (lplace live)
-		(add-range intervals (named-place-name lplace) start
-			   (ssa-form-index (ssa-block-last-instruction block-end)))))))
-	(setf (ssa-block-live-in block) live)))
-    intervals))
+	  ;;     (dolist (lplace live)
+	  ;; 	(add-range intervals (named-place-name lplace) start
+	  ;; 		   (ssa-form-index (ssa-block-last-instruction block-end))))))
+	  
+	  (setf (ssa-block-live-in block) live))))
+    (try-intervals-merge intervals)
+    (add-intervals-use-positions intervals use-positions)))
 
 
+(defun linear-scan ())
 
-#+nil(ssa-parse-lambda (create-node (clcomp-macroexpand '(lambda (x)
-							     (let ((c 1))
-							       (if x
-								   (if x
-								       (setf c 2)
-								       (setf c 3))
-								   (setf c 3))
-							       (foo 4))))))
-#+nil(ssa-parse-lambda (create-node (clcomp-macroexpand '(lambda (x)
-					   (let ((c 1))
-					     (tagbody 
-					      start
-						(if x
-						    (if x
-							(setf c 2)
-							(setf c 3))
-						    (setf c 3))
-					      foo
-						(go start)))))))
+(defun try-allocate-free-reg ())
+
+(defun allocate-blocked-reg ())
