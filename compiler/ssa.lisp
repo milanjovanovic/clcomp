@@ -842,6 +842,14 @@
 	  (reverse (range-use-positions new-range)))
     (list old-range new-range)))
 
+(defun interval-get-next-use (interval &optional (index 0))
+  (dolist (range (interval-ranges interval))
+    (when (> (range-start range) index)
+      (dolist (use-pos (range-use-positions range))
+	(let ((up-index (use-pos-index use-pos)))
+	  (when (> up-index index)
+	    (return-from interval-get-next-use up-index)))))))
+
 (defun split-interval (interval position)
   (let* ((range-position (position position (interval-ranges interval)
 				   :test (lambda (v e)
@@ -851,8 +859,6 @@
 	 (rest-ranges (nthcdr range-position (interval-ranges interval)))
 	 (split-range (first rest-ranges))
 	 (new-ranges (range-split split-range position)))
-    (print range-position)
-    (print rest-ranges)
     (setf (interval-ranges interval)
 	  (append
 	   (subseq interval-ranges 0 range-position)
@@ -870,28 +876,35 @@
 	   intervals)
   intervals)
 
+(defun ranges-intersection (r1 r2)
+  (block nil
+    (tagbody
+     loop-start
+       (when (or (null r1)
+		 (null r2))
+	 (return  nil))
+       (let ((first-range (first r2))
+	     (first-c-range (first r1)))
+	 (when (> (range-start first-range)
+		  (range-end first-c-range))
+	   (setf r1 (cdr r1))
+	   (go loop-start))
+	 (when (> (range-start first-c-range)
+		  (range-end first-range))
+	   (setf r2 (cdr r2))
+	   (go loop-start))
+	 (return (max (range-start first-range )
+		      (range-start first-c-range)))))))
+
+(defun intervals-first-intersection (i1 i2)
+  (ranges-intersection (interval-ranges i1)
+		       (interval-ranges i2)))
+
 (defun intervals-next-intersection (current-interval interval current-position)
   (let* ((range-position (position current-position (interval-ranges current-interval) :key #'range-start))
 	 (current-ranges (nthcdr range-position (interval-ranges current-interval)))
 	 (ranges (interval-ranges interval)))
-    (block nil
-      (tagbody
-       loop-start
-	 (when (or (null current-ranges)
-		   (null ranges))
-	   (return  nil))
-	 (let ((first-range (first ranges))
-	       (first-c-range (first current-ranges)))
-	   (when (> (range-start first-range)
-		    (range-end first-c-range))
-	     (setf current-ranges (cdr current-ranges))
-	     (go loop-start))
-	   (when (> (range-start first-c-range)
-		    (range-end first-range))
-	     (setf ranges (cdr ranges))
-	     (go loop-start))
-	   (return (max (range-start first-range )
-			(range-start first-c-range))))))))
+    (ranges-intersection current-ranges ranges)))
 
 (defun fill-use-positions (interval pos)
   (let ((spos (sort pos #'< :key #'use-pos-index)))
@@ -904,7 +917,9 @@
 		      (range-start range))
 	       (error "Bad ranges/positions"))
 	     (> (use-pos-index pos)
-		(range-end range))))
+		(range-end range)))
+	    (setf (range-use-positions range)
+		  (reverse (range-use-positions range))))
 	(push pos (range-use-positions range))
 	(pop spos)))))
 
@@ -966,91 +981,165 @@
     (add-intervals-use-positions intervals use-positions)))
 
 
+(defparameter *stack-offset* -1)
+(defun get-stack-index ()
+  (incf *stack-offset*))
+
+(defstruct alloc unhandled active inactive handled)
+
+(defun alloc-add-unhandled (alloc interval)
+  (push interval (alloc-unhandled alloc))
+  (setf (alloc-unhandled alloc)
+	(sort (alloc-unhandled alloc) #'< :key #'interval-start)))
+
+(defun alloc-remove-active (alloc interval)
+  (setf (alloc-active alloc)
+	(remove (interval-name interval)
+		(alloc-active alloc) :key #'interval-name)))
+
+(defun alloc-add-active (alloc interval)
+  (push interval (alloc-active alloc)))
+
+(defun alloc-remove-inactive (alloc interval)
+  (setf (alloc-inactive alloc)
+	(remove (interval-name interval)
+		(alloc-inactive alloc) :key #'interval-name)))
+
+(defun alloc-add-handled (alloc interval)
+  (push interval (alloc-handled alloc)))
+
+(defun alloc-add-inactive (alloc interval)
+  (push interval (alloc-inactive alloc)))
+
 
 (defun linear-scan (sorted-intervals)
-  (let ((unhandled sorted-intervals)
-	(active nil)
-	(inactive nil)
-	(handled nil))
+  (let ((alloc (make-alloc :unhandled sorted-intervals)))
+    (tagbody
+     START
+       (let ((current-interval (first (alloc-unhandled alloc))))
+	 (when current-interval
+	   (progn
 
-    (dolist (current-interval unhandled)
-      
-      (let ((position (interval-start current-interval)))
+	     (pop (alloc-unhandled alloc))
+	       
+	     (let ((position (interval-start current-interval)))
 	
-	(dolist (act-interval active)
-	  (when (< (interval-end act-interval) position)
-	    (setf active (remove act-interval active :key #'interval-name))
-	    (push act-interval handled))
-	  (when
-	      (not (interval-live-at-index-p act-interval position))
-	    (setf active (remove act-interval active :key #'interval-name))
-	    (push act-interval inactive)))
+	       (dolist (act-interval (alloc-active alloc))
+		 
+		 (when (< (interval-end act-interval) position)
+		   (alloc-remove-active alloc act-interval)
+		   (alloc-add-handled alloc act-interval))
+		 
+		 (when (not (interval-live-at-index-p act-interval position))
+		   (alloc-remove-active alloc act-interval)
+		   (alloc-add-inactive alloc act-interval)))
 
-	(dolist (ia-interval inactive)
-	  (when (< (interval-end ia-interval) position)
-	    (setf inactive (remove ia-interval inactive :key #'interval-name))
-	    (push ia-interval handled))
-	  (when (interval-live-at-index-p ia-interval position)
-	    (setf inactive (remove ia-interval inactive) )
-	    (push ia-interval active)))
+	       (dolist (ia-interval (alloc-inactive alloc))
+		 
+		 (when (< (interval-end ia-interval) position)
+		   (alloc-remove-inactive alloc ia-interval)
+		   (alloc-add-handled alloc ia-interval))
+		 
+		 (when (interval-live-at-index-p ia-interval position)
+		   (alloc-remove-inactive alloc ia-interval)
+		   (alloc-add-active alloc ia-interval)))
 
-	(let ((i (try-allocate-free-reg  '(:rax :rbx :rcx :rdx)
-					 current-interval position active inactive)))
-	  (if i
-	      (progn
-	       (push i unhandled)
-	       (setf unhandled (sort unhandled #'> :key #'interval-start)))
-	      (push current-interval active)))))))
+	       (let ((register (try-allocate-free-reg current-interval position alloc)))
+		 
+		 (unless register
+		   (allocate-blocked-reg current-interval alloc))))
 
-(defun make-free-until-pos ()
+	     (go start)))))))
+
+(defun make-positions ()
   (make-hash-table))
 
-(defun add-free-until-pos (positions position register)
+(defun add-position (positions position register)
   (when position
-    (setf (gethash register positions)
-	  (cons position (gethash register positions)))))
+    (let ((pos (gethash register positions)))
+      (when (or (null pos)
+		(< position pos))
+       (setf (gethash register positions) position)))))
 
 (defun get-register-with-max-position (positions)
   (let ((rp (cons nil nil)))
     (maphash (lambda (k v)
 	       (if (or (null (car rp))
- 		       (> (apply #'max v) (cdr rp)))
-		   (setf  rp (cons k (apply #'max v)))))
+ 		       (> v (cdr rp)))
+		   (setf  rp (cons k v))))
 	     positions)
     rp))
 
-(defun try-allocate-free-reg (registers
-			      current-interval
-			      current-position
-			      active
-			      inactive)
-  (let ((fup (make-free-until-pos)))
-    (dolist (reg registers)
-      (add-free-until-pos fup most-positive-fixnum reg))
-    (dolist (interval active)
-      (if (interval-register interval)
-	  (add-free-until-pos fup (interval-register interval) 0)))
-    (dolist (interval inactive)
-      (if (interval-register interval)
-	  (add-free-until-pos fup (interval-register interval)
-			      (intervals-next-intersection current-interval interval current-position))))
+(defun find-interval-that-use-reg (active register)
+  (find register active :key #'interval-register))
+
+
+(defun try-allocate-free-reg (current-interval current-position alloc)
+  (let ((fup (make-positions)))
+    (dolist (reg *regs*)
+      (add-position fup most-positive-fixnum reg))
+    (dolist (interval (alloc-active alloc))
+      (add-position fup 0 (interval-register interval)))
+    (dolist (interval (alloc-inactive alloc))
+      (when (intervals-first-intersection current-interval interval)
+	(add-position fup (interval-register interval)
+		      (intervals-next-intersection current-interval interval current-position))))
     (let* ((reg-pair (get-register-with-max-position fup))
 	   (reg (car reg-pair))
 	   (reg-pos (cdr reg-pair)))
       (cond ((zerop reg-pos)
-	     (error "foo"))
-	    ((< (interval-end current-interval) reg-pos)
-	     (setf (interval-register current-interval) reg)
 	     nil)
+	    ((< (interval-end current-interval) reg-pos)
+	     (setf (interval-register current-interval) reg))
 	    (t
-	     (let* ((splitted (split-interval current-interval current-position))
-		    (original-interval (first splitted))
-		    (new-interval (second splitted)))
+	     (let* ((split (split-interval current-interval current-position))
+		    (original-interval (first split))
+		    (new-interval (second split)))
 	       (push new-interval (interval-childs original-interval))
 	       (setf (interval-register original-interval) reg)
+	       ()
 	       new-interval))))))
 
-(defun allocate-blocked-reg ())
+;;; TODO
+;;; Implement fixed intervals
+(defun allocate-blocked-reg (current-interval alloc)
+  (let ((positions (make-positions))
+	(current-index (interval-start current-interval ))
+	(current-first-usage (interval-get-next-use current-interval)))
+
+    (dolist (reg *regs*)
+      (add-position positions most-positive-fixnum reg))
+    
+    (dolist (interval (alloc-active alloc))
+      (add-position positions (interval-get-next-use current-index) (interval-register interval) ))
+    
+    (dolist (interval (alloc-inactive alloc))
+      (if (intervals-first-intersection current-interval interval)
+	  (add-position positions (interval-get-next-use current-index) (interval-register interval) )))
+
+    (let* ((reg-pair (get-register-with-max-position positions))
+	   (reg (car reg-pair))
+	   (reg-pos (cdr reg-pair)))
+ 
+      (cond ((> current-first-usage reg-pos)
+	     (let* ((split (split-interval  current-interval current-first-usage ))
+		    (new-interval (second split)))
+	       (setf (interval-stack current-interval) (get-stack-index))
+	       (alloc-add-unhandled alloc new-interval)))
+	    (t
+	     (setf (interval-register current-interval) reg)
+	     (let* ((ainterval (find-interval-that-use-reg  reg))
+		    (split (split-interval ainterval reg-pos))
+		    (new-interval (second split)))))))))
+
+
+
+
+
+
+
+
+
 
 
 
