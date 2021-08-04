@@ -1069,9 +1069,6 @@
 		(alloc-inactive alloc) :key #'interval-number)))
 
 (defun alloc-add-handled (alloc interval)
-  (when ;; (find 5 (alloc-handled alloc) :key #'interval-number)
-      (= 5 (interval-number interval))
-    )
   (push interval (alloc-handled alloc))
   (alloc-remove-active alloc interval)
   (alloc-remove-inactive alloc interval))
@@ -1117,6 +1114,12 @@
 		   (allocate-blocked-reg current-interval alloc))))
 
 	     (go start)))))
+    (dolist (int (alloc-active alloc))
+      (alloc-add-handled alloc int))
+
+    (dolist (int (alloc-inactive alloc))
+      (alloc-add-handled alloc int))
+
     (alloc-handled alloc)))
 
 (defun make-positions ()
@@ -1184,7 +1187,7 @@
 ;;; Implement fixed intervals
 (defun allocate-blocked-reg (current-interval alloc)
   (declare (optimize (speed 0) (debug 3) (safety 3)))
-  (print (list 'allocate-blocked-reg current-interval))
+  ;; (print (list 'allocate-blocked-reg current-interval))
   (let ((positions (make-positions))
 	(current-index (interval-start current-interval))
 	(current-first-usage (interval-get-next-use current-interval)))
@@ -1205,14 +1208,14 @@
 	   (reg (car reg-pair))
 	   (reg-pos (cdr reg-pair)))
 
-      (print (list 'reg 'pos reg reg-pos))
+      ;; (print (list 'reg 'pos reg reg-pos))
  
       (cond ((>= current-first-usage reg-pos)
 	     (multiple-value-bind (original-interval new-interval)
 		 (split-interval current-interval current-first-usage)
 	       (push new-interval (interval-childs original-interval))
-	       (print (list 'allocate-blocked-reg 'spliting-interval 1 current-interval))
-	       (print (list 'allocate-blocked-reg 'split-interval 1 original-interval new-interval))
+	       ;; (print (list 'allocate-blocked-reg 'spliting-interval 1 current-interval))
+	       ;; (print (list 'allocate-blocked-reg 'split-interval 1 original-interval new-interval))
 	       (spill-interval alloc original-interval)
 	       (alloc-add-unhandled alloc new-interval)))
 	    (t
@@ -1220,8 +1223,8 @@
 	       (multiple-value-bind (old-interval new-interval)
 		   (split-interval ainterval current-index)
 		 (push new-interval (interval-childs old-interval))
-		 (print (list 'allocate-blocked-reg 'spliting-interval 2 ainterval))
-		 (print (list 'allocate-blocked-reg 'split-interval 2 old-interval new-interval))
+		 ;; (print (list 'allocate-blocked-reg 'spliting-interval 2 ainterval))
+		 ;; (print (list 'allocate-blocked-reg 'split-interval 2 old-interval new-interval))
 		 (alloc-add-handled alloc old-interval)
 		 (setf (interval-register current-interval) reg)
 		 (spill-interval alloc new-interval)
