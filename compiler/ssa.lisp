@@ -3,6 +3,8 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (declaim (optimize (speed 0) (debug 3))))
 
+(defstruct immediate-constant constant)
+
 (defstruct place)
 (defstruct (named-place (:include place)) name)
 
@@ -13,10 +15,16 @@
 (defstruct (argument-place (:include arg-place)))
 (defstruct (return-value-place (:include fixed-place)) index)
 (defstruct (argument-count-place (:include fixed-place)))
+(defstruct (function-value-place (:include fixed-place)))
 
 (defstruct (virtual-place (:include named-place)))
 (defstruct (var-place (:include named-place)))
-(defstruct (fixup-place (:include named-place)))
+
+(defstruct (fixup (:include named-place)))
+(defstruct (local-component-fixup (:include fixup)))
+(defstruct (compile-function-fixup (:include fixup)) function)
+(defstruct (load-time-eval-fixup (:include fixup)))
+(defstruct (vmem-fixup (:include fixup)))
 
 (defstruct slabels alist)
 (defstruct ssa-env labels)
@@ -34,16 +42,15 @@
 (defstruct (ssa-return (:include ssa-form)))
 (defstruct (ssa-multiple-return (:include ssa-form)))
 
-;;; FIXME, still not sure when to use which one 
+
+(defstruct (ssa-vop (:include ssa-form-rw)) tos froms)
+
+;;; FIXME, still not sure when to use which one
 (defstruct (ssa-fun-call (:include ssa-form)) fun)
 (defstruct (ssa-unknown-values-fun-call (:include ssa-fun-call)))
 (defstruct (ssa-known-values-fun-call (:include ssa-fun-call)) min-values)
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block)
-
-(defstruct fixup name)
-(defstruct (compile-time-fixup (:include fixup)))
-(defstruct (eval-at-load-time-fixup (:include fixup)))
 
 (defparameter *instr-offset* 2)
 (defparameter *debug-stream* t)
@@ -76,6 +83,10 @@
   (prog1
       (make-symbol (concatenate 'string "FIXUP-" (write-to-string *fixup-symbol-counter*)))
     (incf *fixup-symbol-counter*)))
+
+
+(defun lambda-add-fixup (fixup lambda-ssa)
+  (push fixup (lambda-ssa-fixups lambda-ssa)))
 
 (defun ssa-add-block (lambda-ssa block)
   (push block (lambda-ssa-blocks lambda-ssa)))
@@ -224,12 +235,17 @@
      (when leaf
        (emit-single-return-sequence lambda-ssa place block))
      block)
-    (ref-constant-node
-     (emit lambda-ssa (make-ssa-load :to place
-    				     :from (make-fixup-place :name 'fixup)) block)
+    ;;FIXME, this should just fall to EMIT-SSA
+    (load-time-value-node
+     (emit-load-time-value-node-ssa node lambda-ssa leaf place block)
+     ;; (emit lambda-ssa (make-ssa-load :to place
+     ;; 				     :from (make-load-time-eval-fixup :name 'fixup)) block)
      (when leaf
        (emit-single-return-sequence lambda-ssa place block))
      block)
+    ;;FIXME, this should just fall to EMIT-SSA
+    (lambda-node
+     (emit-lambda-node-ssa node lambda-ssa leaf place block))
     (t (emit-ssa node lambda-ssa leaf place block))))
 
 ;;; FIXME, there is more here
@@ -237,7 +253,6 @@
   (etypecase node
     (immediate-constant-node node)
     (lexical-var-node (make-var-place :name (lexical-var-node-name node)))
-    (ref-constant-node (make-fixup-place :name 'fixup))
     (t nil)))
 
 ;;; FIXME, fun can be CLOSURE or LAMBDA
@@ -260,6 +275,10 @@
 	(incf arg-index)))
     (emit lambda-ssa (make-ssa-load :to (make-argument-count-place)
 				    :from (make-immediate-constant :constant (fixnumize arguments-count))) block)
+    (let ((fixup (make-compile-function-fixup :name (generate-fixup-symbol)
+					      :function fun)))
+      (emit lambda-ssa (make-ssa-load :to (make-function-value-place) :from fixup) block)
+      (lambda-add-fixup fixup lambda-ssa))
     (if (null place)
 	(progn
 	  (emit lambda-ssa
@@ -377,10 +396,21 @@
 	       block)))
       (incf index))))
 
-(defun emit-ref-constant-node-ssa (node lambda-ssa leaf place block)
+(defun emit-load-time-value-node-ssa (node lambda-ssa leaf place block)
   (let* ((fixup-symbol (generate-fixup-symbol))
-	 (fixup-place (make-fixup-place :name fixup-symbol)))
-    (add-sub-lambda lambda-ssa (ssa-parse-lambda (ref-constant-node-node node)) fixup-symbol)
+	 (fixup-place (make-load-time-eval-fixup :name fixup-symbol)))
+    (add-sub-lambda lambda-ssa (ssa-parse-lambda (load-time-value-node-node node)) fixup-symbol)
+    (if place
+	(emit lambda-ssa (make-ssa-load :to place :from fixup-place) block)
+	(if leaf
+	    (emit-single-return-sequence lambda-ssa fixup-place block)
+	    (emit lambda-ssa (make-ssa-value :value fixup-place) block)))
+    block))
+
+(defun emit-lambda-node-ssa (node lambda-ssa leaf place block)
+  (let* ((fixup-symbol (generate-fixup-symbol))
+	 (fixup-place (make-local-component-fixup :name fixup-symbol)))
+    (add-sub-lambda lambda-ssa (ssa-parse-lambda node) fixup-symbol)
     (if place
 	(emit lambda-ssa (make-ssa-load :to place :from fixup-place) block)
 	(if leaf
@@ -393,6 +423,7 @@
   (etypecase node
     (if-node (emit-if-node-ssa node lambda-ssa leaf place block))
     (call-node (emit-call-node-ssa node lambda-ssa leaf place block))
+    (vop-node (emit-call-node-ssa node lambda-ssa leaf place block))
     (let-node (emit-let-node-ssa node lambda-ssa leaf place block))
     (progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
     (lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))
@@ -400,8 +431,8 @@
     (tagbody-node (emit-tagbody-node-ssa node lambda-ssa leaf place block))
     (go-node (emit-go-node-ssa node lambda-ssa leaf place block))
     (setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
-    (ref-constant-node (emit-ref-constant-node-ssa node lambda-ssa leaf place block))
-    (lambda-node "FIXME")))
+    (load-time-value-node (emit-load-time-value-node-ssa node lambda-ssa leaf place block))
+    (lambda-node (emit-lambda-node-ssa node lambda-ssa leaf place block))))
 
 ;;; check all jumps/successors on blocks and reorder if necessary
 ;; FIXME, for now we need to check if JUMP form is last block instruction
@@ -607,7 +638,7 @@
 
 (defun transform-read  (place block env)
   (typecase place
-    (fixup-place place)
+    (fixup place)
     (named-place (ssa-read-variable place block env))
     (t place)))
 
@@ -824,7 +855,6 @@
 			  (range-end range))))))))
     (reverse merged-ranges)))
 
-;;; FIXME, this is wrong also
 (defun range-split (range position)
   (if (= position (range-start range))
       (values nil range)

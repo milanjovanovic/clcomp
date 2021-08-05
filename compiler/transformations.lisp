@@ -32,7 +32,6 @@
 (defun maybe-get-bootstraped-symbol-keyword (k)
   (second (assoc k *boostraped-keyword-symbols*)))
 
-
 (defun get-two-arg-version (fun)
   (second (assoc fun *two-arg-transformation*)))
 
@@ -44,17 +43,19 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; transform sexp expression to structures tree
+
 (defstruct tnode)
 (defstruct (fun-rip-relative-node (:include tnode)) form)
 (defstruct (compile-time-constant-node (:include tnode)) form)
 (defstruct (immediate-constant-node (:include tnode)) value)
-(defstruct (ref-constant-node (:include tnode)) form node)
+(defstruct (load-time-value-node (:include tnode)) form node)
 (defstruct (lexical-var-node (:include tnode)) name form rest) ; FIXME, make-fun-argument-node
 (defstruct (lexical-binding-node (:include tnode)) name form)
 (defstruct (if-node (:include tnode)) test-form true-form false-form)
 (defstruct (let-node (:include tnode)) bindings form sequential)
 (defstruct (progn-node (:include tnode)) forms)
 (defstruct (call-node (:include tnode)) function arguments)
+(defstruct (vop-node (:include tnode)) vop arguments)
 (defstruct (block-node (:include tnode)) name form)
 (defstruct (lambda-node (:include tnode)) name arguments declarations body)
 (defstruct (tagbody-node (:include tnode)) forms)
@@ -62,10 +63,35 @@
 (defstruct (label-node (:include tnode)) label)
 (defstruct (setq-node (:include tnode)) var form)
 
+(defstruct cenv lambda-declarations bindings declaration)
+
 (defun lexical-binding-exist (environment var)
-  (dolist (bindings environment)
-    (when (find var bindings)
+  (dolist (cenv environment)
+    (when (find var (cenv-bindings cenv))
       (return t))))
+
+;; FIXME - slow
+(defun fun-inlined-p (environment fun)
+  (dolist (cenv environment)
+    (dolist (declr (cenv-declaration cenv))
+      (when (and (eq (car declr) 'notinline)
+		 (find fun (cdr declr)))
+	(return-from fun-inlined-p nil))
+      (when (and (eq (car declr) 'inline)
+		 (find fun (cdr declr)))
+	(return-from fun-inlined-p t)))))
+
+;; FIXME, for now we just check does number of arguments match with vop arguments count
+;; not sure about this
+(defun does-vop-match (arguments-nodes vop)
+  (= (length arguments-nodes) 
+     (length (vop-arguments vop))))
+
+(defun use-vop-p (environment fun argument-nodes)
+  (and (get-vop fun)
+       (fun-inlined-p environment fun)
+       (not *dont-inline*)
+       (does-vop-match argument-nodes (get-vop fun))))
 
 (defun create-lambda-arguments-nodes (arguments)
   (let ((nodes nil)
@@ -77,6 +103,7 @@
 	    (t (push (make-lexical-var-node :name argument :form nil) nodes))))
     (reverse nodes)))
 
+;;; FIXME, create struct object that is easy to query
 (defun parse-declarations (form)
   (cdr form))
 
@@ -84,10 +111,12 @@
   (filter lambda-list '&compiler-rest))
 
 (defun create-lambda-node (form environment)
-  (let ((environment (cons (get-lambda-new-bindings (second form))
-			   environment)))
+  (let* ((declarations (parse-declarations (third form)))
+	 (environment (cons (make-cenv :bindings (get-lambda-new-bindings (second form))
+				       :declaration declarations)
+			    environment)))
     (make-lambda-node :name nil
-		      :declarations (parse-declarations (third form))
+		      :declarations declarations
 		      :arguments (create-lambda-arguments-nodes (second form))
 		      :body (create-node (fourth form) environment))))
 
@@ -109,7 +138,7 @@
 	(current-bin nil))
     (dolist (bind bindings)
       (let ((env (if sequential
-		     (cons current-bin environment)
+		     (cons (make-cenv :bindings current-bin) environment)
 		     environment)))
 	(push (create-lexical-or-dynamic-node bind env) binstruct)
 	(push (first bind) current-bin)))
@@ -121,7 +150,7 @@
   (let ((sequential (eq (first form) 'let*)))
     (make-let-node :bindings (create-let-binding-nodes (second form) sequential environment)
 		   :form (create-node (third form)
-				      (cons (mapcar #'first (second form))
+				      (cons (make-cenv :bindings (mapcar #'first (second form)))
 					    environment))
 		   :sequential sequential)))
 
@@ -131,10 +160,14 @@
 				  (rest form))))
 
 (defun create-call-node (form environment)
-  (let ((form (maybe-transform-to-two-args-fun form)))
-    (make-call-node :function (first form) :arguments (mapcar (lambda (f)
-								(create-node f environment))
-							      (rest form)))))
+  (let* ((form (maybe-transform-to-two-args-fun form))
+	 (arg-nodes (mapcar (lambda (f)
+			      (create-node f environment))
+			    (rest form)))
+	 (use-vop (use-vop-p environment (first form) arg-nodes)))
+    (if use-vop
+	(make-vop-node :vop (first form) :arguments arg-nodes)
+	(make-call-node :function (first form) :arguments arg-nodes))))
 
 (defun create-constant-node (form)
   (cond ((eq form nil)
@@ -168,7 +201,7 @@
   (make-go-node :label-node (make-label-node :label (second form))))
 
 (defun create-load-time-value-node (form)
-  (make-ref-constant-node
+  (make-load-time-value-node
    :form form
    :node (create-node (list 'lambda nil
 			    (list 'declare)
@@ -184,7 +217,7 @@
 	  (make-call-node :function 'symbol-value
 			  :arguments (if (bootstraped-object-p form)
 					 (list (make-compile-time-constant-node :form form))
-					 (list (make-ref-constant-node
+					 (list (make-load-time-value-node
 						:form form
 						:node (create-node (clcomp-macroexpand (list 'lambda nil
 											     (list 'quote form))
@@ -203,7 +236,7 @@
 
 
 (defun create-ref-constant-node (form)
-  (make-ref-constant-node
+  (make-load-time-value-node
    :form form
    :node (create-node (clcomp-macroexpand (list 'lambda nil
 						form)
