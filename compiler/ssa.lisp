@@ -29,9 +29,13 @@
 (defstruct slabels alist)
 (defstruct ssa-env labels)
 (defstruct lambda-ssa blocks blocks-index (env (make-ssa-env)) fixups sub-lambdas)
-(defstruct ssa-block index ir ssa succ cond-jump uncond-jump label defined live-in virtuals live-gen live-kill live-out)
+
+(defstruct ssa-block index ir ssa succ cond-jump uncond-jump predecessors label defined
+  live-in virtuals live-gen live-kill live-out)
 
 (defstruct ssa-form index)
+(defstruct (lambda-entry (:include ssa-form)))
+(defstruct (arg-check (:include ssa-form)) arg-count)
 (defstruct (ssa-form-rw (:include ssa-form)))
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
@@ -39,9 +43,10 @@
 (defstruct (ssa-label (:include ssa-form)) label)
 ;;; do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
-(defstruct (ssa-return (:include ssa-form)))
-(defstruct (ssa-multiple-return (:include ssa-form)))
 
+(defstruct (ssa-base-return (:include ssa-form)))
+(defstruct (ssa-return (:include ssa-base-return)))
+(defstruct (ssa-multiple-return (:include ssa-base-return)))
 
 (defstruct (ssa-vop (:include ssa-form-rw)) tos froms)
 
@@ -166,6 +171,9 @@
 
 (defun ssa-block-first-instruction (block)
   (car (ssa-block-ssa block)))
+
+(defun ssa-block-first-index (block)
+  (ssa-form-index (ssa-block-first-instruction block)))
 
 (defun is-last-instr-jump (block)
   (and (ssa-go-p (ssa-block-last-instruction block))
@@ -376,6 +384,7 @@
     new-block))
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
+  (emit lambda-ssa (make-arg-check :arg-count (length arguments)) block)
   (let ((index 0))
     (dolist (argument arguments)
       (etypecase argument
@@ -492,7 +501,6 @@
 ;;; value numbering
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defstruct transform-env predecessors blocks-map)
 (defstruct phi operands (place (generate-virtual-place "PHI-")))
 
 
@@ -512,21 +520,15 @@
 	      (acons var value (ssa-block-defined block))))
     value))
 
-(defun get-block-predecessors (block env)
-  (second (assoc (ssa-block-index block) (transform-env-predecessors env))))
-
-(defun get-block-by-index (index env)
-  (gethash index (transform-env-blocks-map env)))
-
 (defun phi-has-operand (phi phi-operand)
   (dolist (op (phi-operands phi))
     (when (eq op phi-operand)
       (return-from phi-has-operand t))))
 
 ;; FIXME, not-phi removing phi that we want
-(defun get-all-phis-acons (phi env)
+(defun get-all-phis-acons (phi lambda-ssa)
   (let (phis)
-    (dolist (block (hash-values (transform-env-blocks-map env)))
+    (dolist (block (lambda-ssa-blocks lambda-ssa))
       (dolist (acons (ssa-block-defined block))
 	(when (and (phi-p (cdr acons))
 		   (not (eq phi (cdr acons)))
@@ -542,8 +544,8 @@
 	  (push operand new-operands)))
     (setf (phi-operands phi) new-operands)))
 
-(defun replace-phi (phi same env)
-  (dolist (block (hash-values (transform-env-blocks-map env)))
+(defun replace-phi (phi same lambda-ssa)
+  (dolist (block (lambda-ssa-blocks lambda-ssa))
     (dolist (acons (ssa-block-defined block))
       (let ((p (cdr acons)))
 	(when (phi-p p)
@@ -551,108 +553,91 @@
 	      (setf (cdr acons) same)
 	      (replace-phi-operands p phi same)))))))
 
-(defun ssa-add-predecessor (predecessors block-index predecessor)
-  (let ((p (assoc block-index predecessors)))
-    (cond (p (if (find predecessor (second p))
-		 predecessors
-		 (progn
-		   (setf (second p)
-			 (cons predecessor (second p)))
-		   predecessors)))
-	  (t (cons (list block-index (list predecessor)) predecessors)))))
-
-(defun ssa-make-value-numbering-env (lambda-ssa)
-  (let ((predecessors nil)
-	(blocks-map (make-hash-table)))
-    (dolist (block (lambda-ssa-blocks lambda-ssa))
-      (setf (gethash (ssa-block-index block) blocks-map) block)
-      (let ((succ (ssa-block-succ block))
-	    (uncond-jump (ssa-block-uncond-jump block))
-	    (cond-jump (ssa-block-cond-jump block)))
-	(when (and succ uncond-jump)
-	  (error "Can't have successor and unconditioned jump"))
-	(when (or succ uncond-jump)
-	  (setf predecessors
-		(ssa-add-predecessor predecessors (or succ uncond-jump) (ssa-block-index block))))
-	(when cond-jump
-	  (setf predecessors
-		(ssa-add-predecessor predecessors cond-jump (ssa-block-index block))))))
-    (make-transform-env :predecessors predecessors
-			:blocks-map blocks-map)))
+(defun fill-blocks-predecessors (lambda-ssa)
+  (dolist (block (lambda-ssa-blocks lambda-ssa))
+    (let ((block-index (ssa-block-index block))
+	  (succ (ssa-block-succ block))
+	  (uncond-jump (ssa-block-uncond-jump block))
+	  (cond-jump (ssa-block-cond-jump block)))
+      (when (and succ uncond-jump)
+	(error "Can't have successor and unconditioned jump"))
+      (dolist (bindex (remove nil (list succ uncond-jump cond-jump)))
+	(let ((sblock (ssa-find-block-by-index lambda-ssa bindex)))
+	  (push block-index (ssa-block-predecessors sblock)))))))
 
 (defun ssa-write-variable (place block env)
   (declare (ignore env))
   (let ((vplace (generate-virtual-place "V-")))
     (set-block-def block (named-place-name place) vplace)))
 
-(defun try-remove-trivial-phi (phi env)
+(defun try-remove-trivial-phi (phi lambda-ssa)
   (let ((same nil))
     (dolist (operand (phi-operands phi))
       (cond ((or (eq operand same)
-		 (eq operand phi )))
+		 (eq operand phi)))
 	    ((not (null same))
 	     (return-from try-remove-trivial-phi phi))
 	    (t (setf same operand))))
-    (replace-phi phi same env)
-    (let ((uses (get-all-phis-acons phi env)))
+    (replace-phi phi same lambda-ssa)
+    (let ((uses (get-all-phis-acons phi lambda-ssa)))
       (dolist (phi-cons uses)
 	(let ((p (cdr phi-cons)))
 	  (when (phi-p p)
-	    (try-remove-trivial-phi p env)))))
+	    (try-remove-trivial-phi p lambda-ssa)))))
     same))
 
-(defun phi-add-operands (place phi predecessors env)
+(defun phi-add-operands (place phi predecessors lambda-ssa)
   (dolist (pblock predecessors)
-    (phi-add-operand phi (ssa-read-variable place (get-block-by-index pblock env) env)))
-  (try-remove-trivial-phi phi env))
+    (phi-add-operand phi (ssa-read-variable place (ssa-find-block-by-index lambda-ssa pblock) lambda-ssa)))
+  (try-remove-trivial-phi phi lambda-ssa))
 
-(defun read-variable-recursive (place block env)
-  (let ((predecessors (get-block-predecessors block env)))
+(defun read-variable-recursive (place block lambda-ssa)
+  (let ((predecessors (ssa-block-predecessors block)))
     (when predecessors
       (if (= (length predecessors) 1)
 	  (set-block-def block (named-place-name place)
-			 (ssa-read-variable place (get-block-by-index (first predecessors) env) env))
+			 (ssa-read-variable place (ssa-find-block-by-index lambda-ssa (first predecessors)) lambda-ssa))
 	  (let* ((phi (make-phi)))
 	    (set-block-def block (named-place-name place) phi)
 	    (set-block-def block (named-place-name place)
-			   (phi-add-operands place phi predecessors env)))))))
+			   (phi-add-operands place phi predecessors lambda-ssa)))))))
 
-(defun ssa-read-variable (place block env)
+(defun ssa-read-variable (place block lambda-ssa)
   (or (get-block-def block (named-place-name place)) 
-      (read-variable-recursive place block env)))
+      (read-variable-recursive place block lambda-ssa)))
 
-(defun transform-write (place block env)
+(defun transform-write (place block lambda-ssa)
   (typecase place
     (named-place
-     (ssa-write-variable place block env))
+     (ssa-write-variable place block lambda-ssa))
     (t place)))
 
-(defun transform-read  (place block env)
+(defun transform-read  (place block lambda-ssa)
   (typecase place
     (fixup place)
-    (named-place (ssa-read-variable place block env))
+    (named-place (ssa-read-variable place block lambda-ssa))
     (t place)))
 
-(defun ssa-transform-block-ir (b env)
+(defun ssa-transform-block-ir (b lambda-ssa)
   (let ((ssa-ir nil))
     (dolist (ir (ssa-block-ir b))
       (let ((irssa (etypecase ir
 		     (ssa-load (make-ssa-load :index (ssa-load-index ir)
-					      :to (transform-write (ssa-load-to ir) b env)
-					      :from (transform-read (ssa-load-from ir) b env)))
+					      :to (transform-write (ssa-load-to ir) b lambda-ssa)
+					      :from (transform-read (ssa-load-from ir) b lambda-ssa)))
 		     (ssa-value (make-ssa-value :index (ssa-value-index ir)
-						:value (transform-read (ssa-value-value ir) b env)))
+						:value (transform-read (ssa-value-value ir) b lambda-ssa)))
 		     (ssa-if (make-ssa-if :index (ssa-if-index ir)
-					  :test (transform-read (ssa-if-test ir) b env)
+					  :test (transform-read (ssa-if-test ir) b lambda-ssa)
 					  :true-block (ssa-if-true-block ir)))
 		     (t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
 
-(defun do-value-numbering (lambda-ssa env)
+(defun do-value-numbering (lambda-ssa)
   (let ((*ssa-symbol-counter* 0))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
-      (ssa-transform-block-ir b env)))
+      (ssa-transform-block-ir b lambda-ssa)))
   lambda-ssa)
 
 (defun ssa-reset-original-ir (lambda-ssa)
@@ -679,14 +664,15 @@
 	 (lambda-ssa (make-lambda-ssa))
 	 (entry-block (make-new-ssa-block)))
     (ssa-add-block lambda-ssa entry-block)
+    (emit lambda-ssa (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (ssa-normalize-lambda-ssa lambda-ssa)
     (ssa-lambda-index-blocks lambda-ssa)
     (ssa-maybe-fix-blocks-connections lambda-ssa)
-    (let ((lambda-ssa-env (ssa-make-value-numbering-env lambda-ssa)))
-      (do-value-numbering lambda-ssa lambda-ssa-env)
-      (ssa-reset-original-ir lambda-ssa))
+    (fill-blocks-predecessors lambda-ssa)
+    (do-value-numbering lambda-ssa)
+    (ssa-reset-original-ir lambda-ssa)
     (set-block-virtuals lambda-ssa)
     lambda-ssa))
 
@@ -698,6 +684,11 @@
 (defstruct (use-write-pos (:include use-pos)))
 (defstruct (use-read-pos (:include use-pos)))
 
+(defun intervals-same-storage-p (i1 i2)
+  (and
+   (eq (interval-name i1) (interval-name i2))
+   (equalp (interval-register i1) (interval-register i2))
+   (equalp (interval-stack i1) (interval-stack i2))))
 
 (defun interval-end (interval)
   (range-end (car (last (interval-ranges interval)))))
@@ -820,8 +811,13 @@
     (unless interval
       (setf interval (make-interval :name name ))
       (add-interval intervals interval))
-    (push (make-range :start start :end end)
-	  (interval-ranges interval))))
+    (let ((active-range (first (interval-ranges interval))))
+      (when (or (null active-range)
+		(< start (range-start active-range))
+		(> end (range-end active-range)))    
+	(push (make-range :start start :end end)
+	      (interval-ranges interval)))
+      interval)))
 
 (defun shorten-current-range (intervals place start)
   (let* ((name (named-place-name place))
@@ -995,6 +991,8 @@
 		  (add-range intervals (named-place-name write) instr-index instr-index))
 		(setf live (remove-from-live live write))
 		(add-use-positions use-positions write (make-use-write-pos :index instr-index)))
+	      ;; FIXME, read is allways adding RANGE
+	      ;;; when we then have WRITE we only shorten last RANGE
 	      (when read
 		(add-range intervals (named-place-name read) start instr-index)
 		(add-use-positions use-positions read (make-use-read-pos :index instr-index))
@@ -1019,13 +1017,16 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Alternative Linear Scan from "Linear scan register allocation for Java HotSpot Client Compiler"
+;;; Alternative Intervals building/Linear Scan from "Linear scan register allocation for Java HotSpot Client Compiler"
 
+;;; FIXME
+;;; we sometimes need to create block as in IF form
 (defun insert-moves-for-phi (lambda-ssa)
   (dolist (block lambda-ssa)
     (let ((phis (ssa-block-phis block)))
       (when phis
-	(dolist (phi phis))))))
+	(dolist (phi phis)
+	  ())))))
 
 (defun compute-local-live-sets (lambda-ssa)
   (dolist (block (lambda-ssa-blocks lambda-ssa))
@@ -1062,6 +1063,11 @@
        (when changed
 	 (go start)))
     lambda-ssa))
+
+;;; FIXME
+#+nil(defun resolve-data-flow (lambda-ssa)
+  (dolist (from (lambda-ssa-blocks lambda-ssa))
+    (let ((successors (ssa-block-successors block lambda-ssa))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1257,3 +1263,15 @@
 					(interval-first-range-after-index inactive-interval current-index)))
 		     (alloc-add-handled alloc old-interval)
 		     (spill-interval alloc new-interval))))))))))
+
+
+#+nil(defun intervals-that-start-at (intervals index)
+  )
+
+
+#+nil(defun resolve (lambda-ssa intervals)
+  (dolist (cblock (lambda-ssa-blocks lambda-ssa))
+    (let ((successors (ssa-block-successors cblock lambda-ssa)))
+      (dolist (sblock successors)
+	(let ((is (intervals-that-start-at intervals (ssa-block-first-index sblock))))
+	  )))))
