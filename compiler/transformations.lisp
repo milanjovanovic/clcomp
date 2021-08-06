@@ -45,10 +45,12 @@
 ;;; transform sexp expression to structures tree
 
 (defstruct tnode)
-(defstruct (fun-rip-relative-node (:include tnode)) form)
-(defstruct (compile-time-constant-node (:include tnode)) form)
+(defstruct (rip-relative-node (:include tnode)))
+(defstruct (fun-rip-relative-node (:include rip-relative-node)) form)
+(defstruct (compile-time-constant-node (:include rip-relative-node)) form)
+(defstruct (lambda-node (:include rip-relative-node)) name arguments declarations body)
 (defstruct (immediate-constant-node (:include tnode)) value)
-(defstruct (load-time-value-node (:include tnode)) form node)
+(defstruct (load-time-value-node (:include rip-relative-node)) form node)
 (defstruct (lexical-var-node (:include tnode)) name form rest) ; FIXME, make-fun-argument-node
 (defstruct (lexical-binding-node (:include tnode)) name form)
 (defstruct (if-node (:include tnode)) test-form true-form false-form)
@@ -57,7 +59,6 @@
 (defstruct (call-node (:include tnode)) function arguments)
 (defstruct (vop-node (:include tnode)) vop arguments)
 (defstruct (block-node (:include tnode)) name form)
-(defstruct (lambda-node (:include tnode)) name arguments declarations body)
 (defstruct (tagbody-node (:include tnode)) forms)
 (defstruct (go-node (:include tnode)) label-node)
 (defstruct (label-node (:include tnode)) label)

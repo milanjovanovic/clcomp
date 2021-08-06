@@ -24,7 +24,7 @@
 (defstruct (local-component-fixup (:include fixup)))
 (defstruct (compile-function-fixup (:include fixup)) function)
 (defstruct (load-time-eval-fixup (:include fixup)))
-(defstruct (vmem-fixup (:include fixup)))
+(defstruct (compile-time-constant-fixup (:include fixup)) form)
 
 (defstruct slabels alist)
 (defstruct ssa-env labels)
@@ -235,17 +235,6 @@
      (when leaf
        (emit-single-return-sequence lambda-ssa place block))
      block)
-    ;;FIXME, this should just fall to EMIT-SSA
-    (load-time-value-node
-     (emit-load-time-value-node-ssa node lambda-ssa leaf place block)
-     ;; (emit lambda-ssa (make-ssa-load :to place
-     ;; 				     :from (make-load-time-eval-fixup :name 'fixup)) block)
-     (when leaf
-       (emit-single-return-sequence lambda-ssa place block))
-     block)
-    ;;FIXME, this should just fall to EMIT-SSA
-    (lambda-node
-     (emit-lambda-node-ssa node lambda-ssa leaf place block))
     (t (emit-ssa node lambda-ssa leaf place block))))
 
 ;;; FIXME, there is more here
@@ -396,26 +385,29 @@
 	       block)))
       (incf index))))
 
-(defun emit-load-time-value-node-ssa (node lambda-ssa leaf place block)
-  (let* ((fixup-symbol (generate-fixup-symbol))
-	 (fixup-place (make-load-time-eval-fixup :name fixup-symbol)))
-    (add-sub-lambda lambda-ssa (ssa-parse-lambda (load-time-value-node-node node)) fixup-symbol)
-    (if place
-	(emit lambda-ssa (make-ssa-load :to place :from fixup-place) block)
-	(if leaf
-	    (emit-single-return-sequence lambda-ssa fixup-place block)
-	    (emit lambda-ssa (make-ssa-value :value fixup-place) block)))
-    block))
+(defun rip-relative-node-to-fixup (node)
+  (let ((fixup-sym (generate-fixup-symbol)))
+    (etypecase node
+      (lambda-node (make-local-component-fixup :name fixup-sym))
+      (load-time-value-node (make-load-time-eval-fixup :name fixup-sym))
+      (fun-rip-relative-node (make-compile-function-fixup :name fixup-sym
+							  :function (fun-rip-relative-node-form node)))
+      (compile-time-constant-node (make-compile-time-constant-fixup :name fixup-sym
+								    :form (compile-time-constant-node-form node))))))
 
-(defun emit-lambda-node-ssa (node lambda-ssa leaf place block)
-  (let* ((fixup-symbol (generate-fixup-symbol))
-	 (fixup-place (make-local-component-fixup :name fixup-symbol)))
-    (add-sub-lambda lambda-ssa (ssa-parse-lambda node) fixup-symbol)
+(defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
+  (let ((fixup (rip-relative-node-to-fixup node)))
+    (typecase node
+      (load-time-value-node
+       (add-sub-lambda lambda-ssa (ssa-parse-lambda (load-time-value-node-node node)) fixup))
+      (lambda-node
+       (add-sub-lambda lambda-ssa (ssa-parse-lambda node) fixup)))
+    (lambda-add-fixup fixup lambda-ssa)
     (if place
-	(emit lambda-ssa (make-ssa-load :to place :from fixup-place) block)
+	(emit lambda-ssa (make-ssa-load :to place :from fixup) block)
 	(if leaf
-	    (emit-single-return-sequence lambda-ssa fixup-place block)
-	    (emit lambda-ssa (make-ssa-value :value fixup-place) block)))
+	    (emit-single-return-sequence lambda-ssa fixup block)
+	    (emit lambda-ssa (make-ssa-value :value fixup) block)))
     block))
 
 ;;; FIXME, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
@@ -431,8 +423,7 @@
     (tagbody-node (emit-tagbody-node-ssa node lambda-ssa leaf place block))
     (go-node (emit-go-node-ssa node lambda-ssa leaf place block))
     (setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
-    (load-time-value-node (emit-load-time-value-node-ssa node lambda-ssa leaf place block))
-    (lambda-node (emit-lambda-node-ssa node lambda-ssa leaf place block))))
+    (rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))))
 
 ;;; check all jumps/successors on blocks and reorder if necessary
 ;; FIXME, for now we need to check if JUMP form is last block instruction
