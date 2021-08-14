@@ -18,6 +18,7 @@
 (defstruct (function-value-place (:include fixed-place)))
 
 (defstruct (virtual-place (:include named-place)))
+(defstruct (phi-place (:include named-place)))
 (defstruct (var-place (:include named-place)))
 
 (defstruct (fixup (:include named-place)))
@@ -28,10 +29,10 @@
 
 (defstruct slabels alist)
 (defstruct ssa-env labels)
-(defstruct lambda-ssa blocks blocks-index (env (make-ssa-env)) fixups sub-lambdas)
+(defstruct lambda-ssa blocks blocks-index (env (make-ssa-env)) fixups sub-lambdas (phi-connections (make-hash-table)))
 
-(defstruct ssa-block index ir ssa succ cond-jump uncond-jump predecessors label defined
-  live-in virtuals live-gen live-kill live-out)
+(defstruct ssa-block index ir ssa succ cond-jump uncond-jump predecessors
+  sealed processed label defined phis live-in virtuals live-gen live-kill live-out)
 
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
@@ -41,7 +42,7 @@
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
 (defstruct (ssa-go (:include ssa-form)) label)
 (defstruct (ssa-label (:include ssa-form)) label)
-;;; do we need SSA-VALUE ??
+;;; Do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
 
 (defstruct (ssa-base-return (:include ssa-form)))
@@ -59,6 +60,8 @@
 
 (defparameter *instr-offset* 2)
 (defparameter *debug-stream* t)
+
+(defparameter *gen-symbol-counter* 0)
 
 (defparameter *ssa-symbol-counter* 0)
 (defun generate-virtual-place (&optional (s "T-"))
@@ -89,8 +92,39 @@
       (make-symbol (concatenate 'string "FIXUP-" (write-to-string *fixup-symbol-counter*)))
     (incf *fixup-symbol-counter*)))
 
+(defparameter *phi-place-symbol-counter* 0)
+(defun generate-phi-place ()
+  (let ((symbol (make-symbol (concatenate 'string "PHI-PLACE-" (write-to-string *phi-place-symbol-counter*)))))
+    (prog1 (make-phi-place :name symbol)
+      (incf *phi-place-symbol-counter*))))
+
 (defun lambda-add-fixup (fixup lambda-ssa)
   (push fixup (lambda-ssa-fixups lambda-ssa)))
+
+(defun ssa-block-add-phi (ssa-block phi)
+  (setf (ssa-block-phis ssa-block) (acons (named-place-name (phi-place phi)) phi
+					  (ssa-block-phis ssa-block))))
+
+(defun ssa-block-replace-phi (ssa-block phi-place new-value)
+  (let ((cons (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
+    (setf (cdr cons) new-value)))
+
+(defun ssa-block-get-maybe-phi (ssa-block phi-place)
+  (cdr (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
+
+(defun ssa-block-is-place-phi (ssa-block phi-place)
+  (phi-p (ssa-block-get-maybe-phi ssa-block phi-place)))
+
+(defun add-phi-connections (phi operand lambda-ssa)
+  (unless (equalp (phi-place phi) operand)
+    (let ((name (named-place-name operand)))
+      (push phi (gethash name (lambda-ssa-phi-connections lambda-ssa))))))
+
+(defun get-phi-connections (phi-place lambda-ssa)
+  (gethash (named-place-name phi-place) (lambda-ssa-phi-connections lambda-ssa)))
+
+(defun ssa-block-all-phis (ssa-block)
+  (mapcar #'cdr (ssa-block-phis ssa-block)))
 
 (defun ssa-add-block (lambda-ssa block)
   (push block (lambda-ssa-blocks lambda-ssa)))
@@ -173,6 +207,9 @@
 
 (defun ssa-block-first-index (block)
   (ssa-form-index (ssa-block-first-instruction block)))
+
+(defun ssa-block-last-index (block)
+  (ssa-form-index (ssa-block-last-instruction block)))
 
 (defun is-last-instr-jump (block)
   (and (ssa-go-p (ssa-block-last-instruction block))
@@ -324,7 +361,6 @@
     (if (cdr forms)
 	(setf block (emit-ssa form-node lambda-ssa nil nil block))
 	(setf block (emit-ssa form-node lambda-ssa leaf place block)))))
-
 
 (defun emit-tagbody-node-ssa (node lambda-ssa leaf place block)
   (push-labels-env lambda-ssa)
@@ -500,13 +536,14 @@
 ;;; value numbering
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defstruct phi operands (place (generate-virtual-place "PHI-")))
+(defstruct phi operands incomplete variable place block-index)
 
-
-(defun phi-add-operand (phi operand)
-  (typecase operand
-    (phi (push operand (phi-operands phi)))
-    (t (push operand (phi-operands phi)))))
+(defun phi-add-operand (phi operand lambda-ssa)
+  (when (phi-place-p operand)
+    (add-phi-connections phi operand lambda-ssa))
+  (etypecase operand
+    ((or virtual-place phi-place)
+     (push operand (phi-operands phi)))))
 
 (defun get-block-def (block symbol)
   (cdr (assoc symbol (ssa-block-defined block))))
@@ -519,38 +556,14 @@
 	      (acons var value (ssa-block-defined block))))
     value))
 
-(defun phi-has-operand (phi phi-operand)
-  (dolist (op (phi-operands phi))
-    (when (eq op phi-operand)
-      (return-from phi-has-operand t))))
-
-;; FIXME, not-phi removing phi that we want
-(defun get-all-phis-acons (phi lambda-ssa)
-  (let (phis)
-    (dolist (block (lambda-ssa-blocks lambda-ssa))
-      (dolist (acons (ssa-block-defined block))
-	(when (and (phi-p (cdr acons))
-		   (not (eq phi (cdr acons)))
-		   (phi-has-operand (cdr acons) phi))
-	  (pushnew acons phis :key #'cdr))))
-    phis))
-
-(defun replace-phi-operands (phi old-phi new-value)
-  (let (new-operands)
-    (dolist (operand (phi-operands phi))
-      (if (eq operand old-phi)
-	  (push new-value new-operands)
-	  (push operand new-operands)))
-    (setf (phi-operands phi) new-operands)))
-
-(defun replace-phi (phi same lambda-ssa)
-  (dolist (block (lambda-ssa-blocks lambda-ssa))
-    (dolist (acons (ssa-block-defined block))
-      (let ((p (cdr acons)))
-	(when (phi-p p)
-	  (if (eq p phi)
-	      (setf (cdr acons) same)
-	      (replace-phi-operands p phi same)))))))
+(defun replace-phi-operand (phi old new)
+  (let (newops)
+    (dolist (op (phi-operands phi))
+      (if (equalp op old)
+	  (push new newops)
+	  (push op newops)))
+    (setf (phi-operands phi)
+	  newops)))
 
 (defun fill-blocks-predecessors (lambda-ssa)
   (dolist (block (lambda-ssa-blocks lambda-ssa))
@@ -569,37 +582,60 @@
   (let ((vplace (generate-virtual-place "V-")))
     (set-block-def block (named-place-name place) vplace)))
 
-(defun try-remove-trivial-phi (phi lambda-ssa)
-  (let ((same nil))
+(defun try-remove-trivial-phi (phi block lambda-ssa)
+  (let ((same nil)
+	(phi-place (phi-place phi)))
     (dolist (operand (phi-operands phi))
-      (cond ((or (eq operand same)
-		 (eq operand phi)))
+      (cond ((or (eql operand same)
+		 (eq operand (phi-place phi))))
 	    ((not (null same))
 	     (return-from try-remove-trivial-phi phi))
 	    (t (setf same operand))))
-    (replace-phi phi same lambda-ssa)
-    (let ((uses (get-all-phis-acons phi lambda-ssa)))
-      (dolist (phi-cons uses)
-	(let ((p (cdr phi-cons)))
-	  (when (phi-p p)
-	    (try-remove-trivial-phi p lambda-ssa)))))
+    (ssa-block-replace-phi block phi-place same)
+    (let ((phi-usages (get-phi-connections phi-place lambda-ssa)))
+      (when phi-usages
+	(dolist (uphi phi-usages)
+	  (replace-phi-operand uphi phi-place same)
+	  (try-remove-trivial-phi uphi
+				  (ssa-find-block-by-index lambda-ssa (phi-block-index uphi))
+				  lambda-ssa))))
     same))
 
-(defun phi-add-operands (place phi predecessors lambda-ssa)
+(defun phi-add-operands (place phi predecessors block lambda-ssa)
   (dolist (pblock predecessors)
-    (phi-add-operand phi (ssa-read-variable place (ssa-find-block-by-index lambda-ssa pblock) lambda-ssa)))
-  (try-remove-trivial-phi phi lambda-ssa))
+    (phi-add-operand phi
+		     (ssa-read-variable place (ssa-find-block-by-index lambda-ssa pblock) lambda-ssa)
+		     lambda-ssa))
+  (try-remove-trivial-phi phi block lambda-ssa))
+
+(defun seal-block (ssa-block lambda-ssa)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  (let ((phis (ssa-block-all-phis ssa-block)))
+    (dolist (phi phis)
+      (when (phi-incomplete phi)
+	(setf (phi-incomplete phi) nil)
+	(phi-add-operands (phi-variable phi) phi (ssa-block-predecessors ssa-block) ssa-block lambda-ssa)))
+    (setf (ssa-block-sealed ssa-block) t)))
 
 (defun read-variable-recursive (place block lambda-ssa)
   (let ((predecessors (ssa-block-predecessors block)))
-    (when predecessors
-      (if (= (length predecessors) 1)
-	  (set-block-def block (named-place-name place)
-			 (ssa-read-variable place (ssa-find-block-by-index lambda-ssa (first predecessors)) lambda-ssa))
-	  (let* ((phi (make-phi)))
-	    (set-block-def block (named-place-name place) phi)
-	    (set-block-def block (named-place-name place)
-			   (phi-add-operands place phi predecessors lambda-ssa)))))))
+    (if (not (ssa-block-sealed block))
+	(let* ((phi-place (generate-phi-place))
+	       (phi (make-phi :incomplete t :variable place
+			      :place phi-place :block-index (ssa-block-index block))))
+	  (ssa-block-add-phi block phi)
+	  (set-block-def block (named-place-name place) phi-place))
+	(when predecessors
+	  (if (= (length predecessors) 1)
+	      (set-block-def block (named-place-name place)
+			     (ssa-read-variable place (ssa-find-block-by-index lambda-ssa (first predecessors)) lambda-ssa))
+	      (let* ((phi-place (generate-phi-place))
+		     (phi (make-phi :variable place :place phi-place
+				    :block-index (ssa-block-index block))))
+		(ssa-block-add-phi block phi)
+		(set-block-def block (named-place-name place) phi-place)
+		(phi-add-operands place phi predecessors block lambda-ssa)
+		phi-place ))))))
 
 (defun ssa-read-variable (place block lambda-ssa)
   (or (get-block-def block (named-place-name place)) 
@@ -612,7 +648,7 @@
     (t place)))
 
 (defun transform-read  (place block lambda-ssa)
-  (typecase place
+  (typecase  place
     (fixup place)
     (named-place (ssa-read-variable place block lambda-ssa))
     (t place)))
@@ -636,27 +672,40 @@
 (defun do-value-numbering (lambda-ssa)
   (let ((*ssa-symbol-counter* 0))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
-      (ssa-transform-block-ir b lambda-ssa)))
+      (ssa-transform-block-ir b lambda-ssa)
+      (seal-block b lambda-ssa)))
   lambda-ssa)
 
-(defun ssa-reset-original-ir (lambda-ssa)
-  (dolist (block (lambda-ssa-blocks lambda-ssa))
-    (setf (ssa-block-ir block) nil))
-  lambda-ssa)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun ssa-lambda-index-blocks (lambda-ssa)
-  (let ((index-map (make-hash-table)))
-    (dolist (block (lambda-ssa-blocks lambda-ssa))
-      (setf (gethash (ssa-block-index block) index-map) block))
-    (setf (lambda-ssa-blocks-index lambda-ssa) index-map)))
+(defun every-predecessor-processed-p (predecessor-indexes lambda-ssa)
+  (dolist (pblock predecessor-indexes)
+    (let ((block (ssa-find-block-by-index lambda-ssa pblock)))
+      (unless (ssa-block-processed block)
+	(return-from every-predecessor-processed-p nil))))
+  t)
 
+(defun maybe-seal-block (ssa-block lambda-ssa)
+  (unless (ssa-block-sealed ssa-block)
+    (when (every-predecessor-processed-p (ssa-block-predecessors ssa-block) lambda-ssa)
+      (seal-block ssa-block lambda-ssa))))
 
-(defun set-block-virtuals (lambda-ssa)
-  (dolist (block (lambda-ssa-blocks lambda-ssa))
-    (setf (ssa-block-virtuals block)
-	  (collect-block-virtuals block))))
+;;; FIXME, RECURSIVE, possible stack overflow in compiler when it's built
+(defun ssa-block-do-construction (ssa-block lambda-ssa)
+  (declare (optimize (debug 3) (safety 3) (speed 3)))
+  (maybe-seal-block ssa-block lambda-ssa)
+  (unless (ssa-block-processed ssa-block)
+    (ssa-transform-block-ir ssa-block lambda-ssa)
+    (setf (ssa-block-processed ssa-block) t)
+    (dolist (sblock (ssa-block-successors ssa-block lambda-ssa))
+      (ssa-block-do-construction sblock lambda-ssa))
+    (maybe-seal-block ssa-block lambda-ssa)))
 
-(defun ssa-parse-lambda (lambda-node)
+(defun construct-ssa (lambda-ssa)
+  (ssa-block-do-construction (first (lambda-ssa-blocks lambda-ssa))
+			     lambda-ssa))
+
+(defun lambda-construct-ssa (lambda-node)
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
 	 (*ssa-symbol-counter* 0)
@@ -670,10 +719,28 @@
     (ssa-lambda-index-blocks lambda-ssa)
     (ssa-maybe-fix-blocks-connections lambda-ssa)
     (fill-blocks-predecessors lambda-ssa)
-    (do-value-numbering lambda-ssa)
+    (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
     (set-block-virtuals lambda-ssa)
     lambda-ssa))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun ssa-reset-original-ir (lambda-ssa)
+  (dolist (block (lambda-ssa-blocks lambda-ssa))
+    (setf (ssa-block-ir block) nil))
+  lambda-ssa)
+
+(defun ssa-lambda-index-blocks (lambda-ssa)
+  (let ((index-map (make-hash-table)))
+    (dolist (block (lambda-ssa-blocks lambda-ssa))
+      (setf (gethash (ssa-block-index block) index-map) block))
+    (setf (lambda-ssa-blocks-index lambda-ssa) index-map)))
+
+(defun set-block-virtuals (lambda-ssa)
+  (dolist (block (lambda-ssa-blocks lambda-ssa))
+    (setf (ssa-block-virtuals block)
+	  (collect-block-virtuals block))))
 
 ;;; interval building
 (defparameter *interval-counter* 0)
@@ -780,13 +847,6 @@
   (mapcar (lambda (index)
 	    (ssa-find-block-by-index lambda-ssa index))
 	  (ssa-block-successors-indexes ssa-block)))
-
-(defun ssa-block-phis (sblock)
-  (let ((phis nil))
-    (dolist (pair (ssa-block-defined sblock))
-      (when (phi-p (cdr pair))
-	(push (cdr pair) phis )))
-    phis))
 
 (defun merge-all-blocks-live-in (successors-live-in)
   (let ((live nil))
@@ -995,8 +1055,9 @@
 	     (successors-live-in (mapcar #'ssa-block-live-in successor-blocks))
 	     (live (merge-all-blocks-live-in successors-live-in)))
 
+	;; FIXME, ssa-block-phis doesn't return all phis in block
 	(dolist (sb successor-blocks)
-	  (let ((phis (ssa-block-phis sb)))
+	  (let ((phis (ssa-block-all-phis sb)))
 	    (setf live (live-add-phis-operands live phis block))))
 
 	(let ((start (ssa-form-index (ssa-block-first-instruction block)))
@@ -1024,7 +1085,7 @@
 		(add-use-positions use-positions read (make-use-read-pos :index instr-index))
 		(pushnew read live :test #'equalp))))
 
-	  (dolist (phi (ssa-block-phis block))
+	  (dolist (phi (ssa-block-all-phis block))
 	    (let ((phi-place (phi-place phi)))
 	      (setf live (remove-from-live live phi-place))))
 
@@ -1132,7 +1193,7 @@
 (defun get-stack-index ()
   (incf *stack-offset*))
 
-(defstruct alloc unhandled active inactive handled)
+(defstruct alloc unhandled active inactive handled (per-name-handled (make-hash-table)) (block-intervals (make-hash-table)))
 
 (defun alloc-add-unhandled (alloc interval)
   (push interval (alloc-unhandled alloc))
@@ -1156,6 +1217,8 @@
   (setf (alloc-handled alloc)
 	(acons (interval-number interval) interval
 	       (alloc-handled alloc)))
+  (let ((name (interval-name interval)))
+    (push interval (gethash name (alloc-per-name-handled alloc))))
   (alloc-remove-active alloc interval)
   (alloc-remove-inactive alloc interval))
 
@@ -1208,20 +1271,20 @@
 
 
 (defun collect-interval-childs (alloc interval)
-  (let (childs)
+  (let ((current-interval interval)
+	(childs nil))
     (tagbody
      start
-       (let ((child-num (interval-child interval)))
+       (let ((child-num (interval-child current-interval)))
 	 (when child-num
 	   (let ((child-interval (alloc-get-handled-interval alloc child-num)))
 	     (push child-interval childs)
-	     (setf interval child-interval)
+	     (setf current-interval child-interval)
 	     (go start)))))
     (when childs
       (cons interval (reverse childs)))))
 
-;;; FIXME, generate split moves
-(defun order-split-moves (alloc)
+(defun generate-split-intervals-moves (alloc)
   (let ((moves (make-hash-table)))
     (dolist (pair (alloc-handled alloc))
       (let ((interval (cdr pair)))
@@ -1231,7 +1294,7 @@
 		(current-interval nil))
 	    (dolist (intv intervals)
 	      (when current-interval
-		(let ((load (make-ssa-load :index (interval-end current-interval)
+		(let ((load (make-ssa-load :index (1+ (interval-end current-interval))
 					   :from  (make-interval-storage current-interval)
 					   :to (make-interval-storage intv))))
 		  (push load (gethash (ssa-form-index load) moves))))
@@ -1366,14 +1429,95 @@
 		     (when (interval-ranges old-interval)
 		       (alloc-add-handled alloc old-interval)))))))))))
 
+(defun make-block-used-intervals (lambda-ssa alloc)
+  (let ((intervals (sort (mapcar #'cdr (alloc-handled alloc)) #'< :key #'interval-start))
+	(block-intervals (make-hash-table)))
+    (dolist (block (lambda-ssa-blocks lambda-ssa))
+      (let ((block-start (ssa-block-first-index block))
+	    (block-end (ssa-block-last-index block)))
+	(dolist (interval intervals)
+	  (let* ( (istart (interval-start interval))
+		  (iend (interval-end interval)))
+	    (if (or (and (>= istart block-start)
+			 (<= istart block-end))
+		    (and (>= iend block-start)
+			 (<= iend block-end)))
+		(push interval (gethash (ssa-block-index block) block-intervals))
+		(when (> istart block-start)
+		  (return)))))))
+    (setf (alloc-block-intervals alloc) block-intervals)))
 
-#+nil(defun intervals-that-start-at (intervals index)
+(defun get-first-or-last-intervals-in-block (block-index alloc what)
+  (let ((block-intervals (gethash block-index (alloc-block-intervals alloc)))
+	(fih (make-hash-table))
+	(compare-fun (if (eq :first what) #'< #'>)))
+    (dolist (interval block-intervals)
+      (let ((existing-interval (gethash (interval-name interval) fih)))
+	(if existing-interval
+	    (when (funcall compare-fun (interval-start interval) (interval-start existing-interval))
+	      (setf (gethash (interval-name interval) fih) interval))
+	    (setf (gethash (interval-name interval) fih) interval))))
+    fih))
+
+(defun hash-block-phis (block)
+  (let ((h (make-hash-table)))
+    (dolist (phi (ssa-block-all-phis block))
+      (setf (gethash (named-place-name (phi-place phi)) h) phi))
+    h))
+
+;;; FIXME
+;;; when inserting resolve moves check to see if last instruction is JUMP
+;;; if it is MOV's need to be inserted before JUMP
+
+#+nil(defun resolve-phi-move (phi block lambda-ssa alloc)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  (print (list 'resolve-phi-nove phi))
+  (let ((predecessors (ssa-block-predecessors block)))
+    ))
+
+#+nil(defun resolve-maybe-split-interval-move (interval)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
   )
 
-
-#+nil(defun resolve (lambda-ssa intervals)
-  (dolist (cblock (lambda-ssa-blocks lambda-ssa))
-    (let ((successors (ssa-block-successors cblock lambda-ssa)))
+(defun resolve-data-flow (lambda-ssa alloc)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  (make-block-used-intervals lambda-ssa alloc)
+  (dolist (pblock (lambda-ssa-blocks lambda-ssa))
+    (let ((successors (ssa-block-successors pblock lambda-ssa))
+	  (predecessor-block-last-intervals (get-first-or-last-intervals-in-block (ssa-block-index pblock) alloc :last)))
       (dolist (sblock successors)
-	(let ((is (intervals-that-start-at intervals (ssa-block-first-index sblock))))
-	  )))))
+	(let ((start-intervals (get-first-or-last-intervals-in-block (ssa-block-index sblock) alloc :first))
+	      (sblock-phis (hash-block-phis sblock)))
+	  (dolist (int (hash-values start-intervals))
+	    (let ((maybe-phi (gethash (interval-name int) sblock-phis))
+		  (interval-name (interval-name int)))
+	      (if maybe-phi
+		  ;; (resolve-phi-move maybe-phi sblock lambda-ssa alloc)
+		  'FIXME
+		  (when (or (interval-parent int)
+			    (interval-child int))
+		    (let ((pred-last-interval (gethash interval-name predecessor-block-last-intervals)))
+		      ;; when interval is direct parent or child then move is already inserted when splitting
+		      (when (and (/= (interval-number int) (interval-number pred-last-interval))
+				 (not (or (= (interval-parent int) (interval-number pred-last-interval))
+					  (= (interval-parent pred-last-interval) (interval-number int)))))
+			;; insert MOVE
+			(print (list pred-last-interval int)))))))))))))
+
+;;; Test case that currently doesn't work
+#+nil(lambda-construct-ssa (create-node (clcomp-macroexpand '(lambda (a)
+						     (let ((c 0))
+						       (tagbody 
+							bar
+							  (setf c (+ c 1))
+							  (when a (go bar)))
+						       c)))))
+
+#+nil(lambda-construct-ssa (create-node (clcomp-macroexpand '(lambda (a)
+								 (tagbody
+								    (when 1 (go third))
+								  second
+								    (print 1)
+								  third
+								    (when 2 (go second)))
+							 a))))
