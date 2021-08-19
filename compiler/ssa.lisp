@@ -669,13 +669,124 @@
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; remove not needed PHI in a case of irreducible loop
+
+(defun sccs-collect (index successors-map visited)
+  (unless (gethash index visited)
+    (setf (gethash index visited) t)
+    (let ((r nil))
+      (dolist (i (gethash index successors-map))
+	(setf r (append (sccs-collect i successors-map visited) r)))
+      (cons index r))))
+
+(defun dfs-get-order (index successors-map visited res)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  (unless (gethash index visited)
+    (setf (gethash index visited) t)
+    (let* ((succ-indexes (gethash index successors-map)))
+      (dolist (i succ-indexes)
+	(dfs-get-order i successors-map visited res))
+      (push index (car res)))))
+
+(defun transpose-graph (indexes successors-map)
+  (let ((transposed-successors-map (make-hash-table)))
+    (dolist (index indexes)
+      (dolist (succ-index (gethash index successors-map))
+	(push index (gethash succ-index transposed-successors-map))))
+    transposed-successors-map))
+
+(defun compute-phi-sccs (indexes successors-map)
+  (let* ((result (cons nil nil))
+	 (_ (dfs-get-order (first indexes) successors-map (make-hash-table) result))
+	 (order (car result))
+	 (transposed-successors (transpose-graph indexes successors-map))
+	 (visited (make-hash-table)))
+    (declare (ignore _))
+    (let ((sccs nil))
+      (dolist (i order)
+	(when (not (gethash i visited))
+	  (push (sccs-collect i transposed-successors visited) sccs)))
+      sccs)))
+
+(defun collect-scc-phis (scc lambda-ssa)
+  (let ((phis nil))
+    (dolist (bindex scc)
+      (setf phis (append phis
+			 (ssa-block-all-phis (ssa-find-block-by-index lambda-ssa bindex)))))
+    phis))
+
+(defun phi-operand-is-in-scc-in-block-phis (operand block)
+  (when (phi-place-p operand)
+    (dolist (cons (ssa-block-phis block))
+      (when (equalp operand (phi-place (cdr cons)) )
+	(return t)))))
+
+;;; FIXME, we are looking in both write/read virtuals
+;;; we should only look at writes
+(defun phi-operand-is-in-scc (operand scc lambda-ssa)
+  (dolist (index scc)
+    (let ((block (ssa-find-block-by-index lambda-ssa index)))
+      (when (or
+	     ;; don't look at read virtuals
+	     ;; (find operand (first (ssa-block-virtuals block)) :test 'equalp)
+	     (find operand (second (ssa-block-virtuals block)) :test 'equalp)
+	     (phi-operand-is-in-scc-in-block-phis operand block))
+	(return t)))))
+
+(defun collect-redundant-phis-for-scc (scc lambda-ssa)
+  (let ((phis (collect-scc-phis scc lambda-ssa))
+	(this-scc-phis (make-hash-table :test #'equalp))
+	(foperand-phis (make-hash-table :test #'equalp)))
+    (dolist (phi phis)
+      (when (not (every (lambda (operand)
+			  (phi-operand-is-in-scc operand scc lambda-ssa))
+			(phi-operands phi)))
+	(setf (gethash (phi-place phi) this-scc-phis) phi)))
+    (dolist (phi (hash-values this-scc-phis))
+      (let ((operands (phi-operands phi)))
+	;; FIXME, we can have more than 2 operands ?
+	(when (= 2 (length operands))
+	  (let ((phi-operand nil)
+		(foreign-operand nil))
+	    (dolist (op operands)
+	      (when (and (phi-place-p op)
+			 (gethash op this-scc-phis))
+		(setf phi-operand op))
+	      (when (not (phi-operand-is-in-scc op scc lambda-ssa))
+		(setf foreign-operand op)))
+	    (when (and phi-operand foreign-operand)
+	      (push phi (gethash foreign-operand foperand-phis)))))))
+    foperand-phis))
+
+(defun replace-redundant-phis (value phis lambda-ssa)
+  (print (list 'replacing-redundant-phis phis value))
+  (dolist (phi phis)
+    (let* ((block-index (phi-block-index phi))
+	   (block (ssa-find-block-by-index lambda-ssa block-index)))
+      (ssa-block-replace-phi block (phi-place phi) value))))
+
+(defun remove-redundant-phis (lambda-ssa)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  (let ((successors-map (make-hash-table))
+	(indexes nil))
+    (dolist (block (lambda-ssa-blocks lambda-ssa))
+      (let ((index (ssa-block-index block))
+	    (successors (ssa-block-successors-indexes block)))
+	(push index indexes)
+	(setf (gethash index successors-map) successors)))
+    (let ((sccs (compute-phi-sccs (reverse indexes) successors-map)))
+      (dolist (scc sccs)
+	(let ((redundant-phis (collect-redundant-phis-for-scc scc lambda-ssa)))
+	  (dolist (value (hash-keys redundant-phis))
+	    (replace-redundant-phis value (gethash value redundant-phis) lambda-ssa)))))))
+
 (defun do-value-numbering (lambda-ssa)
   (let ((*ssa-symbol-counter* 0))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
       (ssa-transform-block-ir b lambda-ssa)
       (seal-block b lambda-ssa)))
   lambda-ssa)
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun every-predecessor-processed-p (predecessor-indexes lambda-ssa)
@@ -797,6 +908,7 @@
 (defun ssa-place (place)
   (typecase place
     (virtual-place place)
+    (phi-place place)
     (phi (phi-place place))))
 
 (defun ssa-form-write-place (ssa-form)
