@@ -164,7 +164,8 @@
 
 (defun macro-when (form)
   (list 'if (second form)
-	(third form)))
+	(append (list 'progn)
+		(nthcdr 2 form))))
 (setf (gethash 'when *macros*) 'macro-when)
 
 (defun macro-do-parse-step-setq-form (bindings)
