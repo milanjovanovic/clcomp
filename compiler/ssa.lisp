@@ -794,88 +794,35 @@
 		(push scc sccs)))))	  
 	sccs))))
 
-(defun collect-scc-phis (scc lambda-ssa)
-  (let ((phis nil))
-    (dolist (bindex scc)
-      (setf phis (append phis
-			 (ssa-block-all-phis (ssa-find-block-by-index lambda-ssa bindex)))))
-    phis))
+(defun replace-scc-by-value (scc-phis value lambda-ssa)
+  (dolist (phi scc-phis)
+    (add-phi-value-replacement (phi-place phi) value lambda-ssa )))
 
-(defun phi-operand-is-in-scc-in-block-phis (operand block)
-  (when (phi-place-p operand)
-    (dolist (cons (ssa-block-phis block))
-      (when (equalp operand (phi-place (cdr cons)) )
-	(return t)))))
+(defun process-scc (scc phc lambda-ssa)
+  (when (> (length scc) 0)
+    (let ((inner nil)
+	  (outer-ops nil))
+      (dolist (phi-place scc)
+	(let ((is-inner t))
+	  (let ((phi (phc-get-phi phc phi-place )))
+	    (dolist (operand (phi-operands phi))
+	      (when (not (find operand scc))
+		(pushnew operand outer-ops)
+		(setf is-inner nil)))
+	    (when is-inner
+	      (pushnew phi inner)))))
+      (cond ((= 1 (length outer-ops))
+	     (replace-scc-by-value scc (first outer-ops) lambda-ssa))
+	    ((> (length outer-ops) 1)
+	     (remove-redundant-phis inner lambda-ssa))))))
 
-;;; We only look for virtuals that are defined in scc/block
-(defun phi-operand-is-in-scc (operand scc lambda-ssa)
-  (dolist (index scc)
-    (let ((block (ssa-find-block-by-index lambda-ssa index)))
-      (when (or
-	     ;; don't look at read virtuals
-	     ;; (find operand (first (ssa-block-virtuals block)) :test 'equalp)
-	     (find operand (second (ssa-block-virtuals block)) :test 'equalp)
-	     ;; operand can be PHI
-	     (phi-operand-is-in-scc-in-block-phis operand block))
-	(return t)))))
+(defun remove-redundant-phis (phis lambda-ssa)
+  (let ((phc (make-phi-sccs phis)))
+    ;; TODO, we need to  apply topological-sort on phis SCC
+    (dolist (scc (phis-connections-sccs phc))
+      (process-scc scc phc lambda-ssa ))))
 
-(defun collect-redundant-phis-for-scc (scc lambda-ssa)
-  (let ((phis (collect-scc-phis scc lambda-ssa))
-	(this-scc-phis (make-hash-table :test #'equalp))
-	(foperand-phis (make-hash-table :test #'equalp)))
-    (dolist (phi phis)
-      (when (phi-p phi)
-	(when (not (every (lambda (operand)
-			    (phi-operand-is-in-scc operand scc lambda-ssa))
-			  (phi-operands phi)))
-	  (setf (gethash (phi-place phi) this-scc-phis) phi))))
-    (dolist (phi (hash-values this-scc-phis))
-      (let ((operands (phi-operands phi)))
-	;; FIXME, we can have more than 2 operands ?
-	(when (> 2 (length operands))
-	  (error "We have more than 2 PHI operands"))
-	(when (= 2 (length operands))
-	  (let ((phi-operand nil)
-		(foreign-operand nil))
-	    (dolist (op operands)
-	      (when (and (phi-place-p op)
-			 (gethash op this-scc-phis))
-		(setf phi-operand op))
-	      (when (not (phi-operand-is-in-scc op scc lambda-ssa))
-		(setf foreign-operand op)))
-	    (when (and phi-operand foreign-operand)
-	      (push phi (gethash foreign-operand foperand-phis)))))))
-    foperand-phis))
-
-(defun replace-redundant-phis (value phis lambda-ssa)
-  (dolist (phi phis)
-    (let* ((block-index (phi-block-index phi))
-	   (block (ssa-find-block-by-index lambda-ssa block-index)))
-      (ssa-block-replace-phi block (phi-place phi) value)
-      (add-phi-value-replacement (phi-place phi) value lambda-ssa))))
-
-(defun remove-redundant-phis (lambda-ssa)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (let ((successors-map (make-hash-table))
-	(indexes nil))
-    (dolist (block (lambda-ssa-blocks lambda-ssa))
-      (let ((index (ssa-block-index block))
-	    (successors (ssa-block-successors-indexes block)))
-	(push index indexes)
-	(setf (gethash index successors-map) successors)))
-    (let ((sccs (compute-phi-sccs (reverse indexes) successors-map)))
-      (dolist (scc sccs)
-	(let ((redundant-phis (collect-redundant-phis-for-scc scc lambda-ssa)))
-	  (dolist (value (hash-keys redundant-phis))
-	    (replace-redundant-phis value (gethash value redundant-phis) lambda-ssa)))))))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; new implementation of PHI's SCC
-(defun collect-all-places (lambda-ssa)
+(defun collect-all-phis (lambda-ssa)
   (let (good-phis)
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
       (let ((phis (ssa-block-all-phis sblock)))
@@ -888,7 +835,15 @@
   (successors (make-hash-table))
   (init 0)
   (identity (make-hash-table))
-  (reverse-index (make-hash-table)))
+  (reverse-index (make-hash-table))
+  (phis (make-hash-table))
+  sccs)
+
+(defun phc-add-phi (phc place phi)
+  (setf (gethash place (phis-connections-phis phc)) phi))
+
+(defun phc-get-phi (phc place)
+  (gethash place (phis-connections-phis phc)))
 
 (defun get-or-make-identity (phc identity)
   (let ((i (gethash identity (phis-connections-identity phc))))
@@ -901,7 +856,6 @@
 
 (defun identity-phi (index phc)
   (let ((value (gethash index (phis-connections-reverse-index phc))))
-    (print value)
     (and value
 	 (phi-place-p value)
 	 value)))
@@ -909,29 +863,29 @@
 (defun make-places-connections (phis)
   (let ((phc (make-phis-connections)))
     (dolist (phi phis)
-      (let ((phi-index (get-or-make-identity phc  (phi-place  phi))))
+      (phc-add-phi phc (phi-place phi) phi)
+      (let ((phi-index (get-or-make-identity phc  (phi-place phi))))
 	(dolist (operand (phi-operands phi))
 	  (let ((op-index (get-or-make-identity phc operand)))
 	    (push phi-index (gethash op-index (phis-connections-successors phc)))))))
     phc))
 
 
-(defun compute-phi-sccs-new (lambda-ssa)
-  (let* ((connections (make-places-connections (collect-all-places lambda-ssa)))
+(defun make-phi-sccs (phis)
+  (let* ((connections (make-places-connections phis))
 	 (indexes (sort (hash-values (phis-connections-identity connections)) #'< )))
-    (let ((sccs (compute-phi-sccs indexes  (phis-connections-successors connections))))
-      (print sccs)
+    (break)
+    (let ((sccs (compute-phi-sccs indexes (phis-connections-successors connections))))
       (when sccs
-	(let ((sccs-filtered nil))
-	  (dolist (scc sccs)
-	    (let ((scc-filtered nil))
-	      (dolist (index scc)
-		(let ((phi (identity-phi index connections)))
-		  (when phi
-		    (push phi scc-filtered))))
-	      (when scc-filtered
-		(push scc-filtered sccs-filtered))))
-	  sccs-filtered)))))
+	(dolist (scc sccs)
+	  (let ((scc-filtered nil))
+	    (dolist (index scc)
+	      (let ((phi (identity-phi index connections)))
+		(when phi
+		  (push phi scc-filtered))))
+	    (when scc-filtered
+	      (push scc-filtered (phis-connections-sccs connections)))))))
+    connections))
 
 ;;; END
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1019,6 +973,7 @@
 	(print-debug "Removing BLOCK " (ssa-block-index block))
 	(destroy-ssa-block block lambda-ssa)))))
 
+;;; TODO, create two dynamic vars to control whether to remove redundant PHI's
 (defun lambda-construct-ssa (lambda-node)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
   (let* ((*ssa-block-counter* 0)
@@ -1036,7 +991,7 @@
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
     (set-block-virtuals lambda-ssa)
-    (remove-redundant-phis lambda-ssa)
+    (remove-redundant-phis (collect-all-phis lambda-ssa) lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (compute-block-order lambda-ssa)
     lambda-ssa))
@@ -1959,6 +1914,14 @@
     (generate-graph lambda-ssa "default")
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
+
+;;; ChatGPT example of PHIS redundant elimination
+(make-lssa '(lambda (x y)
+   (let ((z (if (< x y) x y))
+         (w (if (< x y) x y)))
+     (+ z w))))
+
+
 
 ;;; Test case that currently doesn't work
 #+nil
