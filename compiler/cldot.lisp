@@ -20,7 +20,7 @@
 (defun format-ssa-place (place)
   (etypecase place
     (named-place
-     (format nil "~A" (named-place-name place)))
+     (format nil "~A" (get-place-name place)))
     (rcv-argument-place (format nil "RCV-ARG-PLACE-~A" (rcv-argument-place-index place)) )
     (arg-place (format nil "ARG-REG-~A" (argument-place-index place)))
     (argument-count-place "ARG-COUNT-REG" )
@@ -52,12 +52,12 @@
 (defun format-phi (phi)
   (format nil "~A: ~{~a~^, ~}" (car phi) (etypecase (cdr phi)
 					   (phi 
-					    (mapcar #'named-place-name (phi-operands (cdr phi))))
+					    (mapcar #'get-place-name (phi-operands (cdr phi))))
 					   (virtual-place
-					    (list (named-place-name (cdr phi)))))))
+					    (list (get-place-name (cdr phi)))))))
 
 (defun format-defined-place (dplace)
-  (format nil "~A : ~A" (car dplace) (named-place-name (cdr dplace))))
+  (format nil "~A : ~A" (car dplace) (get-place-name (cdr dplace))))
 (defun format-block (block)
   (let ((dplaces (ssa-block-defined block))
 	(ir (ssa-block-ssa block)))
@@ -67,13 +67,14 @@
 		      (:tr (:td (:b (cl-who:str (format nil "block: ~A"(ssa-block-index block))))))
 		      (when (ssa-block-label block)
 			(cl-who:htm
-			 (:tr (:td (:b (cl-who:str (cl-who:escape-string(format nil "label ~A" (ssa-block-label block)))))))))
+			 (:tr (:td (:b (cl-who:str (cl-who:escape-string (format nil "label ~A" (ssa-block-label block)))))))))
 		      (:tr (:td 
 			    (loop for place in dplaces
-				  do (cl-who:htm (cl-who:str (cl-who:escape-string(format-defined-place place))) (:br)))))
+				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-defined-place place))) (:br)))))
 		      (:tr (:td 
 			    (loop for phi in (ssa-block-phis block)
-				  do (cl-who:htm (cl-who:str (cl-who:escape-string(format-phi phi))) (:br)))))
+				  when (phi-p (cdr phi))
+				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-phi phi))) (:br)))))
 		      (:tr (:td :align "left"
 				(loop for ins in ir
 				      do (cl-who:htm (cl-who:str (cl-who:escape-string (format-ir ins))) (:br :align "left"))))))))))

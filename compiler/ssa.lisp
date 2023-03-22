@@ -18,7 +18,13 @@
 (defstruct (function-value-place (:include fixed-place)))
 
 (defstruct (virtual-place (:include named-place)))
-(defstruct (phi-place (:include named-place)))
+(defstruct (phi-place
+	    (:print-function (lambda (struct stream depth)
+			       (declare (ignore depth))
+			       (format stream "#S(PHI-PLACE :NAME ~A :REDUCED ~A"
+				       (named-place-name struct)
+				       (funcall (phi-place-reduced struct)))))
+	    (:include named-place)) reduced)
 (defstruct (var-place (:include named-place)))
 
 (defstruct (fixup (:include named-place)))
@@ -59,6 +65,16 @@
 (defstruct (ssa-known-values-fun-call (:include ssa-fun-call)) min-values)
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block)
+
+;;; because of REDUCED in PHI-PLACE we need custom NAMED-PLACE-NAME function
+(defun get-place-name (s)
+  (typecase s
+    (phi-place (let ((reduced (funcall (phi-place-reduced s))))
+		 (if reduced (named-place-name reduced)
+		     (named-place-name s))))
+    (otherwise (named-place-name s))))
+
+(defparameter *testb* nil)
 
 (defparameter *instr-offset* 2)
 
@@ -109,10 +125,14 @@
     (incf *fixup-symbol-counter*)))
 
 (defparameter *phi-place-symbol-counter* 0)
-(defun generate-phi-place ()
+(defun generate-phi-place (lambda-ssa)
   (let ((symbol (make-symbol (concatenate 'string "PHI-PLACE-" (write-to-string *phi-place-symbol-counter*)))))
-    (prog1 (make-phi-place :name symbol)
-      (incf *phi-place-symbol-counter*))))
+    (let ((place (make-phi-place :name symbol :reduced nil)))
+      (setf (phi-place-reduced  place)
+	    (lambda ()
+	      (gethash place (lambda-ssa-redundant-phis lambda-ssa))))
+      (incf *phi-place-symbol-counter*)
+      place)))
 
 (defun lambda-add-fixup (fixup lambda-ssa)
   (push fixup (lambda-ssa-fixups lambda-ssa)))
@@ -640,6 +660,7 @@
     (set-block-def block (named-place-name place) vplace)))
 
 (defun try-remove-trivial-phi (phi block lambda-ssa)
+  (declare (optimize (debug 3) (speed 0)))
   (let ((same nil)
 	(phi-place (phi-place phi)))
     (dolist (operand (phi-operands phi))
@@ -679,7 +700,7 @@
   (declare (optimize (debug 3) (safety 3) (speed 0)))
   (let ((predecessors (ssa-block-predecessors block)))
     (if (not (ssa-block-sealed block))
-	(let* ((phi-place (generate-phi-place))
+	(let* ((phi-place (generate-phi-place lambda-ssa))
 	       (phi (make-phi :incomplete t :variable place
 			      :place phi-place :block-index (ssa-block-index block))))
 	  (ssa-block-add-phi block phi)
@@ -688,7 +709,7 @@
 	  (if (= (length predecessors) 1)
 	      (set-block-def block (named-place-name place)
 			     (ssa-read-variable place (ssa-find-block-by-index lambda-ssa (first predecessors)) lambda-ssa))
-	      (let* ((phi-place (generate-phi-place))
+	      (let* ((phi-place (generate-phi-place lambda-ssa))
 		     (phi (make-phi :variable place :place phi-place
 				    :block-index (ssa-block-index block))))
 		(ssa-block-add-phi block phi)
@@ -758,17 +779,20 @@
     transposed-successors-map))
 
 (defun compute-phi-sccs (indexes successors-map)
-  (let* ((result (cons nil nil))
-	 (_ (dfs-get-order (first indexes) successors-map (make-hash-table) result))
-	 (order (car result))
-	 (transposed-successors (transpose-graph indexes successors-map))
-	 (visited (make-hash-table)))
-    (declare (ignore _))
-    (let ((sccs nil))
-      (dolist (i order)
-	(when (not (gethash i visited))
-	  (push (sccs-collect i transposed-successors visited) sccs)))
-      sccs)))
+  (when (> (length indexes) 0)
+    (let* ((result (cons nil nil))
+	   (_ (dfs-get-order (first indexes) successors-map (make-hash-table) result))
+	   (order (car result))
+	   (transposed-successors (transpose-graph indexes successors-map))
+	   (visited (make-hash-table)))
+      (declare (ignore _))
+      (let ((sccs nil))
+	(dolist (i order)
+	  (when (not (gethash i visited))
+	    (let ((scc (sccs-collect i transposed-successors visited)))
+	      (when scc
+		(push scc sccs)))))	  
+	sccs))))
 
 (defun collect-scc-phis (scc lambda-ssa)
   (let ((phis nil))
@@ -783,8 +807,7 @@
       (when (equalp operand (phi-place (cdr cons)) )
 	(return t)))))
 
-;;; FIXME, we are looking in both write/read virtuals
-;;; we should only look at writes
+;;; We only look for virtuals that are defined in scc/block
 (defun phi-operand-is-in-scc (operand scc lambda-ssa)
   (dolist (index scc)
     (let ((block (ssa-find-block-by-index lambda-ssa index)))
@@ -792,6 +815,7 @@
 	     ;; don't look at read virtuals
 	     ;; (find operand (first (ssa-block-virtuals block)) :test 'equalp)
 	     (find operand (second (ssa-block-virtuals block)) :test 'equalp)
+	     ;; operand can be PHI
 	     (phi-operand-is-in-scc-in-block-phis operand block))
 	(return t)))))
 
@@ -801,13 +825,15 @@
 	(foperand-phis (make-hash-table :test #'equalp)))
     (dolist (phi phis)
       (when (phi-p phi)
-       (when (not (every (lambda (operand)
-			   (phi-operand-is-in-scc operand scc lambda-ssa))
-			 (phi-operands phi)))
-	 (setf (gethash (phi-place phi) this-scc-phis) phi))))
+	(when (not (every (lambda (operand)
+			    (phi-operand-is-in-scc operand scc lambda-ssa))
+			  (phi-operands phi)))
+	  (setf (gethash (phi-place phi) this-scc-phis) phi))))
     (dolist (phi (hash-values this-scc-phis))
       (let ((operands (phi-operands phi)))
 	;; FIXME, we can have more than 2 operands ?
+	(when (> 2 (length operands))
+	  (error "We have more than 2 PHI operands"))
 	(when (= 2 (length operands))
 	  (let ((phi-operand nil)
 		(foreign-operand nil))
@@ -844,7 +870,73 @@
 	    (replace-redundant-phis value (gethash value redundant-phis) lambda-ssa)))))))
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; new implementation of PHI's SCC
+(defun collect-all-places (lambda-ssa)
+  (let (good-phis)
+    (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+      (let ((phis (ssa-block-all-phis sblock)))
+	(dolist (maybe-phi phis)
+	  (when (phi-p maybe-phi)
+	    (push maybe-phi good-phis)))))
+    good-phis))
+
+(defstruct phis-connections
+  (successors (make-hash-table))
+  (init 0)
+  (identity (make-hash-table))
+  (reverse-index (make-hash-table)))
+
+(defun get-or-make-identity (phc identity)
+  (let ((i (gethash identity (phis-connections-identity phc))))
+    (or i
+	(progn
+	  (setf (gethash identity  (phis-connections-identity phc))
+		(incf (phis-connections-init phc)))
+	  (setf (gethash (phis-connections-init phc) (phis-connections-reverse-index phc)) identity)
+	  (phis-connections-init phc)))))
+
+(defun identity-phi (index phc)
+  (let ((value (gethash index (phis-connections-reverse-index phc))))
+    (print value)
+    (and value
+	 (phi-place-p value)
+	 value)))
+
+(defun make-places-connections (phis)
+  (let ((phc (make-phis-connections)))
+    (dolist (phi phis)
+      (let ((phi-index (get-or-make-identity phc  (phi-place  phi))))
+	(dolist (operand (phi-operands phi))
+	  (let ((op-index (get-or-make-identity phc operand)))
+	    (push phi-index (gethash op-index (phis-connections-successors phc)))))))
+    phc))
+
+
+(defun compute-phi-sccs-new (lambda-ssa)
+  (let* ((connections (make-places-connections (collect-all-places lambda-ssa)))
+	 (indexes (sort (hash-values (phis-connections-identity connections)) #'< )))
+    (let ((sccs (compute-phi-sccs indexes  (phis-connections-successors connections))))
+      (print sccs)
+      (when sccs
+	(let ((sccs-filtered nil))
+	  (dolist (scc sccs)
+	    (let ((scc-filtered nil))
+	      (dolist (index scc)
+		(let ((phi (identity-phi index connections)))
+		  (when phi
+		    (push phi scc-filtered))))
+	      (when scc-filtered
+		(push scc-filtered sccs-filtered))))
+	  sccs-filtered)))))
+
+;;; END
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
 
 (defun every-predecessor-processed-p (predecessor-indexes lambda-ssa)
   (dolist (pblock predecessor-indexes)
@@ -999,7 +1091,8 @@
 	    (cbo-visit sblock block lambda-ssa visited active))
 	  (decf (gethash index active))))))
 
-;;; FIXME, this still doesn't implement block order from "Linear Scan Register Allocation for the Java HotSpotTM Client Compiler"
+;;; FIXME, this still doesn't implement block order from:
+;;; "Linear Scan Register Allocation for the Java HotSpotTM Client Compiler"
 ;;; based on block loop index weight 
 (defun compute-block-order (lambda-ssa)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
@@ -1152,8 +1245,7 @@
 		       ;; use or not we need to add interval for this places because successors is using it
 		       ;; (or (find pop (first block-virtuals) :test #'equalp)
 		       ;; 	   (find pop (second block-virtuals) :test #'equalp))
-		       (find pop block-defined :key #'cdr)
-		       )
+		       (find pop block-defined :key #'cdr))
 	      (push pop live)))))))
   live)
 
@@ -1164,7 +1256,7 @@
   (make-hash-table))
 
 (defun add-use-positions (use-positions virtual use-position)
-  (let ((vname (named-place-name virtual)))
+  (let ((vname (get-place-name virtual)))
     (setf (gethash vname use-positions)
 	  (cons use-position
 		(gethash vname use-positions)))))
@@ -1195,7 +1287,7 @@
 
 (defun shorten-current-range (intervals place start)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (let* ((name (named-place-name place))
+  (let* ((name (get-place-name place))
 	 (interval (get-interval intervals name)))
     (when interval
       (let ((range (first (interval-ranges interval))))
@@ -1362,7 +1454,7 @@
 		(end (ssa-form-index (ssa-block-last-instruction block))))
 	  
 	    (dolist (place live)
-	      (let ((place-name (named-place-name place)))
+	      (let ((place-name (get-place-name place)))
 		(add-range intervals place-name start end)))
 
 
@@ -1375,13 +1467,13 @@
 		  ;; FIXME, just one write to place that is never read
 		  ;; we sure need to allocate register for this
 		  (unless (shorten-current-range intervals write instr-index)
-		    (add-range intervals (named-place-name write) instr-index instr-index))
+		    (add-range intervals (get-place-name write) instr-index instr-index))
 		  (setf live (remove-from-live live write))
 		  (add-use-positions use-positions write (make-use-write-pos :index instr-index)))
 		;; FIXME, read is allways adding RANGE
 		;; when we then have WRITE we only shorten last RANGE
 		(when read
-		  (add-range intervals (named-place-name read) start instr-index)
+		  (add-range intervals (get-place-name read) start instr-index)
 		  (add-use-positions use-positions read (make-use-read-pos :index instr-index))
 		  (pushnew read live :test #'equalp))))
 
@@ -1398,7 +1490,7 @@
 		     (end-block (ssa-find-block-by-index lambda-ssa end-block-index )))
 		(dolist (lplace live)
 		  (print (list 'loop-end lplace))
-		  (add-range intervals (named-place-name lplace) start (ssa-block-last-index end-block)))))))
+		  (add-range intervals (get-place-name lplace) start (ssa-block-last-index end-block)))))))
 	(setf (ssa-block-live-in block) live)))
     ;; (try-intervals-merge intervals)
     (add-intervals-use-positions intervals use-positions)))
@@ -1887,8 +1979,6 @@
 	     third
 	       (when 2 (go second)))
 	    a))
-
-
 #+nil
 (test-ssa '(lambda (a b)
 	    (tagbody
@@ -1921,3 +2011,7 @@
 				(go end))
 			  end)
 			 a)))
+
+;;; notes
+;;; * kad se interval zavrsava negde u istoj tacki moze da pocne drugi interval ako se tu definise nova varijabla, samo mora da seobrati paznja na redosled
+;;; * kad resavamo phi, insertujemo move na kraju prethodnog bloka, mozda treba da napravimo novi blok 
