@@ -74,9 +74,15 @@
 		     (named-place-name s))))
     (otherwise (named-place-name s))))
 
+(defun place-is-phi (place)
+  (and (typep place 'phi-place)
+       (not (funcall (phi-place-reduced place)))))
+
 (defparameter *testb* nil)
 
 (defparameter *instr-offset* 2)
+
+(defparameter *optimize-redundant-phis* t)
 
 (defparameter *debug-stream* t)
 (defun print-debug (&rest s)
@@ -754,80 +760,93 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; remove not needed PHI in a case of irreducible loop
 
-(defun sccs-collect (index successors-map visited)
-  (unless (gethash index visited)
-    (setf (gethash index visited) t)
-    (let ((r nil))
-      (dolist (i (gethash index successors-map))
-	(setf r (append (sccs-collect i successors-map visited) r)))
-      (cons index r))))
-
-(defun dfs-get-order (index successors-map visited res)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (unless (gethash index visited)
-    (setf (gethash index visited) t)
-    (let* ((succ-indexes (gethash index successors-map)))
-      (dolist (i succ-indexes)
-	(dfs-get-order i successors-map visited res))
-      (push index (car res)))))
-
-(defun transpose-graph (indexes successors-map)
+(defun transpose-graph (successors-map)
   (let ((transposed-successors-map (make-hash-table)))
-    (dolist (index indexes)
+    (dolist (index (hash-keys successors-map))
       (dolist (succ-index (gethash index successors-map))
 	(push index (gethash succ-index transposed-successors-map))))
     transposed-successors-map))
 
-(defun compute-phi-sccs (indexes successors-map)
-  (when (> (length indexes) 0)
-    (let* ((result (cons nil nil))
-	   (_ (dfs-get-order (first indexes) successors-map (make-hash-table) result))
-	   (order (car result))
-	   (transposed-successors (transpose-graph indexes successors-map))
-	   (visited (make-hash-table)))
-      (declare (ignore _))
-      (let ((sccs nil))
-	(dolist (i order)
-	  (when (not (gethash i visited))
-	    (let ((scc (sccs-collect i transposed-successors visited)))
-	      (when scc
-		(push scc sccs)))))	  
-	sccs))))
 
+(defun compute-scc (successors nodes)
+  (labels ((fill-order (node visited stack)
+	     (setf (gethash node visited) t)
+	     (dolist (snode (gethash node successors))
+	       (unless (gethash node visited)
+		 (fill-order snode visited stack)))
+	     (vector-push-extend node stack))
+	   (dfs-util (node visited adj result)
+	     (setf (gethash  node visited) t)
+	     (push node (car result))
+	     (dolist (n (gethash node adj))
+	       (unless (gethash n visited)
+		 (dfs-util n visited adj result)))
+	     result))
+    (let* ((visited (make-hash-table))
+	   (stack (make-array (length nodes) :adjustable t :fill-pointer 0))
+	   (transposed (transpose-graph successors))
+	   (res nil))
+      (dolist (node nodes)
+	(unless (gethash node visited)
+	  (fill-order node visited stack)))
+      (clrhash visited)
+      (tagbody
+       start
+	 (if (= 0 (length stack))
+	     (go end)
+	     (progn
+	       (let ((node (vector-pop stack)))
+		 (unless (gethash node visited)
+		   (push (car (dfs-util node visited transposed
+					(cons nil nil)))
+			 res))
+		 (go start))))
+       end)
+      res)))
+
+;;; FIXME, check paper to implement this
 (defun replace-scc-by-value (scc-phis value lambda-ssa)
+  (error "REPLACE-SCC-BY-VALUE case")
+  #+nil
   (dolist (phi scc-phis)
-    (add-phi-value-replacement (phi-place phi) value lambda-ssa )))
+    (add-phi-value-replacement (phi-place phi) value lambda-ssa)))
 
 (defun process-scc (scc phc lambda-ssa)
-  (when (> (length scc) 0)
+  (declare (optimize (debug 3) (speed 0)))
+  (when (> (length scc) 1)
     (let ((inner nil)
 	  (outer-ops nil))
-      (dolist (phi-place scc)
+      (dolist (phi-node scc)
 	(let ((is-inner t))
-	  (let ((phi (phc-get-phi phc phi-place )))
+	  (let ((phi (phc-get-phi-by-node phc phi-node)))
 	    (dolist (operand (phi-operands phi))
-	      (when (not (find operand scc))
+	      (when (not (find operand (mapcar (lambda (node)
+						 (phc-get-place phc node))
+					       scc)))
 		(pushnew operand outer-ops)
 		(setf is-inner nil)))
 	    (when is-inner
 	      (pushnew phi inner)))))
+      (break)
       (cond ((= 1 (length outer-ops))
 	     (replace-scc-by-value scc (first outer-ops) lambda-ssa))
 	    ((> (length outer-ops) 1)
-	     (remove-redundant-phis inner lambda-ssa))))))
+	     (remove-redundant-phis inner phc lambda-ssa))))))
 
-(defun remove-redundant-phis (phis lambda-ssa)
-  (let ((phc (make-phi-sccs phis)))
-    ;; TODO, we need to  apply topological-sort on phis SCC
-    (dolist (scc (phis-connections-sccs phc))
-      (process-scc scc phc lambda-ssa ))))
+(defun remove-redundant-phis (nodes phc lambda-ssa)
+  ;; TODO, we need to  apply topological-sort on phis SCC
+  (dolist (scc (compute-scc (phis-connections-successors phc) nodes))
+    (process-scc scc phc lambda-ssa)))
 
-(defun collect-all-phis (lambda-ssa)
+(defun collect-maybe-redundant-phis (lambda-ssa)
   (let (good-phis)
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
       (let ((phis (ssa-block-all-phis sblock)))
 	(dolist (maybe-phi phis)
-	  (when (phi-p maybe-phi)
+ 	  (when (phi-p maybe-phi)
+	    ;; (and (phi-p maybe-phi)
+	    ;;      (some #'place-is-phi (phi-operands maybe-phi)))
+	      t
 	    (push maybe-phi good-phis)))))
     good-phis))
 
@@ -837,13 +856,20 @@
   (identity (make-hash-table))
   (reverse-index (make-hash-table))
   (phis (make-hash-table))
+  graphs
   sccs)
 
 (defun phc-add-phi (phc place phi)
   (setf (gethash place (phis-connections-phis phc)) phi))
 
+(defun phc-get-place (phc node)
+  (gethash node (phis-connections-reverse-index phc)))
+
 (defun phc-get-phi (phc place)
   (gethash place (phis-connections-phis phc)))
+
+(defun phc-get-phi-by-node (phc node)
+  (phc-get-phi phc  (phc-get-place phc node)))
 
 (defun get-or-make-identity (phc identity)
   (let ((i (gethash identity (phis-connections-identity phc))))
@@ -861,31 +887,57 @@
 	 value)))
 
 (defun make-places-connections (phis)
+  "Make successors map for every PHI operand"
   (let ((phc (make-phis-connections)))
     (dolist (phi phis)
       (phc-add-phi phc (phi-place phi) phi)
       (let ((phi-index (get-or-make-identity phc  (phi-place phi))))
 	(dolist (operand (phi-operands phi))
-	  (let ((op-index (get-or-make-identity phc operand)))
-	    (push phi-index (gethash op-index (phis-connections-successors phc)))))))
+	  (when (place-is-phi operand)
+	    (let ((op-index (get-or-make-identity phc operand)))
+	      (push phi-index (gethash op-index (phis-connections-successors phc))))))))
+    (setf (phis-connections-graphs phc)
+	  (make-graphs-from-successors (phis-connections-successors phc)))
     phc))
 
 
-(defun make-phi-sccs (phis)
-  (let* ((connections (make-places-connections phis))
-	 (indexes (sort (hash-values (phis-connections-identity connections)) #'< )))
-    (break)
-    (let ((sccs (compute-phi-sccs indexes (phis-connections-successors connections))))
-      (when sccs
-	(dolist (scc sccs)
-	  (let ((scc-filtered nil))
-	    (dolist (index scc)
-	      (let ((phi (identity-phi index connections)))
-		(when phi
-		  (push phi scc-filtered))))
-	    (when scc-filtered
-	      (push scc-filtered (phis-connections-sccs connections)))))))
-    connections))
+(defun make-graphs-from-successors (successors)
+  "Create list of graphs from list of phis"
+  (labels ((all-nodes (successors)
+	     (remove-duplicates (append (hash-keys successors)
+					(mapcan #'nconc (copy-tree (hash-values successors))))))
+	   (dfs (node links visited current)
+	     (setf (gethash node visited) t)
+	     (setf (gethash node current) t)
+	     (dolist (ln (gethash node links))
+	       (unless (gethash ln visited)
+		 (dfs ln links visited current))))
+	   (get-linked-nodes (successors)
+	     (let ((predecessors (transpose-graph  successors))
+		   (linked (make-hash-table)))
+	       (dolist (k (hash-keys successors))
+		 (let ((sucs (gethash k successors))
+		       (preds (gethash k predecessors)))
+		   (setf (gethash k linked) (remove-duplicates (append sucs preds)))))
+	       linked)))    
+    (let ((nodes (all-nodes successors))
+	  (links (get-linked-nodes successors))
+	  (visited (make-hash-table))
+	  (graphs nil))
+      (dolist (node nodes)
+	(unless (gethash node visited)
+	  (let ((current (make-hash-table)))
+	    (dfs node links visited current)
+	    (push (hash-keys current) graphs))))
+      graphs)))
+
+(defun optimize-redundant-phis (lambda-ssa)
+  (declare (optimize (debug 3) (speed 0)))
+  (let* ((phis (collect-maybe-redundant-phis lambda-ssa))
+	 (phc (make-places-connections phis))
+	 ;; FIXME, this is not topological sort, see paper
+	 (indexes (sort (hash-values (phis-connections-identity phc)) #'< )))
+    (remove-redundant-phis indexes phc lambda-ssa)))
 
 ;;; END
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -973,7 +1025,6 @@
 	(print-debug "Removing BLOCK " (ssa-block-index block))
 	(destroy-ssa-block block lambda-ssa)))))
 
-;;; TODO, create two dynamic vars to control whether to remove redundant PHI's
 (defun lambda-construct-ssa (lambda-node)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
   (let* ((*ssa-block-counter* 0)
@@ -991,7 +1042,8 @@
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
     (set-block-virtuals lambda-ssa)
-    (remove-redundant-phis (collect-all-phis lambda-ssa) lambda-ssa)
+    (when *optimize-redundant-phis*
+      (optimize-redundant-phis lambda-ssa))
     (fill-blocks-ordering lambda-ssa)
     (compute-block-order lambda-ssa)
     lambda-ssa))
@@ -1916,11 +1968,11 @@
     (values lambda-ssa intervals alloc)))
 
 ;;; ChatGPT example of PHIS redundant elimination
+#+nil
 (make-lssa '(lambda (x y)
    (let ((z (if (< x y) x y))
          (w (if (< x y) x y)))
      (+ z w))))
-
 
 
 ;;; Test case that currently doesn't work
@@ -1933,6 +1985,7 @@
 			  (when a (go bar)))
 		       c)))
 
+;;; this one triggers redundant phi's optimization
 #+nil
 (test-ssa '(lambda (a)
 	    (tagbody
@@ -1956,6 +2009,25 @@
 		   (go end))
 	     end)
 	    a))
+
+;;; maybe we can trigger reduced PHI here ?
+#+nil
+(lambda (x)
+  (tagbody
+     bla
+     (if x
+	 (progn
+	   (setf x (+ x 20))
+	  (go while))
+	 (go exit))
+   while
+     (tagbody
+      start
+	(when (> x 1)
+	  (setf x (+ x 10))
+	  (go bla)))
+   exit)
+  x)
 
 
 ;;; triggets stack overflow
