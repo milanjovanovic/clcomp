@@ -156,6 +156,7 @@
     indexes))
 
 (defun lambda-ssa-find-greatest-end-block (lambda-ssa header-block-index)
+  (declare (optimize (debug 3) (safety 3) (speed 0)))
   (let* ((indexes (lambda-ssa-find-end-blocks lambda-ssa header-block-index))
 	 (blocks (mapcar (lambda (i)
 			   (ssa-find-block-by-index lambda-ssa i)) indexes)))
@@ -169,6 +170,11 @@
 (defun ssa-block-replace-phi (ssa-block phi-place new-value)
   (let ((cons (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
     (setf (cdr cons) new-value)))
+
+(defun ssa-block-maybe-replace-phi (ssa-block phi-place new-value)
+  (let ((cons (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
+    (when cons
+      (setf (cdr cons) new-value))))
 
 (defun ssa-block-get-maybe-phi (ssa-block phi-place)
   (cdr (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
@@ -804,12 +810,25 @@
        end)
       res)))
 
-;;; FIXME, check paper to implement this
-(defun replace-scc-by-value (scc-phis value lambda-ssa)
-  (error "REPLACE-SCC-BY-VALUE case")
-  #+nil
-  (dolist (phi scc-phis)
-    (add-phi-value-replacement (phi-place phi) value lambda-ssa)))
+(defun lambda-ssa-find-and-replace-phis (lambda-ssa phi-places value)
+  (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+    (dolist (phi-place phi-places)
+      (when (ssa-block-maybe-replace-phi sblock phi-place value)
+	(setf phi-places (remove phi-place phi-places))))
+    (when (null phi-places)
+      (return-from lambda-ssa-find-and-replace-phis)))
+  (unless (null phi-places)
+    (error "Can't find all PHI's to replace")))
+
+(defun replace-scc-by-value (phc scc-phis value lambda-ssa)
+  (declare (optimize (debug 3) (speed 0)))
+  (print (list 'replace-scc-by-value value))
+  (let ((phi-places nil))
+    (dolist (phi-node scc-phis)
+      (let ((phi-place (phc-get-place phc phi-node)))
+	(push phi-place phi-places)
+	(add-phi-value-replacement phi-place value lambda-ssa)))
+    (lambda-ssa-find-and-replace-phis lambda-ssa phi-places value)))
 
 (defun process-scc (scc phc lambda-ssa)
   (declare (optimize (debug 3) (speed 0)))
@@ -827,9 +846,8 @@
 		(setf is-inner nil)))
 	    (when is-inner
 	      (pushnew phi inner)))))
-      (break)
       (cond ((= 1 (length outer-ops))
-	     (replace-scc-by-value scc (first outer-ops) lambda-ssa))
+	     (replace-scc-by-value phc scc (first outer-ops) lambda-ssa))
 	    ((> (length outer-ops) 1)
 	     (remove-redundant-phis inner phc lambda-ssa))))))
 
@@ -996,6 +1014,63 @@
     (dolist (sblock (ssa-block-successors block lambda-ssa))
       (traverse-and-mark-accessible-blocks sblock lambda-ssa visited))))
 
+(defun maybe-remove-single-go-blocks (sblocks lambda-ssa)
+  (print (list 'maybe-remove-single-go-blocks sblocks)))
+
+(defun maybe-remove-empty-blocks (sblocks lambda-ssa)
+  (dolist (sblock sblocks)
+    (let* ((suc (first (ssa-block-successors-types-and-indexes sblock)))
+	   (type (car suc ))
+	   (succ-index (cdr suc))
+	   (predecessors-types (ssa-block-predecessors-types-and-indexes sblock lambda-ssa)))
+      (unless
+	  ;; if predecessor have our block in SUCC field then don't remove this block
+	  ;; because we don't want to check block orders and see if removal is ok in this case, just skip it
+	  ;; this shouldn't happen btw !!
+	  (dolist (pcons predecessors-types)
+	    (when (eq (cdr pcons) 'succ)
+	      (print-debug (format t "Skipping ~A, SUCC case" (car pcons)))
+	      (return t)))
+	;; we are clear to remove our block
+	;; replace predecessors jumps with empty block successor
+	(dolist (pcons predecessors-types)
+	  (let ((pblock (car pcons))
+		(type (cdr pcons)))
+	    (ecase type
+	      (cond-jump (setf (ssa-block-cond-jump (ssa-find-block-by-index lambda-ssa pblock)) succ-index))
+	      (uncond-jump (setf (ssa-block-uncond-jump (ssa-find-block-by-index lambda-ssa pblock)) succ-index)))))
+	;; remove block from list
+	(setf (lambda-ssa-blocks lambda-ssa)
+	      (delete (ssa-block-index sblock) (lambda-ssa-blocks lambda-ssa) :test (lambda (index b)
+										      (= index (ssa-block-index b)))))
+	(destroy-ssa-block  sblock lambda-ssa)
+	;; fix predecessors on block which we connected to
+	(let ((del-block-index (ssa-block-index sblock))
+	      (succ-block (ssa-find-block-by-index lambda-ssa succ-index))
+	      (new-predecessors (mapcar #'car predecessors-types)))
+	  (setf (ssa-block-predecessors succ-block)
+		(append new-predecessors
+			(delete del-block-index (ssa-block-predecessors succ-block)))))))))
+
+(defun remove-redundant-blocks (lambda-ssa)
+  "Sometimes we create a block with no IR, dettach predecessors and connect it to empty block successor.
+ There is also case when block only contain one GO instruction, we can also delete this block and fix predecessors/successors connections"
+  (let ((empty-blocks nil)
+	(single-go-blocks nil))
+    (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+      (cond ((and (null (ssa-block-ir sblock))
+		  (= 1 (length (ssa-block-successors-indexes sblock))))
+	     (push sblock empty-blocks))
+	    ((and 
+	      (= 1 (length (ssa-block-ir sblock)))
+	      (typep (first (ssa-block-ir sblock) ) 'ssa-go)
+	      (= 1 (length (ssa-block-successors-indexes sblock))))
+	     (push sblock single-go-blocks))))
+    (when empty-blocks
+      (maybe-remove-empty-blocks empty-blocks lambda-ssa))
+    (when single-go-blocks
+      (maybe-remove-single-go-blocks single-go-blocks lambda-ssa))))
+
 (defun remove-not-accessible-blocks (lambda-ssa)
   (let* ((blocks (reverse (lambda-ssa-blocks lambda-ssa)))
 	 (entry-block (first blocks))
@@ -1037,6 +1112,7 @@
     (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (remove-not-accessible-blocks lambda-ssa)
+    (remove-redundant-blocks lambda-ssa)
     (ssa-normalize-lambda-ssa lambda-ssa)
     (ssa-maybe-fix-blocks-connections lambda-ssa)
     (construct-ssa lambda-ssa)
@@ -1219,10 +1295,33 @@
 		 most-positive-fixnum))
       (return t))))
 
+(defun ssa-block-predecessors-types-and-indexes (ssa-block lambda-ssa)
+  (let ((res nil)
+	(index (ssa-block-index ssa-block)))
+    (dolist (bindex (ssa-block-predecessors ssa-block))
+      (let* ((sblock (ssa-find-block-by-index lambda-ssa bindex))
+	     (type (cond ((= (or (ssa-block-succ sblock) -1) index)
+			  'succ)
+			 ((= (or (ssa-block-uncond-jump sblock) -1) index)
+			  'uncond-jump)
+			 ((= (or (ssa-block-cond-jump sblock) -1) index)
+			  'cond-jump)
+			 (t
+			  (error "Can't find our jump target")))))
+	(push (cons bindex type) res)))
+    res))
+
 (defun ssa-block-successors-indexes (ssa-block)
   (remove-if #'null (list (ssa-block-succ ssa-block)
 			  (ssa-block-cond-jump ssa-block)
 			  (ssa-block-uncond-jump ssa-block))))
+
+(defun ssa-block-successors-types-and-indexes (ssa-block)
+  (remove-if (lambda (cons)
+	       (null (cdr cons)))
+	     (list (cons 'succ (ssa-block-succ ssa-block))
+		   (cons 'cond-jump (ssa-block-cond-jump ssa-block))
+		   (cons 'uncond-jump (ssa-block-uncond-jump ssa-block)))))
 
 (defun ssa-block-successors (ssa-block lambda-ssa)
   (mapcar (lambda (index)
@@ -1960,10 +2059,11 @@
 
 (defun test-ssa (exp)
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
+	 (_ (generate-graph lambda-ssa "default"))
 
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
-    (generate-graph lambda-ssa "default")
+    ;; (generate-graph lambda-ssa "default")
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
 
