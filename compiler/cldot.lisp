@@ -45,8 +45,10 @@
     
 	    (ssa-go (format nil "go ~A" (ssa-go-label ir)))
 	    (ssa-label (format nil "label ~A" (ssa-label-label ir)))
-	    (ssa-if (format nil "if ~A block ~A" (format-ssa-place (ssa-if-test ir))
-			    (ssa-if-true-block ir)))
+	    (ssa-if (format nil "if ~A GO ~A else ~A" (format-ssa-place (ssa-if-test ir))
+			    ;; (ssa-if-true-block ir)
+			    (ssa-if-true-block-label ir)
+			    (ssa-if-false-block-label ir)))
 	    (ssa-value "FIXME: SSA-VALUE"))))
 
 (defun format-phi (phi)
