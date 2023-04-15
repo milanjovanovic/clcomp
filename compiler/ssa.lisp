@@ -682,7 +682,7 @@
 	    (emit lambda-ssa (make-ssa-go :label label) from-block))))))
 
 
-(defun ssa-normalize-lambda-ssa (lambda-ssa)
+(defun lambda-ssa-fix-ir-indexes (lambda-ssa)
   (let ((ir-index 0))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
       (dolist (ir (ssa-block-ir b))
@@ -1236,17 +1236,15 @@
     (emit lambda-ssa (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
-    (ssa-normalize-lambda-ssa lambda-ssa)
+    (lambda-ssa-fix-ir-indexes lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (remove-redundant-blocks lambda-ssa)
     (check-predecessors lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (maybe-fix-uncond-jumps-to-succ lambda-ssa)
-    ;; (ssa-normalize-lambda-ssa lambda-ssa)
     (ssa-maybe-fix-blocks-connections lambda-ssa)
     (construct-ssa lambda-ssa)
-    (break)
     (ssa-reset-original-ir lambda-ssa)
     (set-block-virtuals lambda-ssa)
     (when *optimize-redundant-phis*
