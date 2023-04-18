@@ -4,6 +4,9 @@
   (declaim (optimize (debug 3) (safety 3) (speed 0))))
 
 
+(setf cl-dot::*dot-path* "/opt/homebrew/bin/dot")
+
+
 (defmethod cl-dot:graph-object-node ((graph lambda-ssa) (object ssa-block))
   (make-instance 'cl-dot:node
                  :attributes `(:label ,(format nil "~A" (ssa-block-index object))

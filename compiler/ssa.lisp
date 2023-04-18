@@ -83,6 +83,18 @@
 (defparameter *instr-offset* 2)
 
 (defparameter *optimize-redundant-phis* t)
+(defparameter *optimize-redundant-blocks* t)
+
+(defparameter *error-on-ir-touch* nil)
+(defparameter *error-on-ssa-touch* nil)
+
+(defun error-if-touch-ir ()
+  (when *error-on-ir-touch*
+    (error "Too late to touch IR")))
+
+(defun error-if-touch-ssa ()
+  (when *error-on-ssa-touch*
+    (error "Too early to touch SSA")))
 
 (defparameter *debug-stream* t)
 (defun print-debug (&rest s)
@@ -296,8 +308,9 @@
 	(lambda-ssa-sub-lambdas lambda-ssa)))
 
 (defparameter *ir-index-counter* 0)
-(defun emit (lambda-ssa ssa block)
+(defun emit-ir (lambda-ssa ssa block)
   (declare (ignore lambda-ssa))
+  (error-if-touch-ir)
   (if (and (ssa-block-uncond-jump block)
 	   (ssa-go-p (first (ssa-block-ir block))))
       (print-debug "Skipping dead code " ssa)
@@ -316,8 +329,9 @@
 	      (setf (ssa-block-ir block) (cons ssa nil))
 	      (setf (ssa-block-ir-last-cons block) (ssa-block-ir block)))))))
 
-(defun emit-first (lambda-ssa ssa block)
+(defun emit-ir-first (lambda-ssa ssa block)
   (declare (ignore lambda-ssa))
+  (error-if-touch-ir)
   (if (ssa-form-p ssa)
       (progn
 	(setf (ssa-form-index ssa) *ir-index-counter*)
@@ -326,10 +340,18 @@
   (setf (ssa-block-ir block)
 	(cons ssa (ssa-block-ir block))))
 
+(defun ssa-block-ir-last-instr (block)
+  (car (last (ssa-block-ir block))))
+
+(defun ssa-block-ir-first-instr (block)
+  (car (ssa-block-ir block)))
+
 (defun ssa-block-last-instruction (block)
+  (error-if-touch-ssa)
   (car (last (ssa-block-ssa block))))
 
 (defun ssa-block-first-instruction (block)
+  (error-if-touch-ssa)
   (car (ssa-block-ssa block)))
 
 (defun ssa-block-first-index (block)
@@ -340,7 +362,7 @@
 
 (defun is-last-instr-jump (block)
   (declare (optimize (debug 3)))
-  (let ((last-instr (ssa-block-last-instruction block)))
+  (let ((last-instr (ssa-block-ir-last-instr block)))
     (and (or (ssa-go-p last-instr)
 	     (ssa-if-p last-instr))
 	 last-instr)))
@@ -350,11 +372,12 @@
        (ssa-block-first-instruction block)))
 
 (defun remove-last-instruction (block)
+  (error-if-touch-ssa)
   (setf (ssa-block-ssa block) (butlast (ssa-block-ssa block))))
 
 (defun emit-single-return-sequence (lambda-ssa place block)
-  (emit lambda-ssa (make-ssa-load :to (make-return-value-place :index 0) :from place) block)
-  (emit lambda-ssa (make-ssa-return) block))
+  (emit-ir lambda-ssa (make-ssa-load :to (make-return-value-place :index 0) :from place) block)
+  (emit-ir lambda-ssa (make-ssa-return) block))
 
 ;;; FIXME, set block LABEL fieds
 ;;; FIXME, we are allways moving value to specific place, we can omit that and use existing place (and force it to register)
@@ -390,7 +413,7 @@
 	  (false-block-label (generate-label-for-string "FBLOCK")))
       (label-ssa-block true-block true-block-label)
       (label-ssa-block false-block false-block-label)
-      (emit lambda-ssa
+      (emit-ir lambda-ssa
 	    (make-ssa-if
 	     :test test-place
 	     :true-block (ssa-block-index true-block)
@@ -402,13 +425,13 @@
 (defun maybe-emit-direct-load (node lambda-ssa leaf place block)
   (etypecase node
     (immediate-constant-node
-     (emit lambda-ssa (make-ssa-load :to place
+     (emit-ir lambda-ssa (make-ssa-load :to place
     				     :from node) block)
      (when leaf
        (emit-single-return-sequence lambda-ssa place block))
      block)
     (lexical-var-node
-     (emit lambda-ssa (make-ssa-load :to place
+     (emit-ir lambda-ssa (make-ssa-load :to place
     				     :from (make-var-place :name (lexical-var-node-name node))) block)
      (when leaf
        (emit-single-return-sequence lambda-ssa place block))
@@ -438,25 +461,25 @@
 	      (push place args-places)))))
     (let ((arg-index 0))
       (dolist (p (reverse args-places))
-	(emit lambda-ssa (make-ssa-load :to (make-argument-place :index arg-index) :from p) block)
+	(emit-ir lambda-ssa (make-ssa-load :to (make-argument-place :index arg-index) :from p) block)
 	(incf arg-index)))
-    (emit lambda-ssa (make-ssa-load :to (make-argument-count-place)
+    (emit-ir lambda-ssa (make-ssa-load :to (make-argument-count-place)
 				    :from (make-immediate-constant :constant (fixnumize arguments-count))) block)
     (let ((fixup (make-compile-function-fixup :name (generate-fixup-symbol)
 					      :function fun)))
-      (emit lambda-ssa (make-ssa-load :to (make-function-value-place) :from fixup) block)
+      (emit-ir lambda-ssa (make-ssa-load :to (make-function-value-place) :from fixup) block)
       (lambda-add-fixup fixup lambda-ssa))
     (if (null place)
 	(progn
-	  (emit lambda-ssa
+	  (emit-ir lambda-ssa
 		(make-ssa-unknown-values-fun-call :fun fun)
 		block)
 	  (when leaf
-	    (emit lambda-ssa (make-ssa-multiple-return) block))
+	    (emit-ir lambda-ssa (make-ssa-multiple-return) block))
 	  block)
 	(progn
-	  (emit lambda-ssa (make-ssa-known-values-fun-call :fun fun :min-values 1) block)
-	  (emit lambda-ssa (make-ssa-load :to place :from (make-return-value-place :index 0)) block)
+	  (emit-ir lambda-ssa (make-ssa-known-values-fun-call :fun fun :min-values 1) block)
+	  (emit-ir lambda-ssa (make-ssa-load :to place :from (make-return-value-place :index 0)) block)
 	  block))))
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
@@ -474,19 +497,19 @@
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
 (defun emit-immediate-node-ssa (node lambda-ssa leaf place block)
   (if place
-      (emit lambda-ssa (make-ssa-load :to place :from node) block)
+      (emit-ir lambda-ssa (make-ssa-load :to place :from node) block)
       (if leaf
 	  (emit-single-return-sequence lambda-ssa node block)
-	  (emit lambda-ssa (make-ssa-value :value node) block)))
+	  (emit-ir lambda-ssa (make-ssa-value :value node) block)))
   block)
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
   (if place
-      (emit lambda-ssa (make-ssa-load :to place :from (make-var-place :name (lexical-var-node-name node))) block )
+      (emit-ir lambda-ssa (make-ssa-load :to place :from (make-var-place :name (lexical-var-node-name node))) block )
       (if leaf
 	  (emit-single-return-sequence lambda-ssa (make-var-place :name (lexical-var-node-name node))  block)
-	  (emit lambda-ssa (make-ssa-value :value
+	  (emit-ir lambda-ssa (make-ssa-value :value
 					   (make-var-place :name (lexical-var-node-name node))) block)))
   block)
 
@@ -516,7 +539,7 @@
 	    ;; when current block doesn't have GO just connect blocks
 	    (when (null (ssa-block-uncond-jump current-block))
 	      (ssa-connect-blocks current-block lblock))
-	    (emit lambda-ssa
+	    (emit-ir lambda-ssa
 		  (make-ssa-label :label (label-node-label form-node))
 		  lblock)
 	    (setf current-block lblock))
@@ -524,7 +547,7 @@
       (setf block current-block))
     (pop-labels-env lambda-ssa)
     (if place
-	(emit lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
+	(emit-ir lambda-ssa (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
 	(when leaf
 	  (emit-single-return-sequence lambda-ssa (make-immediate-constant :constant *nil*) block )
 	  ;; FIXME, need this ?
@@ -538,7 +561,7 @@
   (let ((label-name (label-node-label (go-node-label-node node))))
     (insert-block-unconditional-jump block (ssa-find-block-by-index lambda-ssa
 								    (ssa-find-block-index-by-label lambda-ssa label-name)))
-    (emit lambda-ssa (make-ssa-go :label label-name) block)
+    (emit-ir lambda-ssa (make-ssa-go :label label-name) block)
     ;; reset successor to nil, if we have GO direct successor in this block is never active
     (setf (ssa-block-succ block) nil)
     (make-new-ssa-block lambda-ssa)))
@@ -555,12 +578,12 @@
     new-block))
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
-  (emit lambda-ssa (make-arg-check :arg-count (length arguments)) block)
+  (emit-ir lambda-ssa (make-arg-check :arg-count (length arguments)) block)
   (let ((index 0))
     (dolist (argument arguments)
       (etypecase argument
 	(lexical-var-node
-	 (emit lambda-ssa (make-ssa-load :to (make-var-place :name (lexical-var-node-name argument))
+	 (emit-ir lambda-ssa (make-ssa-load :to (make-var-place :name (lexical-var-node-name argument))
 					 :from (make-rcv-argument-place :index index))
 	       block)))
       (incf index))))
@@ -584,11 +607,11 @@
        (add-sub-lambda lambda-ssa (lambda-construct-ssa node) fixup)))
     (lambda-add-fixup fixup lambda-ssa)
     (if place
-	(emit lambda-ssa (make-ssa-load :to place :from fixup) block)
+	(emit-ir lambda-ssa (make-ssa-load :to place :from fixup) block)
 	(if leaf
 	    (emit-single-return-sequence lambda-ssa fixup block)
 	    ;;; FIXME, we can omit SSA-VALUE node here ???
-	    (emit lambda-ssa (make-ssa-value :value fixup) block)))
+	    (emit-ir lambda-ssa (make-ssa-value :value fixup) block)))
     block))
 
 ;;; FIXME, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
@@ -626,9 +649,9 @@
   (let ((label-instr (is-first-instr-label b2)))
     (unless label-instr
       (setf label-instr (make-ssa-label :label (generate-label-symbol)))
-      (emit-first lambda-ssa label-instr b2)
+      (emit-ir-first lambda-ssa label-instr b2)
       (label-ssa-block b2 (ssa-label-label label-instr)))	
-    (emit lambda-ssa (make-ssa-go :label (ssa-label-label label-instr)) b1)))
+    (emit-ir lambda-ssa (make-ssa-go :label (ssa-label-label label-instr)) b1)))
 
 (defun maybe-insert-jump-for-successor (b1 next-block lambda-ssa)
   (let ((b1-succ (ssa-block-succ b1))
@@ -658,7 +681,7 @@
 	  (maybe-remove-uncond-jump b1 b2))))))
 
 (defun fix-cond-jump-index (from-block to-block)
-  (let ((last-instr (ssa-block-last-instruction  from-block)))
+  (let ((last-instr (ssa-block-ir-last-instr from-block)))
     (unless (ssa-if-p last-instr)
       (error "Last instruction is not SSA-IF"))
     (setf (ssa-if-true-block last-instr) (ssa-block-index to-block))))
@@ -667,8 +690,8 @@
   (let ((label (ssa-block-label to-block)))
     (unless label
       (print-debug  "Creating new label for block " (ssa-block-index to-block))
-      (setf label (generate-label-symbol) )
-      (emit-first lambda-ssa (make-ssa-label :label label) to-block)
+      (setf label (generate-label-for-string "IF-FBLOCK") )
+      (emit-ir-first lambda-ssa (make-ssa-label :label label) to-block)
       (label-ssa-block to-block label))
     (let ((jump-instruction (is-last-instr-jump from-block)))
       (if jump-instruction
@@ -679,10 +702,11 @@
 		(setf (ssa-if-false-block-label jump-instruction) label)))
 	  (progn
 	    (print-debug "Fixing block jump, emiting SSA-GO for block " (ssa-block-index from-block))
-	    (emit lambda-ssa (make-ssa-go :label label) from-block))))))
+	    (emit-ir lambda-ssa (make-ssa-go :label label) from-block))))))
 
 
 (defun lambda-ssa-fix-ir-indexes (lambda-ssa)
+  (error-if-touch-ir)
   (let ((ir-index 0))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
       (dolist (ir (ssa-block-ir b))
@@ -1232,20 +1256,25 @@
 	 (*ssa-symbol-counter* 0)
 	 (lambda-ssa (make-lambda-ssa))
 	 (entry-block (make-new-ssa-block lambda-ssa)))
+    (setf *error-on-ir-touch* nil)
+    (setf *error-on-ssa-touch* t)
     (ssa-add-block lambda-ssa entry-block)
-    (emit lambda-ssa (make-lambda-entry) entry-block)
+    (emit-ir lambda-ssa (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (lambda-ssa-fix-ir-indexes lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
-    (remove-redundant-blocks lambda-ssa)
+    (when *optimize-redundant-blocks*
+      (remove-redundant-blocks lambda-ssa))
     (check-predecessors lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (maybe-fix-uncond-jumps-to-succ lambda-ssa)
     (ssa-maybe-fix-blocks-connections lambda-ssa)
+    (setf *error-on-ssa-touch* nil)
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
+    (setf *error-on-ir-touch* t)
     (set-block-virtuals lambda-ssa)
     (when *optimize-redundant-phis*
       (optimize-redundant-phis lambda-ssa))
@@ -1403,6 +1432,7 @@
     (t nil)))
 
 (defun collect-block-virtuals (block lambda-ssa)
+  (error-if-touch-ssa)
   (let ((reads nil)
 	(writes nil))
     (dolist (ir (ssa-block-ssa block))
@@ -2186,13 +2216,13 @@
 (defun make-lssa-png (file exp &optional)
   (generate-graph (make-lssa exp) file))
 
-(defun test-ssa (exp)
+(defun test-ssa (exp &optional (graph-name "default"))
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
-	 (_ (generate-graph lambda-ssa "default"))
-
+	 (_ (generate-graph lambda-ssa graph-name))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
-    (generate-graph lambda-ssa "default")
+    (declare (ignore _))
+    (generate-graph lambda-ssa graph-name)
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
 
