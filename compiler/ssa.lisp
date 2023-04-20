@@ -329,8 +329,7 @@
 	      (setf (ssa-block-ir block) (cons ssa nil))
 	      (setf (ssa-block-ir-last-cons block) (ssa-block-ir block)))))))
 
-(defun emit-ir-first (lambda-ssa ssa block)
-  (declare (ignore lambda-ssa))
+(defun emit-ir-first (ssa block)
   (error-if-touch-ir)
   (if (ssa-form-p ssa)
       (progn
@@ -370,6 +369,10 @@
 (defun is-first-instr-label (block)
   (and (ssa-label-p (ssa-block-first-instruction block))
        (ssa-block-first-instruction block)))
+
+(defun remove-last-ir-instruction (block)
+  (error-if-touch-ir)
+  (setf (ssa-block-ir block) (butlast (ssa-block-ir block))))
 
 (defun remove-last-instruction (block)
   (error-if-touch-ssa)
@@ -414,12 +417,12 @@
       (label-ssa-block true-block true-block-label)
       (label-ssa-block false-block false-block-label)
       (emit-ir lambda-ssa
-	    (make-ssa-if
-	     :test test-place
-	     :true-block (ssa-block-index true-block)
-	     :true-block-label true-block-label
-	     :false-block-label false-block-label)
-	    block))
+	       (make-ssa-if
+		:test test-place
+		:true-block (ssa-block-index true-block)
+		:true-block-label true-block-label
+		:false-block-label false-block-label)
+	       block))
     next-block))
 
 (defun maybe-emit-direct-load (node lambda-ssa leaf place block)
@@ -629,69 +632,29 @@
     (setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
     (rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))))
 
-;;; check all jumps/successors on blocks and reorder if necessary
-;; FIXME, for now we need to check if JUMP form is last block instruction
-;; maybe it's not if dead code exists
-;; dead code can't exist
-(defun maybe-remove-uncond-jump (b1 b2)
-  (when (and b2
-	     (= (ssa-block-uncond-jump b1) (ssa-block-index b2))
-	     (is-last-instr-jump b1))
-    (break)
-    (setf (ssa-block-succ b1) (ssa-block-uncond-jump b1))
-    (setf (ssa-block-uncond-jump b1) nil)
-    (remove-last-instruction b1)
-    (format *debug-stream* "Reseting block unconditional jump to NIL, setting successor to ~A~%" (ssa-block-succ b1))))
-
-(defun maybe-insert-jump-instruction-for-blocks (b1 b2 lambda-ssa)
-  (unless b2
-    (error "Successor block in NIL"))
-  (let ((label-instr (is-first-instr-label b2)))
-    (unless label-instr
-      (setf label-instr (make-ssa-label :label (generate-label-symbol)))
-      (emit-ir-first lambda-ssa label-instr b2)
-      (label-ssa-block b2 (ssa-label-label label-instr)))	
-    (emit-ir lambda-ssa (make-ssa-go :label (ssa-label-label label-instr)) b1)))
-
-(defun maybe-insert-jump-for-successor (b1 next-block lambda-ssa)
-  (let ((b1-succ (ssa-block-succ b1))
-	(next-block-index (and next-block (ssa-block-index next-block))))
-    (when (or (null next-block-index)
-	      (/= b1-succ next-block-index))
-      (break)
-      (insert-block-unconditional-jump b1 (ssa-find-block-by-index b1-succ lambda-ssa))
-      (setf (ssa-block-succ b1) nil)
-      (format *debug-stream* "Changing block ~A successor to uncond-jump to ~A~%" (ssa-block-index b1) b1-succ)
-      (maybe-insert-jump-instruction-for-blocks b1 (ssa-find-block-by-index lambda-ssa b1-succ) lambda-ssa))))
-
-(defun ssa-maybe-fix-blocks-connections (lambda-ssa)
-  (let ((blocks (lambda-ssa-blocks lambda-ssa)))
-    (do* ((bs blocks (cdr bs))
-	  (b1 (first bs) (first bs))
-	  (b2 (second bs) (second bs)))
-	 ((null bs))
-      (let ((b1-succ (ssa-block-succ b1))
-	    ;; FIXME, if cond-jump BLOCK is just JUMP instruction then cond-jump BLOCK can be deleted
-	    ;; and JUMP target just can replace this block JUMP
-	    ;; (b1-cond-jump (ssa-block-cond-jump b1))
-	    (b1-uncond-jump (ssa-block-uncond-jump b1)))
-	(when b1-succ
-	  (maybe-insert-jump-for-successor b1 b2 lambda-ssa))
-	(when b1-uncond-jump
-	  (maybe-remove-uncond-jump b1 b2))))))
 
 (defun fix-cond-jump-index (from-block to-block)
+  (declare (optimize (debug 3)))
   (let ((last-instr (ssa-block-ir-last-instr from-block)))
     (unless (ssa-if-p last-instr)
       (error "Last instruction is not SSA-IF"))
-    (setf (ssa-if-true-block last-instr) (ssa-block-index to-block))))
+    (setf (ssa-if-true-block last-instr) (ssa-block-index to-block)) ()
+    (let ((label (ssa-block-label to-block)))
+      (unless label
+	(print-debug  "FIX-COND-JUMP-INDEX: Creating new label for block " (ssa-block-index to-block))
+	(setf label (generate-label-for-string "IF-FBLOCK") )
+	(emit-ir-first (make-ssa-label :label label) to-block)
+	(label-ssa-block to-block label))
+      (setf (ssa-if-true-block-label last-instr) label))))
 
 (defun maybe-insert-or-fix-jump-instr (from-block to-block lambda-ssa)
+  (declare (optimize (debug 3)))
   (let ((label (ssa-block-label to-block)))
+    (print (list 'maybe-insert-or-fix-jump-instr (ssa-block-index from-block) (ssa-block-index to-block) label))
     (unless label
-      (print-debug  "Creating new label for block " (ssa-block-index to-block))
+      (print-debug  "MAYBE-INSERT-OR-FIX-JUMP-INSTR: Creating new label for block " (ssa-block-index to-block))
       (setf label (generate-label-for-string "IF-FBLOCK") )
-      (emit-ir-first lambda-ssa (make-ssa-label :label label) to-block)
+      (emit-ir-first (make-ssa-label :label label) to-block)
       (label-ssa-block to-block label))
     (let ((jump-instruction (is-last-instr-jump from-block)))
       (if jump-instruction
@@ -1112,6 +1075,7 @@
       (traverse-and-mark-accessible-blocks sblock lambda-ssa visited))))
 
 (defun maybe-remove-redundant-blocks (sblocks lambda-ssa)
+  (declare (optimize (debug 3)))
   (dolist (sblock-cons sblocks)
     (let* ((sblock (car sblock-cons))
 	   (sbtype (cdr sblock-cons))
@@ -1210,28 +1174,39 @@
 
 ;;; FIXME, check this, remove GO when we change UNCOND-JUMP to SUCCESSOR
 (defun maybe-fix-uncond-jumps-to-succ (lambda-ssa)
-  (let ((blocks (lambda-ssa-blocks lambda-ssa)))
-    (do* ((bs blocks (cdr bs))
-	  (b1 (first bs) (first bs))
-	  (b2 (second bs) (second bs)))
-	 ((null bs))
-      (let ((b1-succ (ssa-block-succ b1))
-	    ;; FIXME, if cond-jump BLOCK is just JUMP instruction then cond-jump BLOCK can be deleted
-	    ;; and JUMP target just can replace this block JUMP
-	    ;; (b1-cond-jump (ssa-block-cond-jump b1))
-	    (b1-uncond-jump (ssa-block-uncond-jump b1)))
+  (declare (optimize (debug 3)))
+  (flet ((change-uncond-jump-to-succ (ssa-block)
+	   ;; if last instruction is GO remove it
+	   ;; if last instruction is IF set FALSE-BLOCK-LABEL to NIL
+	   (let* ((last-instruction (ssa-block-ir-last-instr ssa-block)))
+	     (typecase last-instruction
+	       (ssa-go (remove-last-ir-instruction ssa-block))
+	       (ssa-if (setf (ssa-if-false-block-label last-instruction) nil))
+	       (t (print-debug "CHANGE-UNCOND-JUMP-TO-SUCC, unknown last instruction"))))))
+    (let ((blocks (lambda-ssa-blocks lambda-ssa)))
+      (do* ((bs blocks (cdr bs))
+	    (b1 (first bs) (first bs))
+	    (b2 (second bs) (second bs)))
+	   ((null bs))
+	(let ((b1-succ (ssa-block-succ b1))
+	      ;; FIXME, if cond-jump BLOCK is just JUMP instruction then cond-jump BLOCK can be deleted
+	      ;; and JUMP target just can replace this block JUMP
+	      ;; (b1-cond-jump (ssa-block-cond-jump b1))
+	      (b1-uncond-jump (ssa-block-uncond-jump b1)))
 
-	(cond ((and (null b1-succ)
-		    b1-uncond-jump
-		    b2
-		    (= b1-uncond-jump (ssa-block-index b2)))
-	       (setf (ssa-block-succ b1) b1-uncond-jump)
-	       (setf (ssa-block-uncond-jump b1) nil)
-	       (print-debug "Fixing UNCOND-JUMP to SUCC for " (ssa-block-index b1)))
-	      ((and b1-succ
-		    b2
-		    (/= b1-succ (ssa-block-index b2)))
-	       (error (format t "Wrong SUCC index for BLOCK ~A" (ssa-block-index b1)))))))))
+	  (cond ((and (null b1-succ)
+		      b1-uncond-jump
+		      b2
+		      (= b1-uncond-jump (ssa-block-index b2)))
+		 (setf (ssa-block-succ b1) b1-uncond-jump)
+		 (setf (ssa-block-uncond-jump b1) nil)
+		 (change-uncond-jump-to-succ b1)
+		 ;; FIXME, remove GO or fix IF
+		 (print-debug "Fixing UNCOND-JUMP to SUCC for " (ssa-block-index b1)))
+		((and b1-succ
+		      b2
+		      (/= b1-succ (ssa-block-index b2)))
+		 (error (format t "Wrong SUCC index for BLOCK ~A" (ssa-block-index b1))))))))))
 
 (defun check-predecessors (lambda-ssa)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
@@ -1262,15 +1237,14 @@
     (emit-ir lambda-ssa (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
     (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
-    (lambda-ssa-fix-ir-indexes lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (when *optimize-redundant-blocks*
       (remove-redundant-blocks lambda-ssa))
     (check-predecessors lambda-ssa)
+    (lambda-ssa-fix-ir-indexes lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (maybe-fix-uncond-jumps-to-succ lambda-ssa)
-    (ssa-maybe-fix-blocks-connections lambda-ssa)
     (setf *error-on-ssa-touch* nil)
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
@@ -2232,8 +2206,6 @@
    (let ((z (if (< x y) x y))
          (w (if (< x y) x y)))
      (+ z w))))
-
-
 ;;; Test case that currently doesn't work
 #+nil
 (test-ssa '(lambda (a)
