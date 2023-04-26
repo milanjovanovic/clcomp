@@ -1137,22 +1137,35 @@
 		(append new-predecessors
 			(delete del-block-index (ssa-block-predecessors succ-block)))))))))
 
+
+(defun is-block-redundant (sblock)
+  "Decide if block can be deleted.
+   Block can be deleted if there is LABEL instruction before SSA-VALUE or SSA-GO inst.
+   Also block need to have only 1 successor"
+  (when (= 1 (length (ssa-block-successors-indexes sblock)))
+    (let ((last nil))
+      (dolist (instr (ssa-block-ir sblock))
+	(typecase instr
+	  (ssa-label (if last
+			 (error "Label after instruction")
+			 (setf last 'ssa-label)))
+	  (ssa-go (if (eq last 'ssa-go)
+		      (error "Two SSA-GO instructions")
+		      (setf last 'ssa-go)))
+	  (ssa-value (if (eq last 'ssa-go)
+			 (error "SSA-VALUE after SSA-GO instruction")
+			 (setf last 'ssa-value)))
+	  (t (return-from is-block-redundant nil))))
+      (or last 'empty))))
+
 (defun remove-redundant-blocks (lambda-ssa)
   "Sometimes we create a block with no IR, dettach predecessors and connect it to empty block successor.
  There is also case when block only contain one GO instruction, we can also delete this block and fix predecessors/successors connections"
   (let (maybe-redundant-blocks)
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
-      (cond ((and (null (ssa-block-ir sblock))
-		  (= 1 (length (ssa-block-successors-indexes sblock))))
-	     (push (cons sblock 'empty) maybe-redundant-blocks))
-	    ((and 
-	      (= 1 (length (ssa-block-ir sblock)))
-	      (or
-	       (typep (first (ssa-block-ir sblock)) 'ssa-go)
-	       (typep (first (ssa-block-ir sblock)) 'ssa-value))
-	      (= 1 (length (ssa-block-successors-indexes sblock))))
-	     (push (cons sblock (type-of (first (ssa-block-ir sblock))))
-		   maybe-redundant-blocks))))
+      (let ((redundant (is-block-redundant sblock)))
+	(when redundant
+	  (push (cons sblock redundant) maybe-redundant-blocks))))
     (when maybe-redundant-blocks
       (maybe-remove-redundant-blocks maybe-redundant-blocks lambda-ssa))))
 
@@ -1213,7 +1226,6 @@
 		      b2
 		      (= b1-uncond-jump (ssa-block-index b2)))
 		 (setf (ssa-block-succ b1) b1-uncond-jump)
-		 (break)
 		 (setf (ssa-block-uncond-jump b1) nil)
 		 (change-uncond-jump-to-succ b1)
 		 ;; FIXME, remove GO or fix IF
