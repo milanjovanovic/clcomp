@@ -578,7 +578,9 @@
   (let ((label-name (label-node-label (go-node-label-node node))))
     (insert-block-unconditional-jump block (ssa-find-block-by-index lambda-ssa
 								    (ssa-find-block-index-by-label lambda-ssa label-name)))
-    (emit-ir (make-ssa-go :label label-name) block)
+
+    ;; we are emiting SSA-GO with INSERT-BLOCK-UNCONDITIONAL-JUMP
+    ;; (emit-ir (make-ssa-go :label label-name) block)
     ;; reset successor to nil, if we have GO direct successor in this block is never active
     (setf (ssa-block-succ block) nil)
     (make-new-ssa-block lambda-ssa)))
@@ -2229,6 +2231,11 @@
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
 
+(defun make-optimized-and-not-optimized (exp)
+  (test-ssa exp "optimized")
+  (let ((*optimize-redundant-blocks* nil))
+    (test-ssa exp "not_optimized")))
+
 ;;; ChatGPT example of PHIS redundant elimination
 #+nil
 (make-lssa '(lambda (x y)
@@ -2312,3 +2319,27 @@
 
 ;;; FIXME
 ;; 
+;;; triggers endless loop
+#+nil
+(test-ssa '(lambda (a)
+                (dotimes (i a)
+                  (dotimes (c i)
+                    (print 1)))))
+
+;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order
+
+;; throws error
+#+nil
+(test-ssa '(lambda (a)
+		    (dolist (l a)
+		      (dolist (g l)
+			(print l)))))
+
+
+;;; SSA, blocks order
+;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order (when emiting assembly code we can do IF-NOT and in that way just emit one JUMP instead of TWO)
+;; 
+;;; sometimes we have UNCOND-JUMP (in SSA-IF) form that jumps to next BLOCK in order
+
+
+
