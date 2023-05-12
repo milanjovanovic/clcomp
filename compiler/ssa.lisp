@@ -78,6 +78,10 @@
   (and (typep place 'phi-place)
        (not (funcall (phi-place-reduced place)))))
 
+(defun get-phi-place-reduced-value (place)
+  (when (phi-place-reduced place)
+    (funcall (phi-place-reduced place))))
+
 (defparameter *testb* nil)
 
 (defparameter *instr-offset* 2)
@@ -153,7 +157,7 @@
 (defun generate-phi-place (lambda-ssa)
   (let ((symbol (make-symbol (concatenate 'string "PHI-PLACE-" (write-to-string *phi-place-symbol-counter*)))))
     (let ((place (make-phi-place :name symbol :reduced nil)))
-      (setf (phi-place-reduced  place)
+      (setf (phi-place-reduced place)
 	    (lambda ()
 	      (gethash place (lambda-ssa-redundant-phis lambda-ssa))))
       (incf *phi-place-symbol-counter*)
@@ -234,14 +238,10 @@
   (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)))
 
 (defun maybe-get-simplified-phi-value (place block lambda-ssa)
-  (declare (optimize debug))
-  (if (and place (phi-place-p place))
-      (let* ((maybe-phi (get-phi-value-replacement place lambda-ssa))
-	     ;; should be in LAMBDA-SSA-REDUNDANT-PHIS field in every case
-	     (maybe-local-phi (ssa-block-get-maybe-phi block place)))
-	(or maybe-phi (and (not (phi-p maybe-local-phi))
-			   maybe-local-phi)
-	    place))
+  (declare (ignore block lambda-ssa))
+  (if (phi-place-p place)
+      (let ((reduced (get-phi-place-reduced-value place)))
+	(or reduced place))
       place))
 
 (defun ssa-block-all-phis (ssa-block)
@@ -757,10 +757,12 @@
     (let ((phi-usages (get-phi-connections phi-place lambda-ssa)))
       (when phi-usages
 	(dolist (uphi phi-usages)
-	  (replace-phi-operand uphi phi-place same)
-	  (try-remove-trivial-phi uphi
-				  (ssa-find-block-by-index lambda-ssa (phi-block-index uphi))
-				  lambda-ssa))))
+	  ;; to prevent endless recursion skip PHI's that are already reduced to value
+	  (unless (phi-place-reduced (phi-place uphi))
+	    (replace-phi-operand uphi phi-place same)
+	    (try-remove-trivial-phi uphi
+				    (ssa-find-block-by-index lambda-ssa (phi-block-index uphi))
+				    lambda-ssa)))))
     same))
 
 (defun phi-add-operands (place phi predecessors block lambda-ssa)
@@ -1292,7 +1294,7 @@
 ;;; block order
 
 ;;; 
-;;; FIXME (sole
+;;; FIXME 
 ;;; Sometimes we can mark direct predecessor block as LOOP-END block
 ;;; remove LOOP-END from BLOCK in which LOOP-HEADER BLOCK is direct successor
 
@@ -1504,18 +1506,18 @@
 (defun live-add-phis-operands (live phis block lambda-ssa)
   (let ((block-virtuals (ssa-block-virtuals block))
 	(block-defined (ssa-block-defined block)))
-    (declare (ignorable block-virtuals))
+    (declare (ignorable block-defined))
     (dolist (phi phis)
       (when (phi-p phi)
 	(dolist (orig-pop (phi-operands phi))
 	  (let ((pop (maybe-get-simplified-phi-value orig-pop block lambda-ssa)))
+	    ;; we should only use PHI operand that is live in block we are processing
+	    ;; FIXME, what in case that we have reduced value of operand that was PHI ?
 	    (when (and (not (find pop live :test #'equalp))
-		       ;; only add to live if operand is defined in this block
-		       ;; paper live.add(phi.inputOf(b))
-		       ;; use or not we need to add interval for this places because successors is using it
-		       ;; (or (find pop (first block-virtuals) :test #'equalp)
-		       ;; 	   (find pop (second block-virtuals) :test #'equalp))
-		       (find pop block-defined :key #'cdr))
+		       (or (find pop (first block-virtuals) :test #'equalp)
+			   (find pop (second block-virtuals) :test #'equalp))
+		       ;; (find pop block-defined :key #'cdr)
+		       )
 	      (push pop live)))))))
   live)
 
@@ -1542,10 +1544,9 @@
 
 (defun add-range (intervals name start end)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (when (string-equal (symbol-name name) "PHI-PLACE-0"))
   (let ((interval (get-interval intervals name)))
     (unless interval
-      (setf interval (make-interval :name name ))
+      (setf interval (make-interval :name name))
       (add-interval intervals interval))
     (let ((active-range (first (interval-ranges interval))))
       (when (or (null active-range)
@@ -1706,30 +1707,34 @@
 	(use-positions (make-use-positions)))
     
     (dolist (block (reverse (lambda-ssa-blocks lambda-ssa)))
-      (let* ((successor-blocks (ssa-block-successors block lambda-ssa))
-	     (successors-live-in (mapcar #'ssa-block-live-in successor-blocks))
-	     (live (merge-all-blocks-live-in successors-live-in)))
+      (let*((successor-blocks (ssa-block-successors block lambda-ssa))
+	    (successors-live-in (mapcar #'ssa-block-live-in successor-blocks))
+	    (live (merge-all-blocks-live-in successors-live-in)))
 
 	(dolist (sb successor-blocks)
 	  (let ((phis (ssa-block-all-phis sb)))
-	    (when (and *testb* (= 1 (ssa-block-index block)))
-	      (break))
+	    ;; TEST just to be sure that we are not processing PHI that are reduce to simple VALUE,
+	    ;; remove later
+	    (dolist (phi phis)
+	      (when (phi-p phi)
+		(let ((place (phi-place phi)))
+		  (when (and (phi-place-reduced place)
+			     (funcall (phi-place-reduced place)))
+		    (error "This should now happen, we are using PHI that is reduced to normal PLACE")))))
 	    (setf live (live-add-phis-operands live phis block lambda-ssa))))
-
-	(when (and *testb* (= 1 (ssa-block-index block)))
-	  (break))
 
 	(when (ssa-block-first-instruction block)
 	  (let ((start (ssa-form-index (ssa-block-first-instruction block)))
 		(end (ssa-form-index (ssa-block-last-instruction block))))
-	  
+
+	    ;; FIXME, check if ADD-RANGE works correctly 
 	    (dolist (place live)
 	      (let ((place-name (get-place-name place)))
 		(add-range intervals place-name start end)))
 
-
 	    (dolist (instr (reverse (ssa-block-ssa block)))
 	      (let* ((instr-index (ssa-form-index instr))
+		     ;; we can't have PHI-PLACE in write position
 		     (write (ssa-place (ssa-form-write-place instr)))
 		     (orig-read (ssa-place (ssa-form-read-place instr)))
 		     (read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
@@ -1740,7 +1745,7 @@
 		    (add-range intervals (get-place-name write) instr-index instr-index))
 		  (setf live (remove-from-live live write))
 		  (add-use-positions use-positions write (make-use-write-pos :index instr-index)))
-		;; FIXME, read is allways adding RANGE
+		;; FIXME, read is always adding RANGE
 		;; when we then have WRITE we only shorten last RANGE
 		(when read
 		  (add-range intervals (get-place-name read) start instr-index)
@@ -1752,12 +1757,9 @@
 		(let ((phi-place (phi-place phi)))
 		  (setf live (remove-from-live live phi-place)))))
 
-	    (when (and *testb* (= 1 (ssa-block-index block)))
-	      (break))
-
 	    (when (ssa-block-is-header block)
 	      (let* ((end-block-index (lambda-ssa-find-greatest-end-block lambda-ssa (ssa-block-index block)))
-		     (end-block (ssa-find-block-by-index lambda-ssa end-block-index )))
+		     (end-block (ssa-find-block-by-index lambda-ssa end-block-index)))
 		(dolist (lplace live)
 		  (print (list 'loop-end lplace))
 		  (add-range intervals (get-place-name lplace) start (ssa-block-last-index end-block)))))))
@@ -2209,6 +2211,11 @@
 				     (not (intervals-same-storage-p interval pinterval nil)))
 			    (resolve-interval-block-move interval pinterval))))))))))))))
 
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defun make-lssa (exp)
   (let ((ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp)))))
     ssa))
@@ -2217,9 +2224,6 @@
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa)))
     intervals))
-
-(defun make-lssa-png (file exp &optional)
-  (generate-graph (make-lssa exp) file))
 
 (defun test-ssa (exp &optional (graph-name "default"))
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
