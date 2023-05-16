@@ -12,8 +12,10 @@
                  :attributes `(:label ,(format nil "~A" (ssa-block-index object))
                                :shape :box)))
 
-(defun get-successors-with-tags (block)
+(defun get-successors-with-tags (block lambda-ssa)
   (let ((connections (list
+		      (cons :order (let ((next (lambda-ssa-get-next-order-block lambda-ssa block)))
+				     (and next (ssa-block-index next))))
 		      (cons :succ (ssa-block-succ block))
 		      (cons :uncond-jump (ssa-block-uncond-jump block))
 		      (cons :cond-jump (ssa-block-cond-jump block)))))
@@ -94,13 +96,14 @@
 		   (succ-block-index (cdr s))
 		   (sblock (ssa-find-block-by-index graph succ-block-index))
 		   (color (ecase tag
+			    (:order "white")
 			    (:succ "green")
 			    (:uncond-jump "blue")
 			    (:cond-jump "red"))))	      
 	      (make-instance 'cl-dot:attributed
 			     :object sblock
 			     :attributes `(:weight 1 :color ,color))))
-	  (get-successors-with-tags block)))
+	  (get-successors-with-tags block graph)))
 
 
 (defmethod cl-dot:graph-object-edges ((graph lambda-ssa))
