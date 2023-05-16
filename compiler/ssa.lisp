@@ -74,6 +74,12 @@
 		     (named-place-name s))))
     (otherwise (named-place-name s))))
 
+(defun get-maybe-reduced-place (place)
+  (typecase place
+    (phi-place (let ((reduced (funcall (phi-place-reduced place))))
+		 (or reduced place)))
+    (otherwise place)))
+
 (defun place-is-phi (place)
   (and (typep place 'phi-place)
        (not (funcall (phi-place-reduced place)))))
@@ -189,12 +195,13 @@
 	(return-from lambda-ssa-get-previous-order-block b)))))
 
 (defun lambda-ssa-get-next-order-block (lambda-ssa sblock)
-  (let ((maxord (max (hash-keys (lambda-ssa-block-order-index lambda-ssa)))))
-    (do ((order (ssa-block-order sblock) (1+ order)))
+  (let ((maxord (apply #'max (hash-keys (lambda-ssa-block-order-index lambda-ssa)))))
+    (do ((order (+ 1 (ssa-block-order sblock)) (1+ order)))
 	((> order maxord) nil)
       (let ((b (lambda-ssa-get-block-by-order lambda-ssa order)))
 	(when b
-	  (return-from lambda-ssa-get-next-order-block b))))))
+	  (return-from lambda-ssa-get-next-order-block b))))
+    nil))
 
 (defun lambda-ssa-find-greatest-end-block (lambda-ssa header-block-index)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
@@ -666,7 +673,6 @@
 (defun maybe-insert-or-fix-jump-instr (from-block to-block &optional (slabel "IF-FBLOCK"))
   (declare (optimize (debug 3)))
   (let ((label (ssa-block-label to-block)))
-    (print (list 'maybe-insert-or-fix-jump-instr (ssa-block-index from-block) (ssa-block-index to-block) label))
     (unless label
       (print-debug  "MAYBE-INSERT-OR-FIX-JUMP-INSTR: Creating new label for block " (ssa-block-index to-block))
       (setf label (generate-label-for-string slabel) )
@@ -742,16 +748,18 @@
   (let ((vplace (generate-virtual-place "V-")))
     (set-block-def block (named-place-name place) vplace)))
 
+;;; we need to use reduced value here
 (defun try-remove-trivial-phi (phi block lambda-ssa)
   (declare (optimize (debug 3) (speed 0)))
   (let ((same nil)
 	(phi-place (phi-place phi)))
     (dolist (operand (phi-operands phi))
-      (cond ((or (eql operand same)
-		 (eq operand (phi-place phi))))
-	    ((not (null same))
-	     (return-from try-remove-trivial-phi phi))
-	    (t (setf same operand))))
+      (let ((operand (get-maybe-reduced-place operand)))
+	(cond ((or (eql operand same)
+		   (eq operand (phi-place phi))))
+	      ((not (null same))
+	       (return-from try-remove-trivial-phi phi))
+	      (t (setf same operand)))))
     (ssa-block-replace-phi block phi-place same)
     (add-phi-value-replacement (phi-place phi) same lambda-ssa)
     (let ((phi-usages (get-phi-connections phi-place lambda-ssa)))
@@ -897,7 +905,6 @@
 
 (defun replace-scc-by-value (phc scc-phis value lambda-ssa)
   (declare (optimize (debug 3) (speed 0)))
-  (print (list 'replace-scc-by-value value))
   (let ((phi-places nil))
     (dolist (phi-node scc-phis)
       (let ((phi-place (phc-get-place phc phi-node)))
@@ -1542,18 +1549,32 @@
 (defun add-interval (intervals interval)
   (setf (gethash (interval-name interval) intervals) interval))
 
+(defun intervals-merge (s1 e1 s2 e2)
+  (flet ((overlap (s1 e1 s2 e2)
+	   (and (<= s1 (+ e2 *instr-offset*))
+		(>= e1 (- s2 *instr-offset*)))))
+    (when (overlap s1 e1 s2 e2)
+      (list (min s1 s2)
+	    (max e1 e2)))))
+
 (defun add-range (intervals name start end)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
   (let ((interval (get-interval intervals name)))
     (unless interval
       (setf interval (make-interval :name name))
       (add-interval intervals interval))
     (let ((active-range (first (interval-ranges interval))))
-      (when (or (null active-range)
-		(< start (range-start active-range))
-		(> end (range-end active-range)))    
-	(push (make-range :start start :end end)
-	      (interval-ranges interval)))
+      (let ((merged-ranges (and active-range
+				(intervals-merge start end
+						 (range-start active-range)
+						 (range-end active-range)))))
+	(if merged-ranges
+	    (progn
+	      (setf (range-start active-range) (first merged-ranges))
+	      (setf (range-end active-range) (second merged-ranges)))
+	    
+	    (push (make-range :start start
+			      :end end)
+		  (interval-ranges interval))))
       interval)))
 
 (defun shorten-current-range (intervals place start)
@@ -1727,7 +1748,6 @@
 	  (let ((start (ssa-form-index (ssa-block-first-instruction block)))
 		(end (ssa-form-index (ssa-block-last-instruction block))))
 
-	    ;; FIXME, check if ADD-RANGE works correctly 
 	    (dolist (place live)
 	      (let ((place-name (get-place-name place)))
 		(add-range intervals place-name start end)))
@@ -1761,7 +1781,6 @@
 	      (let* ((end-block-index (lambda-ssa-find-greatest-end-block lambda-ssa (ssa-block-index block)))
 		     (end-block (ssa-find-block-by-index lambda-ssa end-block-index)))
 		(dolist (lplace live)
-		  (print (list 'loop-end lplace))
 		  (add-range intervals (get-place-name lplace) start (ssa-block-last-index end-block)))))))
 	(setf (ssa-block-live-in block) live)))
     ;; (try-intervals-merge intervals)
@@ -2216,14 +2235,21 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun make-lssa (exp)
-  (let ((ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp)))))
-    ssa))
+(defun make-lssa (exp &optional (optimize-blocks t) (optimize-phis t))
+  (let ((*optimize-redundant-blocks* optimize-blocks)
+	(*optimize-redundant-phis* optimize-phis))
+    (lambda-construct-ssa (create-node (clcomp-macroexpand exp)))))
 
 (defun make-lssa-intervals (exp)
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa)))
     intervals))
+
+(defun make-ssa-write-graph (exp &optional optimize-blocks optimize-phis (graph-name "default"))
+  (let ((*optimize-redundant-blocks* optimize-blocks)
+	(*optimize-redundant-phis* optimize-phis))
+    (let ((lambda-ssa (make-lssa exp)))
+      (generate-graph lambda-ssa graph-name))))
 
 (defun test-ssa (exp &optional (graph-name "default"))
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
@@ -2346,4 +2372,42 @@
 ;;; sometimes we have UNCOND-JUMP (in SSA-IF) form that jumps to next BLOCK in order
 
 
+;;; cl-dot, we are drawing this incorrectly, order is not accurate
+#+nil
+(test-ssa '(lambda (x a)
+	    (tagbody 
+	       (go end)
+	     x
+	       (setf x (+ 1 x))
+	       (go real-end)
+	     y
+	       (setf x (+ 2 x))
+	       (go real-end)
+	     end
+	       (if a
+		   (go x)
+		   (go y))
+	     real-end)
+	    x))
 
+;;; FIXME
+;;; there is bug when removing redundant blocks, we are removing necessary blocks
+;;; There is error in BUILD-INTERVALS here
+
+#+nil
+(test-ssa '(lambda (x a)
+	    (tagbody foo
+	       (tagbody 
+		  (go end)
+		x
+		  (setf x (+ 1 x))
+		  (go real-end)
+		y
+		  (setf x (+ 2 x))
+		  (go real-end)
+		end
+		  (if a
+		      (go x)
+		      (go y))
+		real-end)
+	       (go foo))))
