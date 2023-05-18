@@ -77,7 +77,7 @@
 (defun get-maybe-reduced-place (place)
   (typecase place
     (phi-place (let ((reduced (funcall (phi-place-reduced place))))
-		 (or reduced place)))
+		 (or (get-maybe-reduced-place reduced) place)))
     (otherwise place)))
 
 (defun place-is-phi (place)
@@ -238,6 +238,7 @@
 (defun get-phi-connections (phi-place lambda-ssa)
   (gethash (named-place-name phi-place) (lambda-ssa-phi-connections lambda-ssa)))
 
+;;; FIXME, when addiing replacement we need to create new operand to PHI connection
 (defun add-phi-value-replacement (phi-place value lambda-ssa)
   (setf (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)) value))
 
@@ -753,14 +754,19 @@
   (declare (optimize (debug 3) (speed 0)))
   (let ((same nil)
 	(phi-place (phi-place phi)))
+    (print '--------------------------------------------------------------)
+    (print (list 'phi phi))
     (dolist (operand (phi-operands phi))
       (let ((operand (get-maybe-reduced-place operand)))
+	(print (list 'phi-operand operand))
 	(cond ((or (eql operand same)
 		   (eq operand (phi-place phi))))
 	      ((not (null same))
 	       (return-from try-remove-trivial-phi phi))
 	      (t (setf same operand)))))
+    (print (list 'optimized))
     (ssa-block-replace-phi block phi-place same)
+    ;; FIXME, when adding replacement, if replacement is new PHI then we need to fix PHI operand usages
     (add-phi-value-replacement (phi-place phi) same lambda-ssa)
     (let ((phi-usages (get-phi-connections phi-place lambda-ssa)))
       (when phi-usages
