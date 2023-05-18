@@ -66,27 +66,29 @@
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
 
+
+;;; we can have more then one level of reduced value
+;;; try to get reduced value of already reduced one until we get NIL
+(defun get-phi-place-reduced-value (place &optional last)
+  (if (and (phi-place-p place)
+	   (phi-place-reduced place))
+      (let ((red (funcall (phi-place-reduced place))))
+	(if red
+	    (get-phi-place-reduced-value red red)
+	    last))
+      last))
+
 ;;; because of REDUCED in PHI-PLACE we need custom NAMED-PLACE-NAME function
-(defun get-place-name (s)
-  (typecase s
-    (phi-place (let ((reduced (funcall (phi-place-reduced s))))
-		 (if reduced (named-place-name reduced)
-		     (named-place-name s))))
-    (otherwise (named-place-name s))))
+(defun get-place-name (place)
+  (named-place-name (get-phi-place-reduced-value place place)))
 
 (defun get-maybe-reduced-place (place)
-  (typecase place
-    (phi-place (let ((reduced (funcall (phi-place-reduced place))))
-		 (or (get-maybe-reduced-place reduced) place)))
-    (otherwise place)))
+  (get-phi-place-reduced-value place place))
 
 (defun place-is-phi (place)
   (and (typep place 'phi-place)
        (not (funcall (phi-place-reduced place)))))
 
-(defun get-phi-place-reduced-value (place)
-  (when (phi-place-reduced place)
-    (funcall (phi-place-reduced place))))
 
 (defparameter *testb* nil)
 
@@ -99,14 +101,12 @@
 (defparameter *error-on-ssa-touch* nil)
 
 (defun error-if-touch-ir ()
-  ;; (when *error-on-ir-touch*
-  ;;   (error "Too late to touch IR"))
-  )
+  (when *error-on-ir-touch*
+    (error "Too late to touch IR")))
 
 (defun error-if-touch-ssa ()
-  ;; (when *error-on-ssa-touch*
-  ;;   (error "Too early to touch SSA"))
-  )
+  (when *error-on-ssa-touch*
+    (error "Too early to touch SSA")))
 
 (defparameter *debug-stream* t)
 (defun print-debug (&rest s)
@@ -239,8 +239,10 @@
   (gethash (named-place-name phi-place) (lambda-ssa-phi-connections lambda-ssa)))
 
 ;;; FIXME, when addiing replacement we need to create new operand to PHI connection
-(defun add-phi-value-replacement (phi-place value lambda-ssa)
-  (setf (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)) value))
+(defun add-phi-value-replacement (phi value lambda-ssa)
+  (let ((phi-place (phi-place phi)))
+    (setf (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)) value)
+    (add-phi-connections phi value lambda-ssa)))
 
 (defun get-phi-value-replacement (phi-place lambda-ssa)
   (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)))
@@ -754,25 +756,21 @@
   (declare (optimize (debug 3) (speed 0)))
   (let ((same nil)
 	(phi-place (phi-place phi)))
-    (print '--------------------------------------------------------------)
-    (print (list 'phi phi))
     (dolist (operand (phi-operands phi))
       (let ((operand (get-maybe-reduced-place operand)))
-	(print (list 'phi-operand operand))
 	(cond ((or (eql operand same)
 		   (eq operand (phi-place phi))))
 	      ((not (null same))
 	       (return-from try-remove-trivial-phi phi))
 	      (t (setf same operand)))))
-    (print (list 'optimized))
     (ssa-block-replace-phi block phi-place same)
     ;; FIXME, when adding replacement, if replacement is new PHI then we need to fix PHI operand usages
-    (add-phi-value-replacement (phi-place phi) same lambda-ssa)
+    (add-phi-value-replacement phi same lambda-ssa)
     (let ((phi-usages (get-phi-connections phi-place lambda-ssa)))
       (when phi-usages
 	(dolist (uphi phi-usages)
 	  ;; to prevent endless recursion skip PHI's that are already reduced to value
-	  (unless (phi-place-reduced (phi-place uphi))
+	  (unless (get-phi-place-reduced-value (phi-place uphi))
 	    (replace-phi-operand uphi phi-place same)
 	    (try-remove-trivial-phi uphi
 				    (ssa-find-block-by-index lambda-ssa (phi-block-index uphi))
@@ -909,13 +907,13 @@
   (unless (null phi-places)
     (error "Can't find all PHI's to replace")))
 
-(defun replace-scc-by-value (phc scc-phis value lambda-ssa)
+ (defun replace-scc-by-value (phc scc-phis value lambda-ssa)
   (declare (optimize (debug 3) (speed 0)))
   (let ((phi-places nil))
     (dolist (phi-node scc-phis)
       (let ((phi-place (phc-get-place phc phi-node)))
 	(push phi-place phi-places)
-	(add-phi-value-replacement phi-place value lambda-ssa)))
+	(add-phi-value-replacement (phc-get-phi phc phi-place) value lambda-ssa)))
     (lambda-ssa-find-and-replace-phis lambda-ssa phi-places value)))
 
 (defun process-scc (scc phc lambda-ssa)
@@ -2252,10 +2250,8 @@
     intervals))
 
 (defun make-ssa-write-graph (exp &optional optimize-blocks optimize-phis (graph-name "default"))
-  (let ((*optimize-redundant-blocks* optimize-blocks)
-	(*optimize-redundant-phis* optimize-phis))
-    (let ((lambda-ssa (make-lssa exp)))
-      (generate-graph lambda-ssa graph-name))))
+  (let ((lambda-ssa (make-lssa exp optimize-blocks optimize-phis)))
+    (generate-graph lambda-ssa graph-name)))
 
 (defun test-ssa (exp &optional (graph-name "default"))
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
