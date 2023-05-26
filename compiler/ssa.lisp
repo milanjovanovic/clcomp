@@ -557,6 +557,8 @@
       (when (label-node-p node)
 	(let ((label-block (make-new-ssa-block lambda-ssa)))
 	  (ssa-add-block-label lambda-ssa label-block (label-node-label node))
+	  (when (gethash (label-node-label node) labels-blocks)
+	    (error "Duplicate label in tagbody form"))
 	  (setf (gethash (label-node-label node) labels-blocks) label-block))))
     (dolist (form-node (tagbody-node-forms node))
       (if (label-node-p form-node)
@@ -1152,7 +1154,6 @@
 		(append new-predecessors
 			(delete del-block-index (ssa-block-predecessors succ-block)))))))))
 
-
 (defun is-block-redundant (sblock)
   "Decide if block can be deleted.
    Block can be deleted if there is LABEL instruction before SSA-VALUE or SSA-GO inst.
@@ -1332,15 +1333,18 @@
       (select-and-mark-loop-end block lambda-ssa))))
 
 (defun cbo-visit (block previous-block lambda-ssa visited active)
-  (declare (ignore previous-block))
+  (declare (optimize (debug 3) (speed 0)))
   (let* ((index (ssa-block-index block))
 	 (b-visited (gethash index visited))
 	 (b-active (gethash index active))
 	 (successors (ssa-block-successors block lambda-ssa)))
     (unless b-visited
       (setf (gethash index visited) t))
+    (when (= *break-block* (ssa-block-index block))
+      (break))
     (if (> b-active 0)
 	(progn
+	  (print-debug "SSA-BLOCK-IS-HEADER " (ssa-block-index block) "END BLOCK " (ssa-block-index previous-block))
 	  (unless (ssa-block-is-header block)
 	    (setf (ssa-block-is-header block) (get-block-unique-header-number)))
 	  (incf (ssa-block-branch-to-count block)))
@@ -2239,17 +2243,20 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun make-lssa (exp &optional (optimize-blocks t) (optimize-phis t))
+(defun make-lssa (exp &optional file (optimize-blocks t) (optimize-phis t))
   (let ((*optimize-redundant-blocks* optimize-blocks)
 	(*optimize-redundant-phis* optimize-phis))
-    (lambda-construct-ssa (create-node (clcomp-macroexpand exp)))))
+    (let ((lssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp)))))
+      (when file
+	(generate-graph lssa file))
+      lssa)))
 
 (defun make-lssa-intervals (exp)
   (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa)))
     intervals))
 
-(defun make-ssa-write-graph (exp &optional optimize-blocks optimize-phis (graph-name "default"))
+(defun make-ssa-write-graph (exp &optional (optimize-blocks t) (optimize-phis t) (graph-name "default"))
   (let ((lambda-ssa (make-lssa exp optimize-blocks optimize-phis)))
     (generate-graph lambda-ssa graph-name)))
 
@@ -2413,3 +2420,10 @@
 		      (go y))
 		real-end)
 	       (go foo))))
+#+nil
+(test-ssa '(lambda (x a)
+	    (tagbody foo
+	       (print x)
+	       (go foo))))
+
+

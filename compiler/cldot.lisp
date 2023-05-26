@@ -75,13 +75,16 @@
 		      (when (ssa-block-label block)
 			(cl-who:htm
 			 (:tr (:td (:b (cl-who:str (cl-who:escape-string (format nil "label ~A" (ssa-block-label block)))))))))
+		      (when (ssa-block-is-header block)
+			(cl-who:htm
+			 (:tr (:td (:b (cl-who:str (cl-who:escape-string (format nil "HEADER ~A" (ssa-block-is-header block)))))))))
 		      (:tr (:td 
 			    (loop for place in dplaces
 				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-defined-place place))) (:br)))))
 		      (:tr (:td 
 			    (loop for phi in (ssa-block-phis block)
 				  when (phi-p (cdr phi))
-				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-phi phi))) (:br)))))
+				    do (cl-who:htm (cl-who:str (cl-who:escape-string (format-phi phi))) (:br)))))
 		      (:tr (:td :align "left"
 				(loop for ins in ir
 				      do (cl-who:htm (cl-who:str (cl-who:escape-string (format-ir ins))) (:br :align "left"))))))))))
