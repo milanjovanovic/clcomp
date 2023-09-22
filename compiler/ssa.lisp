@@ -1,4 +1,7 @@
-(in-package :clcomp)
+(defpackage #:clcomp.ssa
+  (:use :cl))
+
+(in-package #:clcomp.ssa)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (declaim (optimize (debug 3) (safety 3) (speed 0))))
@@ -67,6 +70,9 @@
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
 
 
+(defparameter *break-block* -1)
+
+
 ;;; we can have more then one level of reduced value
 ;;; try to get reduced value of already reduced one until we get NIL
 (defun get-phi-place-reduced-value (place &optional last)
@@ -112,6 +118,7 @@
 (defun print-debug (&rest s)
   (format  *debug-stream* (apply #'concatenate 'string (mapcar #'write-to-string s)))
   (princ #\Newline *debug-stream*))
+
 
 (defparameter *gen-symbol-counter* 0)
 
@@ -172,9 +179,11 @@
 (defun lambda-add-fixup (fixup lambda-ssa)
   (push fixup (lambda-ssa-fixups lambda-ssa)))
 
-(defun lambda-ssa-find-header-index(lambda-ssa end-block-index)
+(defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
 
+;;; FIXME, all end blocks are in one plist
+#+nil
 (defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
   (let ((indexes nil))
     (dolist (pair (lambda-ssa-loop-header-blocks lambda-ssa))
@@ -183,6 +192,21 @@
 	(when (= header-block-index header)
 	  (push end indexes))))
     indexes))
+
+(defun lambda-ssa-is-last-block (lambda-ssa block)
+  (= (ssa-block-index block)
+     (ssa-block-index (car (last (lambda-ssa-blocks lambda-ssa))))))
+
+(defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
+  (getf (lambda-ssa-loop-header-blocks lambda-ssa) header-block-index))
+
+(defun lambda-ssa-add-loop-end-block (header-index end-index lambda-ssa)
+  (let ((ends (assoc header-index (lambda-ssa-loop-header-blocks lambda-ssa))))
+    (if
+     ends
+     (setf (cdr ends) (cons end-index (cdr ends)))
+     (push (cons header-index (list end-index))
+	   (lambda-ssa-loop-header-blocks lambda-ssa)))))
 
 (defun lambda-ssa-get-block-by-order (lambda-ssa order)
   (gethash order (lambda-ssa-block-order-index lambda-ssa)))
@@ -195,7 +219,7 @@
 	(return-from lambda-ssa-get-previous-order-block b)))))
 
 (defun lambda-ssa-get-next-order-block (lambda-ssa sblock)
-  (let ((maxord (apply #'max (hash-keys (lambda-ssa-block-order-index lambda-ssa)))))
+  (let ((maxord (apply #'max (clcomp::hash-keys (lambda-ssa-block-order-index lambda-ssa)))))
     (do ((order (+ 1 (ssa-block-order sblock)) (1+ order)))
 	((> order maxord) nil)
       (let ((b (lambda-ssa-get-block-by-order lambda-ssa order)))
@@ -210,6 +234,15 @@
 			   (ssa-find-block-by-index lambda-ssa i)) indexes)))
     (ssa-block-index (first (sort blocks (lambda (b1 b2)
 					   (>= (ssa-block-order b1) (ssa-block-order b2))))))))
+
+(defun ssa-block-is-next-block (b1 b2 lambda-ssa)
+  (do* ((blocks (lambda-ssa-blocks lambda-ssa) (cdr blocks))
+	(b (car blocks) (car blocks)))
+       ((= (ssa-block-index b1) (ssa-block-index b))
+	(let ((next-block (cadr blocks)))
+	  (and next-block
+	       (= (ssa-block-index next-block)
+		  (ssa-block-index b2)))))))
 
 (defun ssa-block-add-phi (ssa-block phi)
   (setf (ssa-block-phis ssa-block) (acons (named-place-name (phi-place phi)) phi
@@ -408,19 +441,24 @@
 ;;; FIXME, set block LABEL fieds
 ;;; FIXME, we are allways moving value to specific place, we can omit that and use existing place (and force it to register)
 (defun emit-if-node-ssa (if-node lambda-ssa leaf place block)
-  (let* ((test-node (if-node-test-form if-node))
+  (let* ((test-node (clcomp::if-node-test-form if-node))
 	 (test-place (generate-virtual-place))
 	 (block (emit-ssa test-node lambda-ssa nil test-place block))
 	 (false-block (make-new-ssa-block lambda-ssa))
 	 (true-block (make-new-ssa-block lambda-ssa))
 	 (next-block (unless leaf (make-new-ssa-block lambda-ssa))))
-    (ssa-connect-blocks block false-block)
+    ;; we can just set successor if this block is last block
+    ;; if not set UNCOND-JUMP
+    (if (= (ssa-block-index block)
+	   (ssa-block-index (car (last (lambda-ssa-blocks lambda-ssa)))))
+	(ssa-connect-blocks block false-block)
+	(insert-block-unconditional-jump block false-block))
     (ssa-add-block lambda-ssa false-block)
     (ssa-add-block lambda-ssa true-block)
-    (let ((true-form-ret-block (emit-ssa (if-node-true-form if-node)
+    (let ((true-form-ret-block (emit-ssa (clcomp::if-node-true-form if-node)
 					 lambda-ssa leaf place true-block))
 	  (false-form-ret-block (emit-ssa
-				 (if-node-false-form if-node)
+				 (clcomp::if-node-false-form if-node)
 				 lambda-ssa leaf place false-block)))
       (unless leaf
 	(if (blocks-have-same-index true-block true-form-ret-block)
@@ -450,15 +488,15 @@
 
 (defun maybe-emit-direct-load (node lambda-ssa leaf place block)
   (etypecase node
-    (immediate-constant-node
+    (clcomp::immediate-constant-node
      (emit-ir (make-ssa-load :to place
     			     :from node) block)
      (when leaf
        (emit-single-return-sequence place block))
      block)
-    (lexical-var-node
+    (clcomp::lexical-var-node
      (emit-ir (make-ssa-load :to place
-    			     :from (make-var-place :name (lexical-var-node-name node))) block)
+    			     :from (make-var-place :name (clcomp::lexical-var-node-name node))) block)
      (when leaf
        (emit-single-return-sequence place block))
      block)
@@ -467,14 +505,14 @@
 ;;; FIXME, there is more here
 (defun make-direct-place-or-nil (node)
   (etypecase node
-    (immediate-constant-node node)
-    (lexical-var-node (make-var-place :name (lexical-var-node-name node)))
+    (clcomp::immediate-constant-node node)
+    (clcomp::lexical-var-node (make-var-place :name (clcomp::lexical-var-node-name node)))
     (t nil)))
 
 ;;; FIXME, fun can be CLOSURE or LAMBDA
 (defun emit-call-node-ssa (node lambda-ssa leaf place block)
-  (let* ((fun (call-node-function node))
-	 (arguments (call-node-arguments node))
+  (let* ((fun (clcomp::call-node-function node))
+	 (arguments (clcomp::call-node-arguments node))
 	 (arguments-count (length arguments))
 	 (args-places nil))
     (dolist (arg arguments)
@@ -490,7 +528,7 @@
 	(emit-ir (make-ssa-load :to (make-argument-place :index arg-index) :from p) block)
 	(incf arg-index)))
     (emit-ir (make-ssa-load :to (make-argument-count-place)
-			    :from (make-immediate-constant :constant (fixnumize arguments-count))) block)
+			    :from (make-immediate-constant :constant (clcomp::fixnumize arguments-count))) block)
     (let ((fixup (make-compile-function-fixup :name (generate-fixup-symbol)
 					      :function fun)))
       (emit-ir (make-ssa-load :to (make-function-value-place) :from fixup) block)
@@ -509,15 +547,15 @@
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
   (declare (ignore leaf))
-  (let ((lvar (lexical-binding-node-name node))
-	(form (lexical-binding-node-form node)))
+  (let ((lvar (clcomp::lexical-binding-node-name node))
+	(form (clcomp::lexical-binding-node-form node)))
     (maybe-emit-direct-load form lambda-ssa nil (make-var-place :name lvar) block)))
 
 (defun emit-let-node-ssa (node lambda-ssa leaf place block)
-  (dolist (n (let-node-bindings node))
+  (dolist (n (clcomp::let-node-bindings node))
     (let ((new-block (emit-lexical-binding-node-ssa n lambda-ssa nil block)))
       (setf block new-block)))
-  (emit-ssa (let-node-form node) lambda-ssa leaf place block))
+  (emit-ssa (clcomp::let-node-form node) lambda-ssa leaf place block))
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
 (defun emit-immediate-node-ssa (node lambda-ssa leaf place block)
@@ -533,15 +571,15 @@
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
   (declare (ignore lambda-ssa))
   (if place
-      (emit-ir (make-ssa-load :to place :from (make-var-place :name (lexical-var-node-name node))) block )
+      (emit-ir (make-ssa-load :to place :from (make-var-place :name (clcomp::lexical-var-node-name node))) block )
       (if leaf
-	  (emit-single-return-sequence (make-var-place :name (lexical-var-node-name node))  block)
+	  (emit-single-return-sequence (make-var-place :name (clcomp::lexical-var-node-name node))  block)
 	  (emit-ir (make-ssa-value :value
-				   (make-var-place :name (lexical-var-node-name node))) block)))
+				   (make-var-place :name (clcomp::lexical-var-node-name node))) block)))
   block)
 
 (defun emit-progn-node-ssa (node lambda-ssa leaf place block)
-  (do* ((forms (progn-node-forms node) (cdr forms))
+  (do* ((forms (clcomp::progn-node-forms node) (cdr forms))
 	(form-node (car forms) (car forms)))
        ((null forms) block)
     (if (cdr forms)
@@ -553,16 +591,16 @@
   (push-labels-env lambda-ssa)
   (let ((labels-blocks (make-hash-table))
 	(current-block block))
-    (dolist (node (tagbody-node-forms node))
-      (when (label-node-p node)
+    (dolist (node (clcomp::tagbody-node-forms node))
+      (when (clcomp::label-node-p node)
 	(let ((label-block (make-new-ssa-block lambda-ssa)))
-	  (ssa-add-block-label lambda-ssa label-block (label-node-label node))
-	  (when (gethash (label-node-label node) labels-blocks)
+	  (ssa-add-block-label lambda-ssa label-block (clcomp::label-node-label node))
+	  (when (gethash (clcomp::label-node-label node) labels-blocks)
 	    (error "Duplicate label in tagbody form"))
-	  (setf (gethash (label-node-label node) labels-blocks) label-block))))
-    (dolist (form-node (tagbody-node-forms node))
-      (if (label-node-p form-node)
-	  (let ((lblock (gethash (label-node-label form-node) labels-blocks)))
+	  (setf (gethash (clcomp::label-node-label node) labels-blocks) label-block))))
+    (dolist (form-node (clcomp::tagbody-node-forms node))
+      (if (clcomp::label-node-p form-node)
+	  (let ((lblock (gethash (clcomp::label-node-label form-node) labels-blocks)))
 	    ;; connect previus block with this label block only if there is no direct jump from previous to other block
 	    (ssa-add-block lambda-ssa lblock)
 	    ;; when current block doesn't have GO just connect blocks
@@ -576,9 +614,9 @@
       (setf block current-block))
     (pop-labels-env lambda-ssa)
     (if place
-	(emit-ir (make-ssa-load :to place :from (make-immediate-constant :constant *nil*)) block)
+	(emit-ir (make-ssa-load :to place :from (make-immediate-constant :constant clcomp::*nil*)) block)
 	(when leaf
-	  (emit-single-return-sequence (make-immediate-constant :constant *nil*) block )
+	  (emit-single-return-sequence (make-immediate-constant :constant clcomp::*nil*) block )
 	  ;; FIXME, need this ?
 	  ;; (emit lambda-ssa (make-immediate-constant :constant *nil*) block)
 	  ))
@@ -587,7 +625,7 @@
 ;;; FIXME, delete unreachable code, look at EMIT function, it will ignore instructions after SSA-GO
 (defun emit-go-node-ssa (node lambda-ssa leaf place block)
   (declare (ignore leaf place))
-  (let ((label-name (label-node-label (go-node-label-node node))))
+  (let ((label-name (clcomp::label-node-label (clcomp::go-node-label-node node))))
     (insert-block-unconditional-jump block (ssa-find-block-by-index lambda-ssa
 								    (ssa-find-block-index-by-label lambda-ssa label-name)))
 
@@ -598,14 +636,14 @@
     (make-new-ssa-block lambda-ssa)))
 
 (defun emit-setq-node-ssa (node lambda-ssa leaf place block)
-  (let ((new-block (maybe-emit-direct-load (setq-node-form node)
+  (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
 					   lambda-ssa leaf
 					   (make-var-place
-					    :name (lexical-var-node-name
-						   (setq-node-var node)))
+					    :name (clcomp::lexical-var-node-name
+						   (clcomp::setq-node-var node)))
 					   block)))
     (if place
-	(maybe-emit-direct-load (setq-node-var node) lambda-ssa leaf place new-block))
+	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
     new-block))
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
@@ -614,8 +652,8 @@
   (let ((index 0))
     (dolist (argument arguments)
       (etypecase argument
-	(lexical-var-node
-	 (emit-ir (make-ssa-load :to (make-var-place :name (lexical-var-node-name argument))
+	(clcomp::lexical-var-node
+	 (emit-ir (make-ssa-load :to (make-var-place :name (clcomp::lexical-var-node-name argument))
 					 :from (make-rcv-argument-place :index index))
 	       block)))
       (incf index))))
@@ -623,19 +661,19 @@
 (defun rip-relative-node-to-fixup (node)
   (let ((fixup-sym (generate-fixup-symbol)))
     (etypecase node
-      (lambda-node (make-local-component-fixup :name fixup-sym))
-      (load-time-value-node (make-load-time-eval-fixup :name fixup-sym))
-      (fun-rip-relative-node (make-compile-function-fixup :name fixup-sym
-							  :function (fun-rip-relative-node-form node)))
-      (compile-time-constant-node (make-compile-time-constant-fixup :name fixup-sym
-								    :form (compile-time-constant-node-form node))))))
+      (clcomp::lambda-node (make-local-component-fixup :name fixup-sym))
+      (clcomp::load-time-value-node (make-load-time-eval-fixup :name fixup-sym))
+      (clcomp::fun-rip-relative-node (make-compile-function-fixup :name fixup-sym
+							  :function (clcomp::fun-rip-relative-node-form node)))
+      (clcomp::compile-time-constant-node (make-compile-time-constant-fixup :name fixup-sym
+								    :form (clcomp::compile-time-constant-node-form node))))))
 
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
   (let ((fixup (rip-relative-node-to-fixup node)))
     (typecase node
-      (load-time-value-node
-       (add-sub-lambda lambda-ssa (lambda-construct-ssa (load-time-value-node-node node)) fixup))
-      (lambda-node
+      (clcomp::load-time-value-node
+       (add-sub-lambda lambda-ssa (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
+      (clcomp::lambda-node
        (add-sub-lambda lambda-ssa (lambda-construct-ssa node) fixup)))
     (lambda-add-fixup fixup lambda-ssa)
     (if place
@@ -647,19 +685,24 @@
     block))
 
 ;;; FIXME, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
+;;; currently macroexpanding BLOCK to TAGBODY doesn't work for (return-from FUN (values 1 2))
+;; simple fix is to macroexpand with MULTIPLE-VALUE-LIST ??
+
+;;; FIXME, VALUES compilation: if VALUES is at FUNCTION return position then we need to use known registers/stack positions
+;;; if other cases we can compile VALUES as multiple LET bindings
 (defun emit-ssa (node lambda-ssa leaf place block)
   (etypecase node
-    (if-node (emit-if-node-ssa node lambda-ssa leaf place block))
-    (call-node (emit-call-node-ssa node lambda-ssa leaf place block))
-    (vop-node (emit-call-node-ssa node lambda-ssa leaf place block))
-    (let-node (emit-let-node-ssa node lambda-ssa leaf place block))
-    (progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
-    (lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))
-    (immediate-constant-node (emit-immediate-node-ssa node lambda-ssa leaf place block))
-    (tagbody-node (emit-tagbody-node-ssa node lambda-ssa leaf place block))
-    (go-node (emit-go-node-ssa node lambda-ssa leaf place block))
-    (setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
-    (rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))))
+    (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
+    (clcomp::call-node (emit-call-node-ssa node lambda-ssa leaf place block))
+    (clcomp::vop-node (emit-call-node-ssa node lambda-ssa leaf place block))
+    (clcomp::let-node (emit-let-node-ssa node lambda-ssa leaf place block))
+    (clcomp::progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
+    (clcomp::lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))
+    (clcomp::immediate-constant-node (emit-immediate-node-ssa node lambda-ssa leaf place block))
+    (clcomp::tagbody-node (emit-tagbody-node-ssa node lambda-ssa leaf place block))
+    (clcomp::go-node (emit-go-node-ssa node lambda-ssa leaf place block))
+    (clcomp::setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
+    (clcomp::rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))))
 
 
 (defun fix-cond-jump-index (from-block to-block)
@@ -857,7 +900,7 @@
 
 (defun transpose-graph (successors-map)
   (let ((transposed-successors-map (make-hash-table)))
-    (dolist (index (hash-keys successors-map))
+    (dolist (index (clcomp::hash-keys successors-map))
       (dolist (succ-index (gethash index successors-map))
 	(push index (gethash succ-index transposed-successors-map))))
     transposed-successors-map))
@@ -1010,8 +1053,8 @@
 (defun make-graphs-from-successors (successors)
   "Create list of graphs from list of phis"
   (labels ((all-nodes (successors)
-	     (remove-duplicates (append (hash-keys successors)
-					(mapcan #'nconc (copy-tree (hash-values successors))))))
+	     (remove-duplicates (append (clcomp::hash-keys successors)
+					(mapcan #'nconc (copy-tree (clcomp::hash-values successors))))))
 	   (dfs (node links visited current)
 	     (setf (gethash node visited) t)
 	     (setf (gethash node current) t)
@@ -1021,7 +1064,7 @@
 	   (get-linked-nodes (successors)
 	     (let ((predecessors (transpose-graph  successors))
 		   (linked (make-hash-table)))
-	       (dolist (k (hash-keys successors))
+	       (dolist (k (clcomp::hash-keys successors))
 		 (let ((sucs (gethash k successors))
 		       (preds (gethash k predecessors)))
 		   (setf (gethash k linked) (remove-duplicates (append sucs preds)))))
@@ -1034,7 +1077,7 @@
 	(unless (gethash node visited)
 	  (let ((current (make-hash-table)))
 	    (dfs node links visited current)
-	    (push (hash-keys current) graphs))))
+	    (push (clcomp::hash-keys current) graphs))))
       graphs)))
 
 (defun optimize-redundant-phis (lambda-ssa)
@@ -1042,7 +1085,7 @@
   (let* ((phis (collect-maybe-redundant-phis lambda-ssa))
 	 (phc (make-places-connections phis))
 	 ;; FIXME, this is not topological sort, see paper
-	 (indexes (sort (hash-values (phis-connections-identity phc)) #'< )))
+	 (indexes (sort (clcomp::hash-values (phis-connections-identity phc)) #'< )))
     (remove-redundant-phis indexes phc lambda-ssa)))
 
 ;;; END
@@ -1204,7 +1247,7 @@
 	      (destroy-ssa-block block lambda-ssa))))
       (setf (lambda-ssa-blocks lambda-ssa) (reverse new-blocks)))
     ;; remove empty blocks that are stil in LAMBDA-SSA-BLOCKS-INDEX
-    (dolist (block (hash-values (lambda-ssa-blocks-index lambda-ssa )))
+    (dolist (block (clcomp::hash-values (lambda-ssa-blocks-index lambda-ssa )))
       (unless (gethash (ssa-block-index block) visited)
 	(dolist (index (ssa-block-successors-indexes block))
 	  (let ((sblock (ssa-find-block-by-index lambda-ssa index)))
@@ -1249,7 +1292,7 @@
 		((and b1-succ
 		      b2
 		      (/= b1-succ (ssa-block-index b2)))
-		 (error (format t "Wrong SUCC index for BLOCK ~A" (ssa-block-index b1))))))))))
+		 (error (format nil "Wrong SUCC index for BLOCK ~A" (ssa-block-index b1))))))))))
 
 (defun check-predecessors (lambda-ssa)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
@@ -1272,14 +1315,14 @@
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
 	 (*ssa-symbol-counter* 0)
+	 (*error-on-ir-touch* nil)
+	 (*error-on-ssa-touch* t)
 	 (lambda-ssa (make-lambda-ssa))
 	 (entry-block (make-new-ssa-block lambda-ssa)))
-    (setf *error-on-ir-touch* nil)
-    (setf *error-on-ssa-touch* t)
     (ssa-add-block lambda-ssa entry-block)
     (emit-ir (make-lambda-entry) entry-block)
-    (emit-lambda-arguments-ssa (lambda-node-arguments lambda-node ) lambda-ssa entry-block)
-    (emit-ssa (lambda-node-body lambda-node) lambda-ssa t nil entry-block)
+    (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node ) lambda-ssa entry-block)
+    (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (when *optimize-redundant-blocks*
@@ -1310,6 +1353,7 @@
 ;;; Sometimes we can mark direct predecessor block as LOOP-END block
 ;;; remove LOOP-END from BLOCK in which LOOP-HEADER BLOCK is direct successor
 
+#+nil
 (defun select-and-mark-loop-end (block lambda-ssa)
   (let* ((header-block-index (ssa-block-index block))
 	 (orders (mapcar (lambda (i)
@@ -1327,6 +1371,7 @@
 	  (push (cons index header-block-index) (lambda-ssa-loop-end-blocks lambda-ssa))
 	  (push (cons header-block-index index) (lambda-ssa-loop-header-blocks lambda-ssa)))))))
 
+#+nil
 (defun mark-loop-end-blocks (lambda-ssa)
   (dolist (block (lambda-ssa-blocks lambda-ssa))
     (when (ssa-block-is-header block)
@@ -1334,6 +1379,7 @@
 
 (defun cbo-visit (block previous-block lambda-ssa visited active)
   (declare (optimize (debug 3) (speed 0)))
+  (print-debug "CBO-VISIT " (ssa-block-index block))
   (let* ((index (ssa-block-index block))
 	 (b-visited (gethash index visited))
 	 (b-active (gethash index active))
@@ -1345,6 +1391,7 @@
     (if (> b-active 0)
 	(progn
 	  (print-debug "SSA-BLOCK-IS-HEADER " (ssa-block-index block) "END BLOCK " (ssa-block-index previous-block))
+	  (lambda-ssa-add-loop-end-block (ssa-block-index block) (ssa-block-index previous-block) lambda-ssa)
 	  (unless (ssa-block-is-header block)
 	    (setf (ssa-block-is-header block) (get-block-unique-header-number)))
 	  (incf (ssa-block-branch-to-count block)))
@@ -1353,6 +1400,19 @@
 	  (dolist (sblock successors)
 	    (cbo-visit sblock block lambda-ssa visited active))
 	  (decf (gethash index active))))))
+
+(defun trace-end-block (end-block header-block lambda-ssa)
+  (declare (ignore end-block header-block lambda-ssa)))
+
+(defun follow-end-blocks (loop-end-blocks header-block lambda-ssa)
+  (dolist (end-block loop-end-blocks)
+    (trace end-block header-block lambda-ssa)))
+
+(defun mark-loop-blocks (lambda-ssa)
+  (dolist (header-end-blocks (lambda-ssa-loop-header-blocks lambda-ssa))
+    (let ((header-block (first header-end-blocks))
+	  (loop-end-blocks (rest header-end-blocks)))
+      (follow-end-blocks loop-end-blocks header-block lambda-ssa))))
 
 ;;; FIXME, this still doesn't implement block order from:
 ;;; "Linear Scan Register Allocation for the Java HotSpotTM Client Compiler"
@@ -1369,7 +1429,8 @@
     (dolist (block (lambda-ssa-blocks lambda-ssa))
       (unless (gethash (ssa-block-index block) visited)
 	(error "Not all blocks are visited")))
-    (mark-loop-end-blocks lambda-ssa)
+    (mark-loop-blocks lambda-ssa)
+    ;; (mark-loop-end-blocks lambda-ssa)
     lambda-ssa))
 
 
@@ -1409,8 +1470,8 @@
   (let ((register (interval-register interval))
 	(stack (interval-stack interval)))
     (if register
-	(make-reg-storage :register register)
-	(make-stack-storage :offset stack))))
+	(clcomp::make-reg-storage :register register)
+	(clcomp::make-stack-storage :offset stack))))
 
 (defun interval-end (interval)
   (range-end (car (last (interval-ranges interval)))))
@@ -2224,7 +2285,7 @@
 	  (dolist (index pindexes)
 	    (let* ((pblock (ssa-find-block-by-index lambda-ssa index))
 		   (pintervals (get-first-or-last-intervals-in-block pblock alloc :last)))
-	      (dolist (interval (hash-values sintervals))
+	      (dolist (interval (clcomp::hash-values sintervals))
 		(let ((maybe-phi (gethash (interval-name interval) sblock-phis)))
 		  (if maybe-phi
 		      (progn
@@ -2243,16 +2304,22 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defparameter *generate-graph-fun* nil)
+
+(defun generate-graph (ssa file)
+  (when *generate-graph-fun*
+    (funcall *generate-graph-fun* ssa file)))
+
 (defun make-lssa (exp &optional file (optimize-blocks t) (optimize-phis t))
   (let ((*optimize-redundant-blocks* optimize-blocks)
 	(*optimize-redundant-phis* optimize-phis))
-    (let ((lssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp)))))
+    (let ((lssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp)))))
       (when file
 	(generate-graph lssa file))
       lssa)))
 
 (defun make-lssa-intervals (exp)
-  (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa)))
     intervals))
 
@@ -2261,7 +2328,7 @@
     (generate-graph lambda-ssa graph-name)))
 
 (defun test-ssa (exp &optional (graph-name "default"))
-  (let* ((lambda-ssa (lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
 	 (_ (generate-graph lambda-ssa graph-name))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
@@ -2427,3 +2494,18 @@
 	       (go foo))))
 
 
+#+nil
+(make-lssa '(lambda (a)
+		     (tagbody 
+			(go foo)
+			a1
+			(print 1)
+			a2 
+			(print 2) 
+			a3
+			(print 3)
+			foo
+			(if a 
+			    (go a1)
+			    (go a2))
+			z)) "default")
