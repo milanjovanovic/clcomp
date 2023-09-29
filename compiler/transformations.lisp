@@ -45,6 +45,7 @@
 ;;; transform sexp expression to structures tree
 
 (defstruct tnode)
+(defstruct (declaration-node (:include tnode)) safety optimize debug type)
 (defstruct (rip-relative-node (:include tnode)))
 (defstruct (fun-rip-relative-node (:include rip-relative-node)) form)
 (defstruct (compile-time-constant-node (:include rip-relative-node)) form)
@@ -63,8 +64,15 @@
 (defstruct (go-node (:include tnode)) label-node)
 (defstruct (label-node (:include tnode)) label)
 (defstruct (setq-node (:include tnode)) var form)
+(defstruct (values-node (:include tnode)) forms)
+(defstruct (m-v-b-binding-node (:include tnode)) name value-index)
+(defstruct (m-v-b-node (:include tnode)) bindings form declaration body)
 
 (defstruct cenv lambda-declarations bindings declaration)
+
+;;; FIXME
+(defun parse-declaration-form (form)
+  (make-declaration-node))
 
 (defun lexical-binding-exist (environment var)
   (dolist (cenv environment)
@@ -208,6 +216,30 @@
 			    (list 'declare)
 			    (cons 'progn (cdr (clcomp-macroexpand form (create-macros-env t t))))))))
 
+(defun create-values-node (form environment)
+  (make-values-node :forms (mapcar (lambda (f)
+				     (create-node f environment))
+				   (cdr form))))
+
+(defun create-m-v-b-node (form environment)
+  (let* ((bindings nil)
+	 (index 0)
+	 (new-environment (cons (make-cenv :bindings (second form))
+				environment))
+	 (form-node (create-node (third form)))
+	 (declaration (when (eq 'declare (first (fourth form)))
+			(parse-declaration-form (fourth form))))
+	 (body (create-node  (if declaration
+				 (fifth form)
+				 (fourth form)) new-environment)))
+    (dolist (s (second form))
+      (push (make-m-v-b-binding-node :name s :value-index index) bindings)
+      (incf index))
+    (make-m-v-b-node :bindings (reverse bindings)
+		     :form form-node
+		     :declaration declaration
+		     :body body)))
+
 (defun create-compile-time-constant-node (form)
   (make-compile-time-constant-node :form (second form)))
 
@@ -280,4 +312,9 @@
 	       (create-setq-node form environment))
 	      ((eq first 'go)
 	       (create-go-node form))
+	      ((eq first 'values)
+	       ;;; missing (SETF (VALUES ... form, but maybe we don't need it
+	       (create-values-node form environment))
+	      ((eq first 'multiple-value-bind)
+	       (create-m-v-b-node form environment))
 	      (t (create-call-node form environment))))))

@@ -458,6 +458,16 @@
 		   (clcomp-macroexpand what env)))
 	    (t (error "Unknown SETF expander !!")))))))
 
+(defun %clcomp-macroexpand-m-v-b (form env)
+  (declare (ignore env))
+  (let ((has-declaration (eq 'declare (first (fourth form)))))
+    (if has-declaration
+	(setf (cddddr form)
+	      (list (cons 'progn (cddddr form))))
+	(setf (cdddr form)
+	      (list (cons 'progn (cdddr form)))))
+    form))
+
 (defun clcomp-macroexpand-1 (macro-form)
   (let* ((macro-fun (gethash (first macro-form) *macros*)))
     (funcall macro-fun macro-form)))
@@ -514,5 +524,6 @@
 		(setf (%clcomp-macroexpand-setf form env))
 		;; FIXME, if lambda form is first need to macroexpand
 		(quote (clcomp-macroexpand-quote-obj (second form) env))
+		(multiple-value-bind (%clcomp-macroexpand-m-v-b form env) )
 		(otherwise (cons first
 				 (%clcomp-macroexpand-all (rest form) env)))))))))

@@ -30,6 +30,8 @@
 	    (:include named-place)) reduced)
 (defstruct (var-place (:include named-place)))
 
+(defstruct (mvb-place (:include place)) var-places)
+
 (defstruct (fixup (:include named-place)))
 (defstruct (local-component-fixup (:include fixup)))
 (defstruct (compile-function-fixup (:include fixup)) function)
@@ -50,6 +52,9 @@
 (defstruct (arg-check (:include ssa-form)) arg-count)
 (defstruct (ssa-form-rw (:include ssa-form)))
 
+;;;FIXME, find better name
+(defstruct (ssa-return-values (:include ssa-form)) values-count)
+
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
 (defstruct (ssa-go (:include ssa-form)) label)
 (defstruct (ssa-label (:include ssa-form)) label)
@@ -58,7 +63,7 @@
 
 (defstruct (ssa-base-return (:include ssa-form)))
 (defstruct (ssa-return (:include ssa-base-return)))
-(defstruct (ssa-multiple-return (:include ssa-base-return)))
+(defstruct (ssa-multiple-return (:include ssa-base-return)) count)
 
 (defstruct (ssa-vop (:include ssa-form-rw)) tos froms)
 
@@ -175,6 +180,20 @@
 	      (gethash place (lambda-ssa-redundant-phis lambda-ssa))))
       (incf *phi-place-symbol-counter*)
       place)))
+
+(defun move-to-place (to from block)
+  (typecase to
+    (mvb-place
+     (typecase from
+       (mvb-place
+	;; throw error for now, in this case (if this can actually apear - do nothing)
+	(error "mvb-place to mvb-place"))
+       (otherwise
+	(emit-ir (make-ssa-load :to (first (mvb-place-var-places to)) :from from) block))))
+    (otherwise
+     (typecase from
+       (mvb-place (error "mvb-place to other place, should now happen ?"))
+       (otherwise (emit-ir (make-ssa-load :to to :from from) block))))))
 
 (defun lambda-add-fixup (fixup lambda-ssa)
   (push fixup (lambda-ssa-fixups lambda-ssa)))
@@ -500,6 +519,8 @@
      (when leaf
        (emit-single-return-sequence place block))
      block)
+    ;; (clcomp::values-node
+    ;;  (error "not implemented"))
     (t (emit-ssa node lambda-ssa leaf place block))))
 
 ;;; FIXME, there is more here
@@ -684,6 +705,36 @@
 	    (emit-ir (make-ssa-value :value fixup) block)))
     block))
 
+(defun emit-m-v-b-node-ssa (node lambda-ssa leaf place block)
+  (let ((mvb-place (make-mvb-place :var-places (mapcar (lambda (b)
+							 (make-var-place :name (clcomp::m-v-b-binding-node-name b)))
+						       (clcomp::m-v-b-node-bindings node)))))
+    (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)
+    (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))
+
+
+(defun emit-values-node-ssa (node lambda-ssa leaf place block)
+  (let ((ret-index 0))
+    (dolist (form (clcomp::values-node-forms node))
+      (if leaf
+	  ;; what if PLACE is existing ?? or we don't care ?
+	  (maybe-emit-direct-load form lambda-ssa nil (make-return-value-place :index ret-index) block)
+	  (if place
+	      (typecase place
+		(mvb-place
+		 (let ((var-place (nth ret-index (mvb-place-var-places place))))
+		   (if var-place
+		       (maybe-emit-direct-load form lambda-ssa nil var-place block)
+		       (emit-ssa form lambda-ssa nil nil block))))
+		(otherwise (if (zerop ret-index)
+			       (maybe-emit-direct-load form lambda-ssa nil place block)
+			       (emit-ssa form lambda-ssa nil nil block))))
+	      (emit-ssa form lambda-ssa nil nil block)))
+      (incf ret-index)))
+  (when leaf
+    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node))) block))
+  block)
+
 ;;; FIXME, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
 ;;; currently macroexpanding BLOCK to TAGBODY doesn't work for (return-from FUN (values 1 2))
 ;; simple fix is to macroexpand with MULTIPLE-VALUE-LIST ??
@@ -693,7 +744,8 @@
 (defun emit-ssa (node lambda-ssa leaf place block)
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
-    (clcomp::call-node (emit-call-node-ssa node lambda-ssa leaf place block))
+    (clcomp::call-node(emit-call-node-ssa node lambda-ssa leaf place block))
+    ;; FIXME, don't use EMIT-CALL-NODE-SSA for VOP
     (clcomp::vop-node (emit-call-node-ssa node lambda-ssa leaf place block))
     (clcomp::let-node (emit-let-node-ssa node lambda-ssa leaf place block))
     (clcomp::progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
@@ -702,7 +754,9 @@
     (clcomp::tagbody-node (emit-tagbody-node-ssa node lambda-ssa leaf place block))
     (clcomp::go-node (emit-go-node-ssa node lambda-ssa leaf place block))
     (clcomp::setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
-    (clcomp::rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))))
+    (clcomp::rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))
+    (clcomp::m-v-b-node (emit-m-v-b-node-ssa node lambda-ssa leaf place block))
+    (clcomp::values-node (emit-values-node-ssa node lambda-ssa leaf place block))))
 
 
 (defun fix-cond-jump-index (from-block to-block)
@@ -710,7 +764,7 @@
   (let ((last-instr (ssa-block-ir-last-instr from-block)))
     (unless (ssa-if-p last-instr)
       (error "Last instruction is not SSA-IF"))
-    (setf (ssa-if-true-block last-instr) (ssa-block-index to-block)) ()
+    (setf (ssa-if-true-block last-instr) (ssa-block-index to-block))
     (let ((label (ssa-block-label to-block)))
       (unless label
 	(print-debug  "FIX-COND-JUMP-INDEX: Creating new label for block " (ssa-block-index to-block))
