@@ -65,7 +65,8 @@
 (defstruct (ssa-return (:include ssa-base-return)))
 (defstruct (ssa-multiple-return (:include ssa-base-return)) count)
 
-(defstruct (ssa-vop (:include ssa-form-rw)) tos froms)
+;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
+(defstruct (ssa-vop (:include ssa-form-rw)) return-values args)
 
 ;;; FIXME, still not sure when to use which one
 (defstruct (ssa-fun-call (:include ssa-form)) fun)
@@ -180,6 +181,12 @@
 	      (gethash place (lambda-ssa-redundant-phis lambda-ssa))))
       (incf *phi-place-symbol-counter*)
       place)))
+
+(defun generate-return-places (n)
+  (let (rets)
+    (dotimes (i n)
+      (push (make-return-value-place :index i) rets))
+    (reverse rets)))
 
 (defun move-to-place (to from block)
   (typecase to
@@ -531,6 +538,7 @@
     (t nil)))
 
 ;;; FIXME, fun can be CLOSURE or LAMBDA
+;;; FIXME, we don't need to fill all return places, if we need only one supply NIL for rest of VOP return values
 (defun emit-call-node-ssa (node lambda-ssa leaf place block)
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
@@ -546,6 +554,7 @@
 	      (push place args-places)))))
     (let ((arg-index 0))
       (dolist (p (reverse args-places))
+	;; FIXME, maybe p is already virtual place, no need for additional move
 	(emit-ir (make-ssa-load :to (make-argument-place :index arg-index) :from p) block)
 	(incf arg-index)))
     (emit-ir (make-ssa-load :to (make-argument-count-place)
@@ -565,6 +574,39 @@
 	  (emit-ir (make-ssa-known-values-fun-call :fun fun :min-values 1) block)
 	  (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)
 	  block))))
+
+(defun emit-vop-node-ssa (node lambda-ssa leaf place block)
+  (let ((ret-vals (length (clcomp::vop-res (clcomp::get-vop (clcomp::vop-node-vop node)))))
+	(arguments (clcomp::vop-node-arguments node))
+	(args-places nil))
+    (dolist (arg arguments)
+      (let ((direct-place (make-direct-place-or-nil arg)))
+	(if direct-place
+	    (push direct-place args-places)
+	    (let* ((place (generate-virtual-place))
+		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
+	      (setf block new-block)
+	      (push place args-places)))))
+    (setf args-places (reverse args-places))
+    ;; FIXME, much of opportunities here to optimize VOP call, immediates, etc etc
+    (dolist (p args-places)
+      ;; FIXME, maybe p is already virtual place, no need for additional move
+      ;; or just leave like this to not complicate and remove unnecessary moves and places later in peephole optimazer
+      (emit-ir (make-ssa-load :to (generate-virtual-place) :from p) block))
+    (cond (leaf
+	   (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)
+	   (emit-ir (make-ssa-return-values :values-count ret-vals) block))
+	  (place
+	   (typecase place
+	     (mvb-place
+	      (emit-ir (make-ssa-vop :return-values (mvb-place-var-places place) :args args-places) block))
+	     (t
+	      ;; FIXME, here we use PLACE as first ret value and we generate missing values, fix VOP so it can receive NIL as return reg
+	      (emit-ir (make-ssa-vop :return-values (cons place (generate-return-places (- ret-vals 1))) :args args-places) block))))
+	  (t
+	   ;; FIXME, fix VOP to maybe not use any return registers, do we have side effects onlu VOPS ?
+	   (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)))
+    block))
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
   (declare (ignore leaf))
@@ -713,6 +755,8 @@
     (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))
 
 
+;;; FIXME, should we generate proper code here to generate stack return values
+;;; or do that in translating phase ?
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
   (let ((ret-index 0))
     (dolist (form (clcomp::values-node-forms node))
@@ -745,8 +789,7 @@
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
     (clcomp::call-node(emit-call-node-ssa node lambda-ssa leaf place block))
-    ;; FIXME, don't use EMIT-CALL-NODE-SSA for VOP
-    (clcomp::vop-node (emit-call-node-ssa node lambda-ssa leaf place block))
+    (clcomp::vop-node (emit-vop-node-ssa node lambda-ssa leaf place block))
     (clcomp::let-node (emit-let-node-ssa node lambda-ssa leaf place block))
     (clcomp::progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
     (clcomp::lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))

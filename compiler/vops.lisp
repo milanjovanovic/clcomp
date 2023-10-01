@@ -27,17 +27,23 @@
 (defun get-res-type (vop)
   (second (vop-res vop)))
 
-(defmacro define-vop (name res
+(defmacro define-vop (name
+		      (&rest res)
 		      (&rest arguments)
 		      &body body)
-  `(setf (gethash ',name *known-vops*)
-	 (make-vop :name ',name
-		   :res ',res
-		   :arguments ',arguments
-		   :fun (lambda ,(cons (first res) (append (mapcar 'car arguments) (list '$stack-top-operand$)))
-			  (declare (ignorable $stack-top-operand$))
-			  (progn
-			    ,@body)))))
+  (let ((res (if (listp (car res))
+		 res
+		 (list res))))
+    `(setf (gethash ',name *known-vops*)
+	   (make-vop :name ',name
+		     :res ',res
+		     :arguments ',arguments
+		     :fun (lambda ,(append (mapcar 'car res)
+				    (append (mapcar 'car arguments)
+				     (list '$stack-top-operand$)))
+			    (declare (ignorable $stack-top-operand$))
+			    (progn
+			      ,@body))))))
 
 (defun make-vop-label (name)
   (gensym name))

@@ -245,3 +245,7 @@
       
       (inst :label exit))
     (reverse *segment-instructions*)))
+
+
+(defun multiple-value-bind-generator (&rest places)
+  (error "not implemented"))
