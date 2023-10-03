@@ -247,5 +247,20 @@
     (reverse *segment-instructions*)))
 
 
+;;; FIXME, maybe we want to do this with ordinary lisp code and TAGBODY/GO
 (defun multiple-value-bind-generator (&rest places)
-  (error "not implemented"))
+  (declare (ignore places))
+  (let ((*segment-instructions* nil))
+    (let ((end-label (make-vop-label "end-label-"))
+	  (register-arguments-labels (mapcar (lambda (reg)
+					       (make-vop-label (string reg)))
+					     *fun-arguments-regs*)))
+
+      (do ((regs *fun-arguments-regs* (cdr regs))
+	   (reg-labels register-arguments-labels (cdr reg-labels)))
+	  ((null regs))
+	(inst :label (car reg-labels))
+	(inst :mov (car regs) *nil*))
+      (inst :label end-label))
+    (reverse *segment-instructions*)))
+

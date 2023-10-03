@@ -2442,18 +2442,18 @@
 ;;; ChatGPT example of PHIS redundant elimination
 #+nil
 (make-lssa '(lambda (x y)
-   (let ((z (if (< x y) x y))
-         (w (if (< x y) x y)))
-     (+ z w))))
+	     (let ((z (if (< x y) x y))
+		   (w (if (< x y) x y)))
+	       (+ z w))))
 ;;; Test case that currently doesn't work
 #+nil
 (test-ssa '(lambda (a)
-		     (let ((c 0))
-		       (tagbody 
-			bar
-			  (setf c (+ c 1))
-			  (when a (go bar)))
-		       c)))
+	    (let ((c 0))
+	      (tagbody 
+	       bar
+		 (setf c (+ c 1))
+		 (when a (go bar)))
+	      c)))
 ;;; this one triggers redundant phi's optimization
 #+nil
 (test-ssa '(lambda (a)
@@ -2483,11 +2483,11 @@
 #+nil
 (lambda (x)
   (tagbody
-     bla
+   bla
      (if x
 	 (progn
 	   (setf x (+ x 20))
-	  (go while))
+	   (go while))
 	 (go exit))
    while
      (tagbody
@@ -2525,18 +2525,18 @@
 ;;; triggers endless loop
 #+nil
 (test-ssa '(lambda (a)
-                (dotimes (i a)
-                  (dotimes (c i)
-                    (print 1)))))
+            (dotimes (i a)
+              (dotimes (c i)
+                (print 1)))))
 
 ;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order
 
 ;; throws error
 #+nil
 (test-ssa '(lambda (a)
-		    (dolist (l a)
-		      (dolist (g l)
-			(print l)))))
+	    (dolist (l a)
+	      (dolist (g l)
+		(print l)))))
 
 
 ;;; SSA, blocks order
@@ -2593,16 +2593,16 @@
 
 #+nil
 (make-lssa '(lambda (a)
-		     (tagbody 
-			(go foo)
-			a1
-			(print 1)
-			a2 
-			(print 2) 
-			a3
-			(print 3)
-			foo
-			(if a 
-			    (go a1)
-			    (go a2))
-			z)) "default")
+	     (tagbody 
+		(go foo)
+	      a1
+		(print 1)
+	      a2 
+		(print 2) 
+	      a3
+		(print 3)
+	      foo
+		(if a 
+		    (go a1)
+		    (go a2))
+	      z)) "default")

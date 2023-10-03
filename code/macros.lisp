@@ -460,7 +460,8 @@
 
 (defun %clcomp-macroexpand-m-v-b (form env)
   (declare (ignore env))
-  (let ((has-declaration (eq 'declare (first (fourth form)))))
+  (let ((has-declaration (and (consp (fourth form))
+			      (eq 'declare (first (fourth form))))))
     (if has-declaration
 	(setf (cddddr form)
 	      (list (cons 'progn (cddddr form))))
