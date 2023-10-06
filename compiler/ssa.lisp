@@ -75,6 +75,8 @@
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
 
+(defstruct (ssa-mvb-bind (:include ssa-form-rw)) places)
+
 
 (defparameter *break-block* -1)
 
@@ -571,7 +573,7 @@
 	    (emit-ir (make-ssa-multiple-return) block))
 	  block)
 	(progn
-	  (emit-ir (make-ssa-known-values-fun-call :fun fun :min-values 1) block)
+	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
 	  (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)
 	  block))))
 
@@ -748,10 +750,12 @@
     block))
 
 (defun emit-m-v-b-node-ssa (node lambda-ssa leaf place block)
+  (declare (optimize (debug 3) (speed 0)))
   (let ((mvb-place (make-mvb-place :var-places (mapcar (lambda (b)
 							 (make-var-place :name (clcomp::m-v-b-binding-node-name b)))
 						       (clcomp::m-v-b-node-bindings node)))))
     (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)
+    ;; FIXME, here we maybe need to emit MAKE-SSA-MVB-BIND
     (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))
 
 
@@ -788,7 +792,7 @@
 (defun emit-ssa (node lambda-ssa leaf place block)
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
-    (clcomp::call-node(emit-call-node-ssa node lambda-ssa leaf place block))
+    (clcomp::call-node (emit-call-node-ssa node lambda-ssa leaf place block))
     (clcomp::vop-node (emit-vop-node-ssa node lambda-ssa leaf place block))
     (clcomp::let-node (emit-let-node-ssa node lambda-ssa leaf place block))
     (clcomp::progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
@@ -2606,3 +2610,4 @@
 		    (go a1)
 		    (go a2))
 	      z)) "default")
+

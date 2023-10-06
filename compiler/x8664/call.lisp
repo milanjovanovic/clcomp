@@ -251,11 +251,7 @@
 (defun multiple-value-bind-generator (&rest places)
   (declare (ignore places))
   (let ((*segment-instructions* nil))
-    (let ((end-label (make-vop-label "end-label-"))
-	  (register-arguments-labels (mapcar (lambda (reg)
-					       (make-vop-label (string reg)))
-					     *fun-arguments-regs*)))
-
+    (let ((end-label (make-vop-label "end-label-")))
       (do ((regs *fun-arguments-regs* (cdr regs))
 	   (reg-labels register-arguments-labels (cdr reg-labels)))
 	  ((null regs))
