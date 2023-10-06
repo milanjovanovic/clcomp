@@ -194,7 +194,7 @@
 (defun mvb-bind-to-fun-call (mvb-place block)
   (let ((index 0))
     (dolist (place (mvb-place-var-places mvb-place))
-      (emit-ir (make-ssa-load :to place :from clcomp::*nil*) block)
+      (emit-ir (make-ssa-load :to place :from (clcomp::make-constant-nil-node)) block)
       (incf index))))
 
 (defun move-to-place (to from block)

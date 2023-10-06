@@ -75,6 +75,9 @@
 
 (defstruct cenv lambda-declarations bindings declaration)
 
+(defun make-constant-nil-node ()
+  (make-immediate-constant-node :value *nil*))
+
 ;;; FIXME
 (defun parse-declaration-form (form)
   (make-declaration-node))

@@ -58,6 +58,7 @@
 					;; (ssa-if-true-block ir)
 					(clcomp.ssa::ssa-if-true-block-label ir)
 					(clcomp.ssa::ssa-if-false-block-label ir)))
+	    (clcomp.ssa::ssa-mvb-bind (format nil "SSA-MVB-BIND: ~A" (clcomp.ssa::ssa-mvb-bind-places ir)))
 	    (clcomp.ssa::ssa-value "FIXME: SSA-VALUE"))))
 
 (defun format-phi (phi)
