@@ -56,6 +56,7 @@
 (defstruct (ssa-return-values (:include ssa-form)) values-count)
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
+
 (defstruct (ssa-go (:include ssa-form)) label)
 (defstruct (ssa-label (:include ssa-form)) label)
 ;;; Do we need SSA-VALUE ??
@@ -75,7 +76,7 @@
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
 
-(defstruct (ssa-mvb-bind (:include ssa-form-rw)) places)
+(defstruct (ssa-mvb-bind (:include ssa-form)) places)
 
 
 (defparameter *break-block* -1)
@@ -189,6 +190,13 @@
     (dotimes (i n)
       (push (make-return-value-place :index i) rets))
     (reverse rets)))
+
+(defun mvb-bind-to-fun-call (mvb-place block)
+  (let ((index 0))
+    (dolist (place (mvb-place-var-places mvb-place))
+      (emit-ir (make-ssa-load :to place :from nil ;; (make-return-value-place :index index)
+			      ) block)
+      (incf index))))
 
 (defun move-to-place (to from block)
   (typecase to
@@ -542,6 +550,7 @@
 ;;; FIXME, fun can be CLOSURE or LAMBDA
 ;;; FIXME, we don't need to fill all return places, if we need only one supply NIL for rest of VOP return values
 (defun emit-call-node-ssa (node lambda-ssa leaf place block)
+  (declare (optimize (debug 3) (speed 0)))
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
 	 (arguments-count (length arguments))
@@ -574,7 +583,12 @@
 	  block)
 	(progn
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
-	  (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)
+	  (typecase place
+	    (mvb-place
+	     (mvb-bind-to-fun-call place block)
+	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block))
+	    (otherwise
+	     (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)))
 	  block))))
 
 (defun emit-vop-node-ssa (node lambda-ssa leaf place block)
@@ -755,7 +769,6 @@
 							 (make-var-place :name (clcomp::m-v-b-binding-node-name b)))
 						       (clcomp::m-v-b-node-bindings node)))))
     (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)
-    ;; FIXME, here we maybe need to emit MAKE-SSA-MVB-BIND
     (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))
 
 
@@ -2610,4 +2623,3 @@
 		    (go a1)
 		    (go a2))
 	      z)) "default")
-

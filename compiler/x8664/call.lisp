@@ -246,17 +246,27 @@
       (inst :label exit))
     (reverse *segment-instructions*)))
 
+;;; FIXME, calculate exact offset
+(defun mvb-value-stack-offset (index)
+  (- index))
 
-;;; FIXME, maybe we want to do this with ordinary lisp code and TAGBODY/GO
-(defun multiple-value-bind-generator (&rest places)
-  (declare (ignore places))
+(defun multiple-value-bind-generator (places)
   (let ((*segment-instructions* nil))
     (let ((end-label (make-vop-label "end-label-")))
-      (do ((regs *fun-arguments-regs* (cdr regs))
-	   (reg-labels register-arguments-labels (cdr reg-labels)))
-	  ((null regs))
-	(inst :label (car reg-labels))
-	(inst :mov (car regs) *nil*))
+      (do ((places places (cdr places))
+	   (regs *fun-arguments-regs* (cdr regs))
+	   (index 0 (+ index 1)))
+	  ((null places))
+	(let ((place (car places))
+	      (reg (car regs)))
+	  (inst :cmp *fun-number-of-arguments-reg*  index)
+	  (inst :FIXME_JNBE end-label)
+	  (if reg
+	      (inst :mov place reg)
+	      (if (is-register place)
+		  (inst :mov place reg (@ *mvb-base-pointer-reg* index))
+		  (progn
+		    (inst :mov *tmp-reg* (@ *mvb-base-pointer-reg* (mvb-value-stack-offset index)))
+		    (inst :mov place *tmp-reg*))))))
       (inst :label end-label))
     (reverse *segment-instructions*)))
-

@@ -14,6 +14,8 @@
 (defparameter *scratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
 (defparameter *preserved-regs* '(:R12 :R13 :R14))
+;; FIXME
+(defparameter *mvb-base-pointer-reg* :R11) 
 
 
 (defparameter *debug* nil)
