@@ -286,26 +286,6 @@
 (defun create-fun-rip-relative-node (form)
   (make-fun-rip-relative-node :form (second form)))
 
-;;; direct SSA stuf
-;; (defun create-ssa-compare-node (form environment)
-;;   (declare (ignore environment))
-;;   (make-cmp-node :arg1 (create-node (second form))
-;; 		 :arg2 (create-node (third form))))
-
-;; (defun create-ssa-mov-node (form environment)
-;;   (declare (ignore environment))
-;;   (make-move-node :from (create-node (third form))
-;; 		  :to (create-node (second form))))
-
-;; (defun create-ssa-jmp-node (form environment)
-;;   (declare (ignore environment))
-;;   (make-jmp-node :target (second form)
-;; 		 :zf (third form)
-;; 		 :cf (fourth form)))
-
-(defun storage-typep (form)
-  (clcomp.storage::storage-p form))
-
 (defun create-node (form &optional environment)
   (if (atom form)
       (cond ((constantp form)
@@ -344,11 +324,4 @@
 	       (create-values-node form environment))
 	      ((eq first 'multiple-value-bind)
 	       (create-m-v-b-node form environment))
-	      ;; ssa node stuff
-	      ;; ((eq first 'clcomp.ssa::compare)
-	      ;;  (create-ssa-compare-node form environment))
-	      ;; ((eq first 'clcomp.ssa::mov)
-	      ;;  (create-ssa-mov-node form environment))
-	      ;; ((eq first 'clcomp.ssa::jmp)
-	      ;;  (create-ssa-jmp-node form environment))
 	      (t (create-call-node form environment))))))

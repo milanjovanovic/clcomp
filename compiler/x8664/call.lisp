@@ -260,7 +260,7 @@
 	(let ((place (car places))
 	      (reg (car regs)))
 	  (inst :cmp *fun-number-of-arguments-reg*  index)
-	  (inst :FIXME_JNBE end-label)
+	  (inst :je end-label)
 	  (if reg
 	      (inst :mov place reg)
 	      (if (is-register place)

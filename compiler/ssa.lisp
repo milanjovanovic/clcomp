@@ -1004,6 +1004,11 @@
 					  :true-block (ssa-if-true-block ir)
 					  :true-block-label (ssa-if-true-block-label ir)
 					  :false-block-label (ssa-if-false-block-label ir)))
+		     (ssa-mvb-bind (make-ssa-mvb-bind
+				    :index (ssa-mvb-bind-index ir)
+				    :places (mapcar (lambda (p)
+						      (transform-read p b lambda-ssa))
+						    (ssa-mvb-bind-places ir))))
 		     (t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
@@ -2622,3 +2627,7 @@
 		    (go a1)
 		    (go a2))
 	      z)) "default")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
