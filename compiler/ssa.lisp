@@ -76,7 +76,7 @@
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
 
-(defstruct (ssa-mvb-bind (:include ssa-form)) places)
+(defstruct (ssa-mvb-bind (:include ssa-form-rw)) places)
 
 
 (defparameter *break-block* -1)
@@ -190,12 +190,6 @@
     (dotimes (i n)
       (push (make-return-value-place :index i) rets))
     (reverse rets)))
-
-(defun mvb-bind-to-fun-call (mvb-place block)
-  (let ((index 0))
-    (dolist (place (mvb-place-var-places mvb-place))
-      (emit-ir (make-ssa-load :to place :from (clcomp::make-constant-nil-node)) block)
-      (incf index))))
 
 (defun move-to-place (to from block)
   (typecase to
@@ -525,7 +519,7 @@
   (etypecase node
     (clcomp::immediate-constant-node
      (emit-ir (make-ssa-load :to place
-    			     :from node) block)
+    			     :from (make-immediate-constant :constant (clcomp::immediate-constant-node-value node))) block)
      (when leaf
        (emit-single-return-sequence place block))
      block)
@@ -542,7 +536,7 @@
 ;;; FIXME, there is more here
 (defun make-direct-place-or-nil (node)
   (etypecase node
-    (clcomp::immediate-constant-node node)
+    (clcomp::immediate-constant-node (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
     (clcomp::lexical-var-node (make-var-place :name (clcomp::lexical-var-node-name node)))
     (t nil)))
 
@@ -584,7 +578,6 @@
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
 	  (typecase place
 	    (mvb-place
-	     (mvb-bind-to-fun-call place block)
 	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block))
 	    (otherwise
 	     (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)))
@@ -638,11 +631,14 @@
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
 (defun emit-immediate-node-ssa (node lambda-ssa leaf place block)
   (declare (ignore lambda-ssa))
-  (if place
-      (emit-ir (make-ssa-load :to place :from node) block)
-      (if leaf
-	  (emit-single-return-sequence node block)
-	  (emit-ir (make-ssa-value :value node) block)))
+  (let ((constant (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)) ))
+    (if place
+	(emit-ir (make-ssa-load :to place
+				:from constant)
+		 block)
+	(if leaf
+	    (emit-single-return-sequence constant block)
+	    (emit-ir (make-ssa-value :value constant) block))))
   block)
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
@@ -767,13 +763,14 @@
   (let ((mvb-place (make-mvb-place :var-places (mapcar (lambda (b)
 							 (make-var-place :name (clcomp::m-v-b-binding-node-name b)))
 						       (clcomp::m-v-b-node-bindings node)))))
-    (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)
-    (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))
+    (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
+      (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
 
 
 ;;; FIXME, should we generate proper code here to generate stack return values
 ;;; or do that in translating phase ?
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
+  (declare (optimize (debug 3) (speed 0)))
   (let ((ret-index 0))
     (dolist (form (clcomp::values-node-forms node))
       (if leaf
@@ -1007,7 +1004,7 @@
 		     (ssa-mvb-bind (make-ssa-mvb-bind
 				    :index (ssa-mvb-bind-index ir)
 				    :places (mapcar (lambda (p)
-						      (transform-read p b lambda-ssa))
+						      (transform-write p b lambda-ssa))
 						    (ssa-mvb-bind-places ir))))
 		     (t ir))))
 	(push irssa ssa-ir)))
@@ -1609,10 +1606,18 @@
       (return t))))
 
 (defun ssa-place (place)
-  (typecase place
+  (etypecase place
     (virtual-place place)
     (phi-place place)
-    (phi (phi-place place))))
+    (phi (phi-place place))
+    (list (mapcar #'ssa-place place))
+    (argument-count-place nil)
+    (argument-place nil)
+    (return-value-place nil)
+    (immediate-constant nil)
+    (function-value-place nil)
+    (compile-function-fixup nil)
+    (rcv-argument-place nil)))
 
 (defun ssa-form-write-place (ssa-form)
   (etypecase ssa-form
@@ -1620,7 +1625,8 @@
      (etypecase ssa-form
        (ssa-load (ssa-load-to ssa-form))
        (ssa-value nil)
-       (ssa-if nil)))
+       (ssa-if nil)
+       (ssa-mvb-bind (ssa-mvb-bind-places ssa-form))))
     (t nil)))
 
 (defun ssa-form-read-place (ssa-form)
@@ -1629,7 +1635,8 @@
      (etypecase ssa-form
        (ssa-load (ssa-load-from ssa-form))
        (ssa-value (ssa-value-value ssa-form))
-       (ssa-if (ssa-if-test ssa-form))))
+       (ssa-if (ssa-if-test ssa-form))
+       (ssa-mvb-bind nil)))
     (t nil)))
 
 (defun collect-block-virtuals (block lambda-ssa)
@@ -1637,11 +1644,15 @@
   (let ((reads nil)
 	(writes nil))
     (dolist (ir (ssa-block-ssa block))
-      (let* ((write (ssa-place (ssa-form-write-place ir)))
+      (let* ((ws (ssa-place (ssa-form-write-place ir)))
 	     (orig-read (ssa-place (ssa-form-read-place ir)))
 	     (read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
-	(when write
-	  (pushnew write writes :test #'equalp))
+	(when ws
+	  ;; WS can be LIST in a case of SSA-MVB-BIND
+	  (dolist (write (if (listp ws)
+			     ws
+			     (list ws)))
+	    (pushnew write writes :test #'equalp)))
 	(when read
 	  (pushnew read reads :test #'equalp))))
     (list reads writes)))
@@ -1942,16 +1953,20 @@
 	    (dolist (instr (reverse (ssa-block-ssa block)))
 	      (let* ((instr-index (ssa-form-index instr))
 		     ;; we can't have PHI-PLACE in write position
-		     (write (ssa-place (ssa-form-write-place instr)))
+		     (writes (ssa-place (ssa-form-write-place instr)))
 		     (orig-read (ssa-place (ssa-form-read-place instr)))
 		     (read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
-		(when write
-		  ;; FIXME, just one write to place that is never read
-		  ;; we sure need to allocate register for this
-		  (unless (shorten-current-range intervals write instr-index)
-		    (add-range intervals (get-place-name write) instr-index instr-index))
-		  (setf live (remove-from-live live write))
-		  (add-use-positions use-positions write (make-use-write-pos :index instr-index)))
+		(when writes
+		  ;; in a case of SSA-MVB-BIND we can have multiple places
+		  (dolist (write (if (listp writes)
+				     writes
+				     (list writes)))
+		    ;; FIXME, just one write to place that is never read
+		    ;; we sure need to allocate register for this
+		    (unless (shorten-current-range intervals write instr-index)
+		      (add-range intervals (get-place-name write) instr-index instr-index))
+		    (setf live (remove-from-live live write))
+		    (add-use-positions use-positions write (make-use-write-pos :index instr-index))))
 		;; FIXME, read is always adding RANGE
 		;; when we then have WRITE we only shorten last RANGE
 		(when read
@@ -2021,13 +2036,16 @@
   (dolist (block (lambda-ssa-blocks lambda-ssa))
     (dolist (sform (ssa-block-ssa block))
       (let ((read (ssa-place (ssa-form-read-place sform )))
-	    (write (ssa-place (ssa-form-write-place sform))))
-
+	    (writes (ssa-place (ssa-form-write-place sform))))
 	(when (and read
 		   (not (find read (ssa-block-live-kill block) :test #'equalp)))
 	  (pushnew read (ssa-block-live-gen block) :test #'equalp))
-	(when write
-	  (pushnew write (ssa-block-live-kill block) :test #'equalp)))))
+	(when writes
+	  ;; writes can be LIST in a case of SSA-MVB-BIND
+	  (dolist (write (if (listp writes)
+			     writes
+			     (list writes)))
+	    (pushnew write (ssa-block-live-kill block) :test #'equalp))))))
   lambda-ssa)
 
 (defun compute-global-live-sets (lambda-ssa)

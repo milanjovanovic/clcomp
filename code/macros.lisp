@@ -510,8 +510,8 @@
     (list 'multiple-value-bind (second form)
 	  (clcomp-macroexpand (third form))
 	  (if has-declaration
-	      (cons 'progn (clcomp-macroexpand (cddddr form)))
-	      (cons 'progn (clcomp-macroexpand (cdddr form)))))))
+	      (clcomp-macroexpand (cons 'progn (clcomp-macroexpand (cddddr form))))
+	      (clcomp-macroexpand (cons 'progn (clcomp-macroexpand (cdddr form))))))))
 
 (defun clcomp-macroexpand-1 (macro-form)
   (let* ((macro-fun (gethash (first macro-form) *macros*)))
