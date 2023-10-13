@@ -56,3 +56,21 @@
   (let ((*segment-instructions* nil))
     (apply (vop-fun vop) args)
     (reverse *segment-instructions*)))
+
+(defun operand-types-match (caller-operands vop-operands)
+  (and
+   (= (length caller-operands) (length vop-operands))
+   (do ((cops caller-operands (cdr cops))
+	(vops vop-operands (cdr vops)))
+       ((null cops) t)
+     (unless (find (car cops) (car vops))
+       (return)))))
+
+(defun find-vop (name result arguments)
+  (let ((vop (get-vop name)))
+    (when vop
+      (let ((vop-args (vop-arguments vop))
+	    (vop-result (vop-res vop)))
+	(when (and (operand-types-match result vop-result)
+		   (operand-types-match arguments vop-args))
+	  vop)))))

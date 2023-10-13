@@ -44,35 +44,32 @@
 	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
 	   (redundant-phis (make-hash-table :test #'equalp)))
 
-(defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
+(defstruct ssa-block index order ir ir-last-cons ssa asm succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
   sealed processed label defined phis live-in virtuals live-gen live-kill live-out)
 
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
-(defstruct (arg-check (:include ssa-form)) arg-count)
+(defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
 (defstruct (ssa-form-rw (:include ssa-form)))
-
-;;;FIXME, find better name
-(defstruct (ssa-return-values (:include ssa-form)) values-count)
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
 
 (defstruct (ssa-go (:include ssa-form)) label)
 (defstruct (ssa-label (:include ssa-form)) label)
+
 ;;; Do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
 
-(defstruct (ssa-base-return (:include ssa-form)))
-(defstruct (ssa-return (:include ssa-base-return)))
-(defstruct (ssa-multiple-return (:include ssa-base-return)) count)
+(defstruct (ssa-multiple-return (:include ssa-form)) count)
 
 ;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
-(defstruct (ssa-vop (:include ssa-form-rw)) return-values args)
+(defstruct (ssa-vop (:include ssa-form-rw)) name return-values args )
+
+(defstruct (ssa-rest-listify (:include ssa-form)) count)
 
 ;;; FIXME, still not sure when to use which one
 (defstruct (ssa-fun-call (:include ssa-form)) fun)
 (defstruct (ssa-unknown-values-fun-call (:include ssa-fun-call)))
-(defstruct (ssa-known-values-fun-call (:include ssa-fun-call)) min-values)
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
 
@@ -465,7 +462,7 @@
 
 (defun emit-single-return-sequence (place block)
   (emit-ir (make-ssa-load :to (make-return-value-place :index 0) :from place) block)
-  (emit-ir (make-ssa-return) block))
+  (emit-ir (make-ssa-multiple-return :count 1) block))
 
 ;;; FIXME, set block LABEL fieds
 ;;; FIXME, we are allways moving value to specific place, we can omit that and use existing place (and force it to register)
@@ -602,8 +599,12 @@
       ;; or just leave like this to not complicate and remove unnecessary moves and places later in peephole optimazer
       (emit-ir (make-ssa-load :to (generate-virtual-place) :from p) block))
     (cond (leaf
-	   (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)
-	   (emit-ir (make-ssa-return-values :values-count ret-vals) block))
+	   (emit-ir (make-ssa-vop
+		     :name (clcomp::vop-node-vop node)
+		     :return-values (generate-return-places ret-vals)
+		     :args args-places)
+		    block)
+	   (emit-ir (make-ssa-multiple-return :count ret-vals) block))
 	  (place
 	   (typecase place
 	     (mvb-place
@@ -720,16 +721,33 @@
 	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
     new-block))
 
+
+(defun get-minimum-number-of-args (args)
+  (let ((i 0))
+    (dolist (arg args)
+      (unless (clcomp::lexical-var-node-rest arg)
+	(incf i)))
+    i))
+
+(defun contains-rest-arg (args)
+  (dolist (arg args)
+    (when (clcomp::lexical-var-node-rest arg)
+      (return-from contains-rest-arg (get-minimum-number-of-args args)))))
+
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
   (declare (ignore lambda-ssa))
-  (emit-ir (make-arg-check :arg-count (length arguments)) block)
+  (if (contains-rest-arg arguments)
+      (let ((min-args-count (get-minimum-number-of-args arguments)))
+	(emit-ir (make-arg-check :min-arg-count min-args-count) block)
+	(emit-ir (make-ssa-rest-listify :count min-args-count) block))
+      (emit-ir (make-arg-check :arg-count (length arguments)) block))
   (let ((index 0))
     (dolist (argument arguments)
       (etypecase argument
 	(clcomp::lexical-var-node
 	 (emit-ir (make-ssa-load :to (make-var-place :name (clcomp::lexical-var-node-name argument))
-					 :from (make-rcv-argument-place :index index))
-	       block)))
+				 :from (make-rcv-argument-place :index index))
+		  block)))
       (incf index))))
 
 (defun rip-relative-node-to-fixup (node)
@@ -1006,6 +1024,15 @@
 				    :places (mapcar (lambda (p)
 						      (transform-write p b lambda-ssa))
 						    (ssa-mvb-bind-places ir))))
+		     (ssa-vop (make-ssa-vop
+			       :index (ssa-vop-index ir)
+			       :name (ssa-vop-name ir)
+			       :args (mapcar (lambda (p)
+					       (transform-read p b lambda-ssa))
+					     (ssa-vop-args ir))
+			       :return-values (mapcar (lambda (p)
+							(transform-write p b lambda-ssa))
+						      (ssa-vop-return-values ir))))
 		     (t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
@@ -1610,14 +1637,16 @@
     (virtual-place place)
     (phi-place place)
     (phi (phi-place place))
-    (list (mapcar #'ssa-place place))
+    (list (remove nil (mapcar #'ssa-place place)))
     (argument-count-place nil)
     (argument-place nil)
     (return-value-place nil)
     (immediate-constant nil)
     (function-value-place nil)
     (compile-function-fixup nil)
-    (rcv-argument-place nil)))
+    (rcv-argument-place nil)
+    ;; FIXME, check this
+    (var-place place)))
 
 (defun ssa-form-write-place (ssa-form)
   (etypecase ssa-form
@@ -1626,7 +1655,8 @@
        (ssa-load (ssa-load-to ssa-form))
        (ssa-value nil)
        (ssa-if nil)
-       (ssa-mvb-bind (ssa-mvb-bind-places ssa-form))))
+       (ssa-mvb-bind (ssa-mvb-bind-places ssa-form))
+       (ssa-vop (ssa-vop-return-values ssa-form))))
     (t nil)))
 
 (defun ssa-form-read-place (ssa-form)
@@ -1636,7 +1666,8 @@
        (ssa-load (ssa-load-from ssa-form))
        (ssa-value (ssa-value-value ssa-form))
        (ssa-if (ssa-if-test ssa-form))
-       (ssa-mvb-bind nil)))
+       (ssa-mvb-bind nil)
+       (ssa-vop (ssa-vop-args ssa-form))))
     (t nil)))
 
 (defun collect-block-virtuals (block lambda-ssa)
@@ -1645,16 +1676,18 @@
 	(writes nil))
     (dolist (ir (ssa-block-ssa block))
       (let* ((ws (ssa-place (ssa-form-write-place ir)))
-	     (orig-read (ssa-place (ssa-form-read-place ir)))
-	     (read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
+	     (lread (ssa-place (ssa-form-read-place ir)))
+	     ;; (read (maybe-get-simplified-phi-value orig-read block lambda-ssa))
+	     )
 	(when ws
 	  ;; WS can be LIST in a case of SSA-MVB-BIND
-	  (dolist (write (if (listp ws)
-			     ws
-			     (list ws)))
+	  (dolist (write (if (listp ws) ws (list ws)))
 	    (pushnew write writes :test #'equalp)))
-	(when read
-	  (pushnew read reads :test #'equalp))))
+	(when lread
+	  ;; LREAD can be LIST in a case of SSA-VOP
+	  (dolist (orig-read (if (listp lread) lread (list lread)))
+	    (let ((read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
+	      (pushnew read reads :test #'equalp))))))
     (list reads writes)))
 
 (defun is-block-loop-header (block lambda-ssa)
@@ -1954,8 +1987,9 @@
 	      (let* ((instr-index (ssa-form-index instr))
 		     ;; we can't have PHI-PLACE in write position
 		     (writes (ssa-place (ssa-form-write-place instr)))
-		     (orig-read (ssa-place (ssa-form-read-place instr)))
-		     (read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
+		     (reads (ssa-place (ssa-form-read-place instr)))
+		     ;; (read (maybe-get-simplified-phi-value orig-read block lambda-ssa))
+		     )
 		(when writes
 		  ;; in a case of SSA-MVB-BIND we can have multiple places
 		  (dolist (write (if (listp writes)
@@ -1969,10 +2003,13 @@
 		    (add-use-positions use-positions write (make-use-write-pos :index instr-index))))
 		;; FIXME, read is always adding RANGE
 		;; when we then have WRITE we only shorten last RANGE
-		(when read
-		  (add-range intervals (get-place-name read) start instr-index)
-		  (add-use-positions use-positions read (make-use-read-pos :index instr-index))
-		  (pushnew read live :test #'equalp))))
+		;; READS can be LIST in a case of SSA-VOP
+		(when reads
+		  (dolist (orig-read (if (listp reads) reads (list reads)))
+		    (let ((read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
+		     (add-range intervals (get-place-name read) start instr-index)
+		     (add-use-positions use-positions read (make-use-read-pos :index instr-index))
+		     (pushnew read live :test #'equalp))))))
 
 	    (dolist (phi (ssa-block-all-phis block))
 	      (when (phi-p phi)
@@ -2035,16 +2072,17 @@
 (defun compute-local-live-sets (lambda-ssa)
   (dolist (block (lambda-ssa-blocks lambda-ssa))
     (dolist (sform (ssa-block-ssa block))
-      (let ((read (ssa-place (ssa-form-read-place sform )))
+      (let ((reads (ssa-place (ssa-form-read-place sform )))
 	    (writes (ssa-place (ssa-form-write-place sform))))
-	(when (and read
-		   (not (find read (ssa-block-live-kill block) :test #'equalp)))
-	  (pushnew read (ssa-block-live-gen block) :test #'equalp))
+	(when reads
+	  ;; READS can be LIST in a case of SSA-VOP
+	  (dolist (read (if (listp reads) reads (list reads)))
+	    (when (and read
+		       (not (find read (ssa-block-live-kill block) :test #'equalp)))
+	      (pushnew read (ssa-block-live-gen block) :test #'equalp))))
 	(when writes
 	  ;; writes can be LIST in a case of SSA-MVB-BIND
-	  (dolist (write (if (listp writes)
-			     writes
-			     (list writes)))
+	  (dolist (write (if (listp writes) writes (list writes)))
 	    (pushnew write (ssa-block-live-kill block) :test #'equalp))))))
   lambda-ssa)
 
@@ -2083,20 +2121,19 @@
 ;;; other method is :split
 (defparameter *allocation-method* :simple)
 
-(defparameter *stack-offset* -1)
-
 ;;; FIXME, this is just for test
 (defparameter *regs* (list :rax :rbx))
-
-(defun get-stack-index ()
-  (incf *stack-offset*))
 
 (defstruct move block index from to)
 
 (defstruct alloc unhandled active inactive handled
 	   (per-name-handled (make-hash-table))
 	   (block-intervals (make-hash-table))
-	   (split-moves (make-hash-table)))
+	   (split-moves (make-hash-table))
+	   stack-index)
+
+(defun get-stack-index (alloc)
+  (incf (alloc-stack-index alloc)))
 
 (defun alloc-add-unhandled (alloc interval)
   (push interval (alloc-unhandled alloc))
@@ -2194,7 +2231,7 @@
   (find register intervals :key #'interval-register))
 
 (defun spill-interval (alloc interval)
-  (setf (interval-stack interval) (get-stack-index))
+  (setf (interval-stack interval) (get-stack-index alloc))
   (setf (interval-register interval) nil)
   (alloc-add-handled alloc interval))
 
@@ -2313,8 +2350,7 @@
 
 
 (defun linear-scan (sorted-intervals)
-  (let ((alloc (make-alloc :unhandled sorted-intervals))
-	(*stack-offset* -1))
+  (let ((alloc (make-alloc :unhandled sorted-intervals :stack-index -1)))
     (tagbody
      START
        (let ((current-interval (pop (alloc-unhandled alloc))))
@@ -2646,6 +2682,167 @@
 		    (go a2))
 	      z)) "default")
 
+;;; this one throws error
+#+nil
+(make-lssa '(lambda ()
+		  (tagbody foo
+		     (go foo))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; https://wiki.cdot.senecacollege.ca/wiki/X86_64_Register_and_Instruction_Quick_Start
+(defparameter *base-pointer-reg* :RBP)
+(defparameter *stack-pointer-reg* :RSP)
+(defparameter *fun-address-reg* :RAX)
+(defparameter *fun-values-stack-reg* :RBX)
+(defparameter *fun-number-of-arguments-reg* :RCX)
+(defparameter *fun-number-of-ret-values-reg* :RCX)
+;; (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
+(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI))
+;; (defparameter *closure-env-reg* :RSI)
+(defparameter *scratch-regs* '(:R10 :R11))
+(defparameter *tmp-reg* :R10)
+(defparameter *preserved-regs* '(:R12 :R13 :R14))
+(defparameter *heap-header-reg* :R15)
+;; FIXME
+(defparameter *mvb-base-pointer-reg* :R11)
+
+;;; Left REGS for using: R8 R9
+
+(defstruct ir2asm-translator registers locations code)
+
+(defun get-alloc-storage (alloc name index)
+  (let ((intervals (gethash name (alloc-per-name-handled alloc))))
+    (unless intervals
+      (error "Unknown name"))
+    (dolist (interval intervals)
+      ;; FIXME, is this ok ?
+      ;; check how RANGE works
+      (dolist (range (interval-ranges interval))
+	(when (and (<= (range-start range) index)
+		   (>= (range-end range) index))
+	  (return-from get-alloc-storage interval))))
+    (error "Can't find storage for name")))
+
+(defun emit-ir-assembly (translator alloc &rest instructions)
+  (declare (ignore alloc))
+  (setf (ir2asm-translator-code translator)
+	(append (ir2asm-translator-code translator) instructions)))
+
+(defun generate-save-registers-asm ()
+  (let (assembly)
+    (dolist (reg *preserved-regs*)
+      (push (list :push reg) assembly))
+    assembly))
+
+(defun generate-restore-registers-asm ()
+  (let (assembly)
+    (dolist (reg (reverse *preserved-regs*))
+      (push (list :pop reg) assembly))
+    assembly))
+
+(defun emit-adjust-stack-size (translator alloc method)
+  (unless (member method '(:sub :add))
+    (error "Unknown method"))
+  (let ((stack-size (- (alloc-stack-index alloc) -1)))
+    (when (> stack-size 0)
+      (emit-ir-assembly translator alloc
+			(list method *stack-pointer-reg*
+			      (* clcomp::*word-size* 
+				 ;; FIXME reverse stack arguments
+				 ;; 16 byte aligment
+				 (if (oddp stack-size)
+				     stack-size
+				     (+ 1 stack-size))))
+			;; FIXME, remove aligment, reverse stack arguments parsing
+			(list :method *stack-pointer-reg* clcomp::*word-size*)))))
+
+
+(defun translate-lambda-entry (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa ir))
+  (emit-ir-assembly translator alloc
+		    (list :push *base-pointer-reg*)
+		    (list :mov *base-pointer-reg* *stack-pointer-reg*))
+  (apply #'emit-ir-assembly translator alloc
+	 (generate-save-registers-asm))
+  (emit-adjust-stack-size translator alloc :sub))
+
+(defun translate-arg-check (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  (let ((arg-count (arg-check-arg-count ir))
+	(min-arg-count (arg-check-min-arg-count ir)))
+    (emit-ir-assembly translator alloc
+		      (list :cmp *fun-number-of-arguments-reg* (or arg-count min-arg-count))
+		      ;; FIXME, use unique :wrong-arg-count-label symbol
+		      (list :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label)))) 
+
+(defun translate-fun-call (ir translator alloc sblock lambda-ssa)
+  ;; FIXME
+  )
+
+(defun translate-return (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  ;; FIXME, there is more here, restore registers
+  (emit-ir-assembly translator alloc (list :clc))
+  (emit-adjust-stack-size translator alloc :add)
+  (apply #'emit-ir-assembly translator alloc
+	 (generate-restore-registers-asm))
+  (emit-ir-assembly translator alloc
+		    (list :pop *base-pointer-reg*)
+		    (list :mov *fun-number-of-arguments-reg* (ssa-multiple-return-count ir))
+		    (list :ret)
+		    (list :label :wrong-arg-count-label)
+		    (list :some-wrong-arg-count-assembly)))
+
+
+(defun translate-load (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  ;; TODO
+  )
+
+(defun translate-mvb-bind (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  ;; TODO
+  )
+
+(defun translate-vop (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  ;; TODO
+  )
+
+
+(defun translate-block (sblock lambda-ssa alloc translator)
+  (dolist (ir (ssa-block-ssa sblock))
+    (typecase ir
+      (lambda-entry
+       (translate-lambda-entry ir translator alloc sblock lambda-ssa))
+      (arg-check
+       (translate-arg-check ir translator alloc sblock lambda-ssa))
+      (ssa-rest-listify (apply #'emit-ir-assembly translator alloc
+			       (clcomp::listify-code-generator (ssa-rest-listify-count ir))))
+      (ssa-load
+       (translate-load ir translator alloc sblock lambda-ssa ))
+      (ssa-mvb-bind
+       (translate-mvb-bind ir translator alloc sblock lambda-ssa))
+      (ssa-if )				; TODO
+      (ssa-go
+       (emit-ir-assembly translator alloc (list :jump-fixup :jmp (ssa-go-label ir))))
+      (ssa-label
+       (emit-ir-assembly translator alloc (list :label (ssa-label-label ir))))
+      (ssa-vop (translate-vop ir translator alloc sblock lambda-ssa))
+      (ssa-unknown-values-fun-call 
+       (translate-fun-call ir translator alloc sblock lambda-ssa))
+      (ssa-multiple-return
+       (translate-return ir translator alloc sblock lambda-ssa)))))
+
+(defun translate-to-asm (lambda-ssa alloc)
+  (let ((translator (make-ir2asm-translator)))
+    (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+      (translate-block sblock lambda-ssa alloc translator))
+    translator))
+
+(defun test-finish (exp)
+  (multiple-value-bind (ssa _ alloc) (test-ssa exp)
+    (declare (ignore _))
+    (translate-to-asm ssa alloc)))
