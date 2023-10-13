@@ -1634,17 +1634,13 @@
 
 (defun ssa-place (place)
   (etypecase place
+    (fixed-place nil)
     (virtual-place place)
     (phi-place place)
     (phi (phi-place place))
     (list (remove nil (mapcar #'ssa-place place)))
-    (argument-count-place nil)
-    (argument-place nil)
-    (return-value-place nil)
     (immediate-constant nil)
-    (function-value-place nil)
     (compile-function-fixup nil)
-    (rcv-argument-place nil)
     ;; FIXME, check this
     (var-place place)))
 
@@ -2712,6 +2708,8 @@
 
 (defstruct ir2asm-translator registers locations code)
 
+;;; FIXME, we need proper format for this :reg for register storagak
+;;; or (:reg ....) for memory or stack storage
 (defun get-alloc-storage (alloc name index)
   (let ((intervals (gethash name (alloc-per-name-handled alloc))))
     (unless intervals
@@ -2803,11 +2801,17 @@
 
 (defun translate-mvb-bind (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
-  ;; TODO
-  )
+  (let ((storages (mapcar (lambda (p)
+			    (get-alloc-storage alloc (named-place-name p) (ssa-form-index ir)))
+			  (ssa-mvb-bind-places ir))))
+    (when (position nil storages)
+      (error "Can't find storage for MVB"))
+    (emit-ir-assembly translator alloc (clcomp::multiple-value-bind-generator storages))))
 
 (defun translate-vop (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
+  
+
   ;; TODO
   )
 
