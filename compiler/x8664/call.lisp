@@ -4,6 +4,7 @@
   ;; FIXME
   )
 
+;;; FIXME, APPLY will not work with MULTIPLE VALUES
 (define-vop %apply (res :register :stack)
   ((fun :register :stack)
    (arguments :register :stack))
@@ -252,21 +253,32 @@
 
 (defun multiple-value-bind-generator (places)
   (let ((*segment-instructions* nil))
-    (let ((end-label (make-vop-label "end-label-")))
+    (let ((end-label (make-vop-label "end-label-"))
+	  (nil-labels (mapcar (lambda (p)
+				(declare (ignore p))
+				(make-vop-label "nil-label-"))
+			      places)))
       (do ((places places (cdr places))
+	   (lbs nil-labels (cdr lbs))
 	   (regs *fun-arguments-regs* (cdr regs))
 	   (index 0 (+ index 1)))
 	  ((null places))
 	(let ((place (car places))
 	      (reg (car regs)))
 	  (inst :cmp *fun-number-of-arguments-reg*  index)
-	  (inst :je end-label)
+	  (inst :jump-fixup :je (car lbs))
 	  (if reg
 	      (inst :mov place reg)
 	      (if (is-register place)
-		  (inst :mov place reg (@ *mvb-base-pointer-reg* index))
+		  (inst :mov place reg (@ *mvb-base-pointer-reg* (mvb-value-stack-offset index)))
 		  (progn
 		    (inst :mov *tmp-reg* (@ *mvb-base-pointer-reg* (mvb-value-stack-offset index)))
 		    (inst :mov place *tmp-reg*))))))
+      (inst :jump-fixup :jmp :end-label)
+      (do ((nil-labels nil-labels (cdr nil-labels))
+	   (places places (cdr places)))
+	  ((null nil-labels) nil)
+	(inst :label (car nil-labels) )
+	(inst :mov (car places) *nil*))
       (inst :label end-label))
     (reverse *segment-instructions*)))

@@ -45,14 +45,13 @@
 	    (clcomp.ssa::ssa-load (format nil "load ~A, ~A"
 					  (format-ssa-place  (clcomp.ssa::ssa-load-to ir))
 					  (format-ssa-place (clcomp.ssa::ssa-load-from ir))))
-	    (clcomp.ssa::ssa-return "return")
 	    (clcomp.ssa::ssa-multiple-return (format nil "return-multiple ~A" (clcomp.ssa::ssa-multiple-return-count ir)))
 	    (clcomp.ssa::ssa-vop (format nil "vop ~A ~A ~A"
 					 (clcomp.ssa::ssa-vop-name ir)
 					 (mapcar #'format-ssa-place (clcomp.ssa::ssa-vop-args ir))
 					 (mapcar #'format-ssa-place (clcomp.ssa::ssa-vop-return-values ir))))
 	    (clcomp.ssa::ssa-unknown-values-fun-call (format nil "funcall-unknown ~A" (clcomp.ssa::ssa-unknown-values-fun-call-fun ir)))
-	    (clcomp.ssa::ssa-known-values-fun-call (format nil "funcall-known ~A" (clcomp.ssa::ssa-known-values-fun-call-fun ir)))
+	    ;; (clcomp.ssa::ssa-known-values-fun-call (format nil "funcall-known ~A" (clcomp.ssa::ssa-known-values-fun-call-fun ir)))
     
 	    (clcomp.ssa::ssa-go (format nil "go ~A" (clcomp.ssa::ssa-go-label ir)))
 	    (clcomp.ssa::ssa-label (format nil "label ~A" (clcomp.ssa::ssa-label-label ir)))

@@ -102,6 +102,7 @@
     (inst :mov res *t*)
     (inst :label exit-label)))
 
+;;; FIXME, use memcpy() ?
 (define-vop %copy-array (res :register) ((array :register))
   (let ((copy-loop-label (make-vop-label "copy-loop-label"))
 	(copy-done-label (make-vop-label "copy-done-label")))

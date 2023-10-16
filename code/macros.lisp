@@ -458,51 +458,6 @@
 		   (clcomp-macroexpand what env)))
 	    (t (error "Unknown SETF expander !!")))))))
 
-
-#+nil
-(defun mvb-emit-ir (form places body)
-  (let ((end-label (make-label)))
-    (list 'let
-	  (let (code)
-	    (dolist (place places code)
-	      (push (list place nil) code)))
-	  (list 'progn
-		form
-		(cons 'tagbody
-		      (append
-		       (let (code)
-			 (dotimes (i (length places))
-			   (push (list 'if (list '=
-						 (clcomp.storage::make-exact-storage
-						  :storage (clcomp.storage::make-reg-storage :register *fun-number-of-arguments-reg*))
-						 i)
-				       (list 'go end-label))
-				 code)
-			   (push (list 'setf (nth i places)
-				       (clcomp.storage::make-ir-storage
-					:storage (clcomp.storage::make-ret-value-storage :index i)))
-				 code))
-			 (reverse code))
-		       (list end-label)))
-		body))))
-
-
-#+nil
-(defun %clcomp-macroexpand-m-v-b (form env)
-  (declare (ignore env))
-  (let ((has-declaration (and (consp (fourth form))
-			      (eq 'declare (first (fourth form))))))
-    (if has-declaration
-	(setf (cddddr form)
-	      (list (cons 'progn (cddddr form))))
-	(setf (cdddr form)
-	      (list (cons 'progn (cdddr form)))))
-    (mvb-emit-ir (clcomp-macroexpand (third form))
-		 (second form)
-		 (clcomp-macroexpand (if has-declaration
-					 (fifth form)
-					 (fourth form))))))
-
 (defun %clcomp-macroexpand-m-v-b (form env)
   (declare (ignore env))
   (let ((has-declaration (and (consp (fourth form))
