@@ -60,6 +60,7 @@
 ;;; Do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
 
+(defstruct (ssa-unknown-return (:include ssa-form)))
 (defstruct (ssa-multiple-return (:include ssa-form)) count)
 
 ;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
@@ -569,7 +570,7 @@
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun)
 		   block)
 	  (when leaf
-	    (emit-ir (make-ssa-multiple-return) block))
+	    (emit-ir (make-ssa-unknown-return) block))
 	  block)
 	(progn
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
@@ -2118,8 +2119,6 @@
 (defparameter *allocation-method* :simple)
 
 ;;; FIXME, this is just for test
-(defparameter *regs* (list :rax :rbx))
-
 (defstruct move block index from to)
 
 (defstruct alloc unhandled active inactive handled
@@ -2249,7 +2248,7 @@
 	   (optimize (speed 0) (debug 3) (safety 3)))
   ;; (print (list 'try-allocate-free-reg current-interval))
   (let ((fup (make-positions)))
-    (dolist (reg *regs*)
+    (dolist (reg *preserved-regs*)
       (add-position fup most-positive-fixnum reg))
     (dolist (interval (alloc-active alloc))
       (add-position fup 0 (interval-register interval)))
@@ -2289,7 +2288,7 @@
 	(current-index (interval-start current-interval))
 	(current-first-usage (interval-get-next-use current-interval)))
 
-    (dolist (reg *regs*)
+    (dolist (reg *preserved-regs*)
       (add-position positions most-positive-fixnum reg))
     
     (dolist (interval (alloc-active alloc))
@@ -2690,6 +2689,7 @@
 ;; https://wiki.cdot.senecacollege.ca/wiki/X86_64_Register_and_Instruction_Quick_Start
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *stack-pointer-reg* :RSP)
+(defparameter *instruction-pointer-reg* :RIP)
 (defparameter *fun-address-reg* :RAX)
 (defparameter *fun-values-stack-reg* :RBX)
 (defparameter *fun-number-of-arguments-reg* :RCX)
@@ -2708,40 +2708,61 @@
 
 (defstruct ir2asm-translator registers locations code)
 
-(defstruct reg-storage register)
-(defstruct memory-storage base index scale offset)
-(defstruct (stack-storage (:include memory-storage)))
-(defstruct constant-storage constant)
+(defun make-stack-op (displacement &optional (base *base-pointer-reg*))
+  (@ base nil nil displacement))
+
+(defun make-reg-op (reg)
+  reg)
+
+(defun make-memory-op ())
 
 (defun make-stack-storage-operand (offset)
-  (@ *base-pointer-reg* nil nil (- (* clcomp::*word-size* (+ offset
-							     (length *preserved-regs*)
-							     1)))))
+  (make-stack-op (- (* clcomp::*word-size* (+ offset
+					       (length *preserved-regs*)
+					       1)))))
 
 (defun get-fun-argument-storage (argument-place arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*))
 	(place-index (+ 1 (argument-place-index argument-place))))
     (if (> place-index arg-reg-count)
-	(make-stack-storage :base *stack-pointer-reg* :offset (* clcomp::*word-size*
-								 (- arguments-count place-index)))
-	(make-reg-storage :register (nth (- place-index 1) *fun-arguments-regs*)))))
+	;; FIXME, stack op displacement is wrong
+	(make-stack-op (* clcomp::*word-size*
+			  (- arguments-count place-index))
+		       *stack-pointer-reg*)
+	(make-reg-op (nth (- place-index 1) *fun-arguments-regs*)))))
 
 (defun make-return-value-storage (place)
   (let ((index (return-value-place-index place)))
-      ;; index starts from 0
+    ;; index starts from 0
     (if (<= (+ 1 index) (length *fun-arguments-regs*))
-	(make-reg-storage :register (nth index *fun-arguments-regs*))
-	(make-stack-storage :base *fun-values-stack-reg* :offset (- (* clcomp::*word-size*
-								       (- index (length *fun-arguments-regs*))))))))
+	(make-reg-op (nth index *fun-arguments-regs*))
+	(make-stack-op  (- (* clcomp::*word-size*
+			      (- index (length *fun-arguments-regs*))))
+			*fun-values-stack-reg*))))
+
+(defun make-recv-arg-place (place)
+  (let ((index (rcv-argument-place-index place)))
+    (if (<= (1+ index) (length *fun-arguments-regs*))
+	(make-reg-op (nth index *fun-arguments-regs*))
+	(make-stack-op (+ 16
+			  (* clcomp::*word-size*
+			     (- (rcv-argument-place-index place)
+				(length *fun-arguments-regs*))))))))
 
 (defun get-fixed-place-storage (place)
   (etypecase place
-    (argument-count-place (make-reg-storage :register *fun-number-of-arguments-reg*))
-    ;; FIXME, stack positions
-    (rcv-argument-place (nth (arg-place-index place )*fun-arguments-regs* ))
+    (argument-count-place (make-reg-op *fun-number-of-arguments-reg*))
+    (rcv-argument-place (make-recv-arg-place place))
     (argument-place (get-fun-argument-storage place "FIXME"))
     (return-value-place (make-return-value-storage place))
-    (function-value-place (make-reg-storage :register *fun-address-reg*))))
+    (function-value-place (make-reg-op *fun-address-reg*))))
+
+(defun get-rip-location-storage (place)
+  (make-stack-op (list 'displacement (list 'rip (compile-function-fixup-function place)))
+		 *instruction-pointer-reg*))
+
+(defun calculate-local-var-stack (stack)
+  (- (* clcomp::*word-size* (+ stack (length *preserved-regs*) 1))))
 
 ;;; FIXME, we need proper format for this :reg for register storagak
 ;;; or (:reg ....) for memory or stack storage
@@ -2755,8 +2776,11 @@
       (dolist (range (interval-ranges interval))
 	(when (and (<= (range-start range) index)
 		   (>= (range-end range) index))
-	  ;; FIXME, this returns only register
-	  (return-from get-alloc-storage (interval-register interval)))))
+	  (let ((reg (interval-register interval))
+		(stack (interval-stack interval)))
+	    (return-from get-alloc-storage (if reg
+					       (make-reg-op reg)
+					       (make-stack-op (calculate-local-var-stack stack))))))))
     (error "Can't find storage for name")))
 
 (defun get-storage (alloc place index)
@@ -2765,17 +2789,17 @@
     (virtual-place (get-alloc-storage alloc (named-place-name place) index))
     (immediate-constant (immediate-constant-constant place))
     ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
-    (compile-function-fixup (compile-function-fixup-function place) )))
+    (compile-function-fixup (get-rip-location-storage place))))
 
 (defun emit-ir-assembly (translator alloc &rest instructions)
   (declare (ignore alloc))
   (setf (ir2asm-translator-code translator)
-	(nconc (ir2asm-translator-code translator) instructions)))
+	(nconc (ir2asm-translator-code translator) (remove nil instructions))))
 
 (defun generate-save-registers-asm ()
   (let (assembly)
     (dolist (reg *preserved-regs*)
-      (push (list :push reg) assembly))
+      (push (list :push (make-reg-op reg)) assembly))
     assembly))
 
 (defun generate-restore-registers-asm ()
@@ -2787,25 +2811,26 @@
 (defun emit-adjust-stack-size (translator alloc method)
   (unless (member method '(:sub :add))
     (error "Unknown method"))
-  (let ((stack-size (- (alloc-stack-index alloc) -1)))
-    (when (> stack-size 0)
+  (let* ((stack-places (- (alloc-stack-index alloc) -1) )
+	 (stack (1+ (length *preserved-regs*)))
+	 (stack-size (+ stack-places stack)))
+    (when (> stack-places 0)
       (emit-ir-assembly translator alloc
-			(list method *stack-pointer-reg*
+			(list method (make-reg-op *stack-pointer-reg*)
 			      (* clcomp::*word-size* 
 				 ;; FIXME reverse stack arguments
 				 ;; 16 byte aligment
 				 (if (oddp stack-size)
-				     stack-size
-				     (+ 1 stack-size))))
-			;; FIXME, remove aligment, reverse stack arguments parsing
-			(list :method (make-reg-storage :register *stack-pointer-reg*) clcomp::*word-size*)))))
+				     (+ 1 stack-places)
+				     stack-places)))))))
 
 
 (defun translate-lambda-entry (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa ir))
   (emit-ir-assembly translator alloc
-		    (list :push *base-pointer-reg*)
-		    (list :mov *base-pointer-reg* *stack-pointer-reg*))
+		    (list :push (make-reg-op *base-pointer-reg*))
+		    (list :mov (make-reg-op *base-pointer-reg*)
+			  (make-reg-op *stack-pointer-reg*)))
   (apply #'emit-ir-assembly translator alloc
 	 (generate-save-registers-asm))
   (emit-adjust-stack-size translator alloc :sub))
@@ -2815,16 +2840,16 @@
   (let ((arg-count (arg-check-arg-count ir))
 	(min-arg-count (arg-check-min-arg-count ir)))
     (emit-ir-assembly translator alloc
-		      (list :cmp *fun-number-of-arguments-reg* (or arg-count min-arg-count))
+		      (list :cmp (make-reg-op *fun-number-of-arguments-reg*) (or arg-count min-arg-count))
 		      ;; FIXME, use unique :wrong-arg-count-label symbol
 		      (list :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label)))) 
 
 (defun translate-fun-call (ir translator alloc sblock lambda-ssa)
-  ;; FIXME
+  (declare (ignore ir sblock lambda-ssa))
   (emit-ir-assembly translator alloc
-		      (list :fun-call)))
+		    (list :call (make-reg-op *fun-address-reg*))))
 
-(defun translate-return (ir translator alloc sblock lambda-ssa)
+(defun translate-return (ir translator alloc sblock lambda-ssa &optional known)
   (declare (ignore sblock lambda-ssa))
   ;; FIXME, there is more here, restore registers
   (emit-ir-assembly translator alloc (list :clc))
@@ -2833,17 +2858,17 @@
 	 (generate-restore-registers-asm))
   (emit-ir-assembly translator alloc
 		    (list :pop *base-pointer-reg*)
-		    (list :mov *fun-number-of-arguments-reg* (ssa-multiple-return-count ir))
+		    (if known
+			(list :mov *fun-number-of-arguments-reg* (clcomp::fixnumize (ssa-multiple-return-count ir))))
 		    (list :ret)
 		    (list :label :wrong-arg-count-label)
 		    (list :some-wrong-arg-count-assembly)))
-
 
 (defun translate-load (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
   ;; TODO
   (emit-ir-assembly translator alloc
-		    (list :mov (get-storage alloc  (ssa-load-to ir) (ssa-form-index ir))
+		    (list :mov (get-storage alloc (ssa-load-to ir) (ssa-form-index ir))
 			  (get-storage alloc (ssa-load-from ir) (ssa-form-index ir)))))
 
 (defun translate-mvb-bind (ir translator alloc sblock lambda-ssa)
@@ -2864,6 +2889,7 @@
   ;; 	 (funcall (find-vop ) ))
   ;; emit-vop code
   )
+
 (defun translate-block (sblock lambda-ssa alloc translator)
   (dolist (ir (ssa-block-ssa sblock))
     (etypecase ir
@@ -2885,8 +2911,10 @@
       (ssa-vop (translate-vop ir translator alloc sblock lambda-ssa))
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
+      (ssa-unknown-return
+       (translate-return ir translator alloc sblock lambda-ssa))
       (ssa-multiple-return
-       (translate-return ir translator alloc sblock lambda-ssa)))))
+       (translate-return ir translator alloc sblock lambda-ssa t)))))
 
 (defun translate-to-asm (lambda-ssa alloc)
   (let ((translator (make-ir2asm-translator)))
@@ -2899,6 +2927,8 @@
   (multiple-value-bind (ssa _ alloc) (test-ssa exp)
     (declare (ignore _))
     (translate-to-asm ssa alloc)))
+
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; eliminate excessive moves
