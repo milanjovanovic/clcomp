@@ -786,8 +786,6 @@
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
 
 
-;;; FIXME, should we generate proper code here to generate stack return values
-;;; or do that in translating phase ?
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize (debug 3) (speed 0)))
   (let ((ret-index 0))
@@ -808,6 +806,9 @@
 	      (emit-ssa form lambda-ssa nil nil block)))
       (incf ret-index)))
   (when leaf
+    (unless (clcomp::values-node-forms node)
+      (emit-ir (make-ssa-load :to (make-return-value-place :index 0)
+			      :from (make-immediate-constant :constant clcomp::*nil*)) block))
     (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node))) block))
   block)
 
@@ -2708,6 +2709,11 @@
 
 (defstruct ir2asm-translator registers locations code)
 
+(defun get-storage-type (storage)
+  (etypecase storage
+    (keyword :register)
+    (list :stack)))
+
 (defun make-stack-op (displacement &optional (base *base-pointer-reg*))
   (@ base nil nil displacement))
 
@@ -2716,10 +2722,8 @@
 
 (defun make-memory-op ())
 
-(defun make-stack-storage-operand (offset)
-  (make-stack-op (- (* clcomp::*word-size* (+ offset
-					       (length *preserved-regs*)
-					       1)))))
+(defun make-inst (&rest inst)
+  (apply #'list inst))
 
 (defun get-fun-argument-storage (argument-place arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*))
@@ -2799,13 +2803,13 @@
 (defun generate-save-registers-asm ()
   (let (assembly)
     (dolist (reg *preserved-regs*)
-      (push (list :push (make-reg-op reg)) assembly))
+      (push (make-inst :push (make-reg-op reg)) assembly))
     assembly))
 
 (defun generate-restore-registers-asm ()
   (let (assembly)
     (dolist (reg (reverse *preserved-regs*))
-      (push (list :pop reg) assembly))
+      (push (make-inst :pop reg) assembly))
     assembly))
 
 (defun emit-adjust-stack-size (translator alloc method)
@@ -2816,20 +2820,20 @@
 	 (stack-size (+ stack-places stack)))
     (when (> stack-places 0)
       (emit-ir-assembly translator alloc
-			(list method (make-reg-op *stack-pointer-reg*)
-			      (* clcomp::*word-size* 
-				 ;; FIXME reverse stack arguments
-				 ;; 16 byte aligment
-				 (if (oddp stack-size)
-				     (+ 1 stack-places)
-				     stack-places)))))))
+			(make-inst method (make-reg-op *stack-pointer-reg*)
+				   (* clcomp::*word-size* 
+				      ;; FIXME reverse stack arguments
+				      ;; 16 byte aligment
+				      (if (oddp stack-size)
+					  (+ 1 stack-places)
+					  stack-places)))))))
 
 
 (defun translate-lambda-entry (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa ir))
   (emit-ir-assembly translator alloc
-		    (list :push (make-reg-op *base-pointer-reg*))
-		    (list :mov (make-reg-op *base-pointer-reg*)
+		    (make-inst :push (make-reg-op *base-pointer-reg*))
+		    (make-inst :mov (make-reg-op *base-pointer-reg*)
 			  (make-reg-op *stack-pointer-reg*)))
   (apply #'emit-ir-assembly translator alloc
 	 (generate-save-registers-asm))
@@ -2840,35 +2844,37 @@
   (let ((arg-count (arg-check-arg-count ir))
 	(min-arg-count (arg-check-min-arg-count ir)))
     (emit-ir-assembly translator alloc
-		      (list :cmp (make-reg-op *fun-number-of-arguments-reg*) (or arg-count min-arg-count))
+		      (make-inst :cmp (make-reg-op *fun-number-of-arguments-reg*) (clcomp::fixnumize (or arg-count min-arg-count)))
 		      ;; FIXME, use unique :wrong-arg-count-label symbol
-		      (list :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label)))) 
+		      (make-inst :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label)))) 
 
 (defun translate-fun-call (ir translator alloc sblock lambda-ssa)
   (declare (ignore ir sblock lambda-ssa))
   (emit-ir-assembly translator alloc
-		    (list :call (make-reg-op *fun-address-reg*))))
+		    (make-inst :call (make-reg-op *fun-address-reg*))))
 
 (defun translate-return (ir translator alloc sblock lambda-ssa &optional known)
   (declare (ignore sblock lambda-ssa))
   ;; FIXME, there is more here, restore registers
-  (emit-ir-assembly translator alloc (list :clc))
+  ;; (emit-ir-assembly translator alloc (make-inst :clc))
+  (when known
+    (emit-ir-assembly translator alloc
+		      (make-inst :mov *fun-number-of-arguments-reg* (clcomp::fixnumize (ssa-multiple-return-count ir)))))
+  ;; FIXME, adjusting stack before pop-ing register ??
   (emit-adjust-stack-size translator alloc :add)
   (apply #'emit-ir-assembly translator alloc
 	 (generate-restore-registers-asm))
   (emit-ir-assembly translator alloc
-		    (list :pop *base-pointer-reg*)
-		    (if known
-			(list :mov *fun-number-of-arguments-reg* (clcomp::fixnumize (ssa-multiple-return-count ir))))
-		    (list :ret)
-		    (list :label :wrong-arg-count-label)
-		    (list :some-wrong-arg-count-assembly)))
+		    (make-inst :pop *base-pointer-reg*)
+		    (make-inst :ret)
+		    (make-inst :label :wrong-arg-count-label)
+		    (make-inst :some-wrong-arg-count-assembly)))
 
 (defun translate-load (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
   ;; TODO
   (emit-ir-assembly translator alloc
-		    (list :mov (get-storage alloc (ssa-load-to ir) (ssa-form-index ir))
+		    (make-inst :mov (get-storage alloc (ssa-load-to ir) (ssa-form-index ir))
 			  (get-storage alloc (ssa-load-from ir) (ssa-form-index ir)))))
 
 (defun translate-mvb-bind (ir translator alloc sblock lambda-ssa)
@@ -2880,15 +2886,32 @@
       (error "Can't find storage for MVB"))
     (apply #'emit-ir-assembly translator alloc (clcomp::multiple-value-bind-generator storages))))
 
+
 (defun translate-vop (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
+  (let* ((ir-index (ssa-form-index ir))
+	 (name (ssa-vop-name ir))
+	 (args-storage (mapcar #'(lambda (p)
+				   (get-storage alloc p ir-index))
+			       (ssa-vop-args ir)))
+	 (args-types (mapcar #'get-storage-type args-storage))
+	 (ret-vals-storage (mapcar #'(lambda (p)
+				       (get-storage alloc p ir-index))
+				   (ssa-vop-return-values ir)))
+	 (ret-vals-types (mapcar #'get-storage-type ret-vals-storage))
+	 (vop (clcomp::find-vop name ret-vals-types args-types)))
+
+    (if vop
+	(apply #'emit-ir-assembly translator alloc
+	       (clcomp::get-vop-code vop (append args-storage ret-vals-storage 
+						 (list (make-stack-op (calculate-local-var-stack (alloc-stack-index alloc))))) ))
+	(error "FIXME, spill something for this to work")))
   ;; FIXME, maybe do type check here and not in VOP
   ;; FIXME, label symbol is fixed, this will match current fun arguments symbol
   ;; TODO generate unique label symbol
-  ;; (apply #'emit-ir-assembly translator alloc
-  ;; 	 (funcall (find-vop ) ))
   ;; emit-vop code
   )
+
 
 (defun translate-block (sblock lambda-ssa alloc translator)
   (dolist (ir (ssa-block-ssa sblock))
@@ -2905,9 +2928,9 @@
        (translate-mvb-bind ir translator alloc sblock lambda-ssa))
       (ssa-if )				; TODO
       (ssa-go
-       (emit-ir-assembly translator alloc (list :jump-fixup :jmp (ssa-go-label ir))))
+       (emit-ir-assembly translator alloc (make-inst :jump-fixup :jmp (ssa-go-label ir))))
       (ssa-label
-       (emit-ir-assembly translator alloc (list :label (ssa-label-label ir))))
+       (emit-ir-assembly translator alloc (make-inst :label (ssa-label-label ir))))
       (ssa-vop (translate-vop ir translator alloc sblock lambda-ssa))
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
@@ -2927,7 +2950,6 @@
   (multiple-value-bind (ssa _ alloc) (test-ssa exp)
     (declare (ignore _))
     (translate-to-asm ssa alloc)))
-
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
