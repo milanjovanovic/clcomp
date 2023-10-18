@@ -594,11 +594,6 @@
 	      (setf block new-block)
 	      (push place args-places)))))
     (setf args-places (reverse args-places))
-    ;; FIXME, much of opportunities here to optimize VOP call, immediates, etc etc
-    (dolist (p args-places)
-      ;; FIXME, maybe p is already virtual place, no need for additional move
-      ;; or just leave like this to not complicate and remove unnecessary moves and places later in peephole optimazer
-      (emit-ir (make-ssa-load :to (generate-virtual-place) :from p) block))
     (cond (leaf
 	   (emit-ir (make-ssa-vop
 		     :name (clcomp::vop-node-vop node)
@@ -614,7 +609,7 @@
 	      ;; FIXME, here we use PLACE as first ret value and we generate missing values, fix VOP so it can receive NIL as return reg
 	      (emit-ir (make-ssa-vop :return-values (cons place (generate-return-places (- ret-vals 1))) :args args-places) block))))
 	  (t
-	   ;; FIXME, fix VOP to maybe not use any return registers, do we have side effects onlu VOPS ?
+	   ;; FIXME, fix VOP to maybe not use any return registers, do we have side effects only VOPS ?
 	   (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)))
     block))
 
@@ -1644,7 +1639,9 @@
     (immediate-constant nil)
     (compile-function-fixup nil)
     ;; FIXME, check this
-    (var-place place)))
+    (var-place place)
+    ;; FIXME, check this also, fixup doesn't have place ??
+    (fixup nil)))
 
 (defun ssa-form-write-place (ssa-form)
   (etypecase ssa-form
@@ -2905,13 +2902,22 @@
 	(apply #'emit-ir-assembly translator alloc
 	       (clcomp::get-vop-code vop (append args-storage ret-vals-storage 
 						 (list (make-stack-op (calculate-local-var-stack (alloc-stack-index alloc))))) ))
-	(error "FIXME, spill something for this to work")))
-  ;; FIXME, maybe do type check here and not in VOP
-  ;; FIXME, label symbol is fixed, this will match current fun arguments symbol
-  ;; TODO generate unique label symbol
-  ;; emit-vop code
-  )
+	(error "FIXME, spill something for this to work"))))
 
+(defun translate-if (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa)
+	   (optimize (debug 3) (speed 0)))
+  (let* ((test-place (ssa-if-test ir))
+	 (test-place-storage (get-storage alloc test-place (ssa-form-index ir)))
+	 (true-label (ssa-if-true-block-label ir))
+	 (false-label (ssa-if-false-block-label ir)))
+    (declare (ignorable false-label))
+    (emit-ir-assembly translator alloc
+		      (make-inst :cmp test-place-storage clcomp::*nil*)
+		      (make-inst :jump-fixup :jne true-label))
+    ;; FIXME, should we check for false label and insert (go FALSE-LABEL) if it does exist
+    ;; or we are emiting GO instruction in SSA construction phase ?? 
+    ))
 
 (defun translate-block (sblock lambda-ssa alloc translator)
   (dolist (ir (ssa-block-ssa sblock))
@@ -2926,7 +2932,8 @@
        (translate-load ir translator alloc sblock lambda-ssa ))
       (ssa-mvb-bind
        (translate-mvb-bind ir translator alloc sblock lambda-ssa))
-      (ssa-if )				; TODO
+      (ssa-if
+       (translate-if ir translator alloc sblock lambda-ssa))
       (ssa-go
        (emit-ir-assembly translator alloc (make-inst :jump-fixup :jmp (ssa-go-label ir))))
       (ssa-label

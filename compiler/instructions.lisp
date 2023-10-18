@@ -166,6 +166,12 @@
 (define-inst-template :cmp (:addr8 :uimm8) ()
 		      nil nil #x80 #x38)
 
+(define-inst-template :cmp (:addr64 :imm32) ()
+		      nil nil #x81 #x38)
+
+(define-inst-template :cmp (:addr64 :imm8) ()
+		      nil nil #x83 #x38)
+
 ;;; TEST
 (define-inst-template :test (:reg64 :reg64) ()
 		      nil nil #x85 nil)

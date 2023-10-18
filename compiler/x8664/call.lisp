@@ -82,7 +82,6 @@
     (inst :label end-label)
     
     ;; save RCX
-    ;; FIXME, $stack-top-operand$ is pointer to last saved slot, this will overwrite it
     (inst :mov $stack-top-operand$ *fun-number-of-arguments-reg*)
     
     (inst :shl *fun-number-of-arguments-reg* *tag-size*)
