@@ -1,5 +1,5 @@
 (defpackage #:clcomp.ssa
-  (:use #:cl #:clcomp))
+  (:use #:cl #:clcomp #:clcomp.translator))
 
 (in-package #:clcomp.ssa)
 
@@ -39,7 +39,7 @@
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
 (defstruct slabels alist)
 (defstruct ssa-env labels)
-(defstruct lambda-ssa blocks (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
+(defstruct lambda-ssa blocks asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
 	   (env (make-ssa-env)) fixups sub-lambdas
 	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
 	   (redundant-phis (make-hash-table :test #'equalp)))
@@ -2759,8 +2759,13 @@
     (function-value-place (make-reg-op *fun-address-reg*))))
 
 (defun get-rip-location-storage (place)
-  (make-stack-op (list 'displacement (list 'rip (compile-function-fixup-function place)))
-		 *instruction-pointer-reg*))
+  (etypecase place
+    (compile-function-fixup
+     (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (compile-function-fixup-function place)))
+		    *instruction-pointer-reg*))
+    ((or load-time-eval-fixup local-component-fixup )
+     (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (named-place-name place)))
+		    *instruction-pointer-reg*))))
 
 (defun calculate-local-var-stack (stack)
   (- (* clcomp::*word-size* (+ stack (length *preserved-regs*) 1))))
@@ -2790,7 +2795,7 @@
     (virtual-place (get-alloc-storage alloc (named-place-name place) index))
     (immediate-constant (immediate-constant-constant place))
     ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
-    (compile-function-fixup (get-rip-location-storage place))))
+    (fixup (get-rip-location-storage place))))
 
 (defun emit-ir-assembly (translator alloc &rest instructions)
   (declare (ignore alloc))
@@ -2865,7 +2870,7 @@
 		    (make-inst :pop *base-pointer-reg*)
 		    (make-inst :ret)
 		    (make-inst :label :wrong-arg-count-label)
-		    (make-inst :some-wrong-arg-count-assembly)))
+		    (make-inst :ud2)))
 
 (defun translate-load (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
@@ -2946,17 +2951,28 @@
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa t)))))
 
+
 (defun translate-to-asm (lambda-ssa alloc)
   (let ((translator (make-ir2asm-translator)))
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
       (translate-block sblock lambda-ssa alloc translator))
     translator))
 
-(defun test-finish (exp)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (multiple-value-bind (ssa _ alloc) (test-ssa exp)
+
+;;; FIXME, do we do register allocation for SUB-LAMBDAS ?
+;;; FIXME, we do not translate SUB-LAMBDA's to ASM
+
+(defun clcomp-compile (exp &optional (graph-name "default"))
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
+	 (_ (generate-graph lambda-ssa graph-name))
+	 (intervals (build-intervals lambda-ssa))
+	 (alloc (linear-scan intervals)))
     (declare (ignore _))
-    (translate-to-asm ssa alloc)))
+    (generate-graph lambda-ssa graph-name)
+    (resolve-data-flow lambda-ssa alloc)
+    (setf (lambda-ssa-asm lambda-ssa)
+	  (ir2asm-translator-code (translate-to-asm lambda-ssa alloc)))
+    lambda-ssa))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
