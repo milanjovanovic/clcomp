@@ -1,5 +1,5 @@
 (defpackage #:clcomp.ssa
-  (:use #:cl #:clcomp #:clcomp.translator))
+  (:use #:cl #:clcomp))
 
 (in-package #:clcomp.ssa)
 
@@ -44,7 +44,7 @@
 	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
 	   (redundant-phis (make-hash-table :test #'equalp)))
 
-(defstruct ssa-block index order ir ir-last-cons ssa asm succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
+(defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
   sealed processed label defined phis live-in virtuals live-gen live-kill live-out)
 
 (defstruct ssa-form index)
@@ -2951,12 +2951,14 @@
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa t)))))
 
-
 (defun translate-to-asm (lambda-ssa alloc)
   (let ((translator (make-ir2asm-translator)))
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
       (translate-block sblock lambda-ssa alloc translator))
-    translator))
+    (setf (lambda-ssa-asm lambda-ssa)
+	  (ir2asm-translator-code translator)))
+  (dolist (sub-lambda (lambda-ssa-sub-lambdas lambda-ssa))
+    (translate-to-asm (cdr sub-lambda) alloc)))
 
 
 ;;; FIXME, do we do register allocation for SUB-LAMBDAS ?
@@ -2970,8 +2972,7 @@
     (declare (ignore _))
     (generate-graph lambda-ssa graph-name)
     (resolve-data-flow lambda-ssa alloc)
-    (setf (lambda-ssa-asm lambda-ssa)
-	  (ir2asm-translator-code (translate-to-asm lambda-ssa alloc)))
+    (translate-to-asm lambda-ssa alloc)
     lambda-ssa))
 
 
@@ -2979,7 +2980,7 @@
 ;;; eliminate excessive moves
 
 (defun optimize-block-loads (sblock)
-  )
+  (declare (ignore sblock)))
 
 (defun optimize-loads (lambda-ssa)
   (dolist (sblock (lambda-ssa-blocks lambda-ssa))

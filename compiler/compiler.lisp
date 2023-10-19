@@ -1017,6 +1017,22 @@
     (maybe-rt-%defun name assembled-compile-unit)
     assembled-compile-unit))
 
+
+(defun ssa-clcomp-compile (name exp &key (eval-at-load nil))
+  (let* ((lambda-ssa (clcomp.ssa::lambda-construct-ssa (create-node (clcomp-macroexpand exp))))
+	 (intervals (clcomp.ssa::build-intervals lambda-ssa))
+	 (alloc (clcomp.ssa::linear-scan intervals)))
+    (clcomp.ssa::resolve-data-flow lambda-ssa alloc)
+    (clcomp.ssa::translate-to-asm lambda-ssa alloc)
+    (let* ((compile-unit (clcomp.translator::translate-to-compilation-unit lambda-ssa))
+	   (assembled-compile-unit (assemble-and-link-compilation-unit compile-unit 0)))
+      (when (and eval-at-load
+		 (not name))
+	(setf (compilation-unit-eval-at-load assembled-compile-unit) t))
+      (rt-add-to-compilation assembled-compile-unit)
+      (maybe-rt-%defun name assembled-compile-unit)
+      assembled-compile-unit)))
+
 ;;;; TODO
 ;;; - stack offsets, when we removed saving preserved regs we are wasting stack space
 
