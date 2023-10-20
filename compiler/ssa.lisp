@@ -38,7 +38,7 @@
 (defstruct (load-time-eval-fixup (:include fixup)))
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
 (defstruct slabels alist)
-(defstruct ssa-env labels)
+(defstruct ssa-env labels blocks)
 (defstruct lambda-ssa blocks asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
 	   (env (make-ssa-env)) fixups sub-lambdas
 	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
@@ -148,7 +148,7 @@
 
 (defun generate-label-for-string (str)
   (prog1
-      (make-symbol (concatenate 'string str "-" (write-to-string *ssa-symbol-counter*)))
+      (make-symbol (concatenate 'string (string-upcase str) "-" (write-to-string *ssa-symbol-counter*)))
     (incf *ssa-symbol-counter*)))
 
 (defun generate-label-symbol ()
@@ -224,8 +224,11 @@
   (= (ssa-block-index block)
      (ssa-block-index (car (last (lambda-ssa-blocks lambda-ssa))))))
 
+;;; FIXME, check this one
 (defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
-  (getf (lambda-ssa-loop-header-blocks lambda-ssa) header-block-index))
+  (dolist (hb (lambda-ssa-loop-header-blocks lambda-ssa))
+    (when (= (first hb) header-block-index)
+      (return (rest hb)))))
 
 (defun lambda-ssa-add-loop-end-block (header-index end-index lambda-ssa)
   (let ((ends (assoc header-index (lambda-ssa-loop-header-blocks lambda-ssa))))
@@ -657,6 +660,10 @@
 	(setf block (emit-ssa form-node lambda-ssa nil nil block))
 	(setf block (emit-ssa form-node lambda-ssa leaf place block)))))
 
+;;; how this handle multiple TAGBODY inside each other with the same LABEL ?
+;;; TODO, we need environment that will transfer LABELS/BLOCKS
+;;; The same issue we will have with BLOCK/RETURN-FROM
+;;; also wrong in a context of dynamic extent, check CLHS for TAGBODOY
 (defun emit-tagbody-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
   (push-labels-env lambda-ssa)
@@ -807,6 +814,22 @@
     (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node))) block))
   block)
 
+(defun emit-block-node-ssa (node lambda-ssa leaf place block)
+  (error "FIXME")
+  ;; make new block with label of block name
+  ;; return-from will jump to that block
+  ;; if there is place then we will emit set ir at the begining of the new block
+  ;; if it's leaf then we will emit set to retun position at the begining of the new block
+  ;;
+  (let ((exit-block (make-new-ssa-block lambda-ssa)))
+    )
+  )
+
+(defun emit-return-from-node-ssa (node lambda-ssa leaf place block)
+  ;;; return-from is just a JUMP instruction to new block (block name LABEL)
+  (error "FIXME")
+ )
+
 ;;; FIXME, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
 ;;; currently macroexpanding BLOCK to TAGBODY doesn't work for (return-from FUN (values 1 2))
 ;; simple fix is to macroexpand with MULTIPLE-VALUE-LIST ??
@@ -827,7 +850,9 @@
     (clcomp::setq-node (emit-setq-node-ssa node lambda-ssa leaf place block))
     (clcomp::rip-relative-node (emit-rip-relative-node-ssa node lambda-ssa leaf place block))
     (clcomp::m-v-b-node (emit-m-v-b-node-ssa node lambda-ssa leaf place block))
-    (clcomp::values-node (emit-values-node-ssa node lambda-ssa leaf place block))))
+    (clcomp::values-node (emit-values-node-ssa node lambda-ssa leaf place block))
+    (clcomp::block-node (emit-block-node-ssa node lambda-ssa leaf place block))
+    (clcomp::return-from-node (emit-return-from-node-ssa node lambda-ssa leaf place block))))
 
 
 (defun fix-cond-jump-index (from-block to-block)
@@ -1302,6 +1327,9 @@
 		       (ssa-block-uncond-jump (ssa-find-block-by-index lambda-ssa (car pcons))))
 	      (print-debug (format t "Skipping to remove block ~A, SUCC + UNCOND-JUMP case from ~A" (ssa-block-index sblock)
 				   (car pcons)))
+	      (return t))
+	    (when (= (car pcons) (ssa-block-index sblock))
+	      (print-debug (format t "Skipping to remove block ~A, jump to it sealf" (ssa-block-index sblock)))
 	      (return t)))
 	;; we are clear to remove our block
 	(print-debug "Removing REDUNDANT BLOCK " (ssa-block-index sblock))

@@ -514,8 +514,8 @@
 	      (case first
 		;; FIXME, transform let* to let
 		((let let*) (%clcomp-macroexpand-let form env))
-		(block (%clcomp-macroexpand-block form env))
-		(return-from (%clcomp-macroexpand-return-from form env))
+		;; (block (%clcomp-macroexpand-block form env))
+		;; (return-from (%clcomp-macroexpand-return-from form env))
 		(progn (%clcomp-macroexpand-progn form env))
 		(defun (%clcomp-macroexpand-defun form env))
 		($defun (%clcomp-macroexpand-$defun form env))

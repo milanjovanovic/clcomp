@@ -60,6 +60,7 @@
 (defstruct (call-node (:include tnode)) function arguments)
 (defstruct (vop-node (:include tnode)) vop arguments)
 (defstruct (block-node (:include tnode)) name form)
+(defstruct (return-from-node (:include tnode)) name form)
 (defstruct (tagbody-node (:include tnode)) forms)
 (defstruct (go-node (:include tnode)) label-node)
 (defstruct (label-node (:include tnode)) label)
@@ -248,6 +249,27 @@
 		     :declaration declaration
 		     :body body)))
 
+;;; FIXME, block name is nil, does this works ?
+(defun create-block-node (form environment)
+  (let ((block-name (second form)))
+    (unless (symbolp block-name)
+      (error "block name is not a symbol"))
+    (make-block-node :name block-name :form (if (> (length (cddr form)) 1)
+						(make-progn-node :forms
+								 (mapcar (lambda (f)
+									   (create-node f environment))
+									 (cddr form)))
+						(create-node (caddr form) environment)))))
+
+(defun create-return-from (form environment)
+  (if (/= (length form) 3)
+      (error "Error while parsing arguments to special operator RETURN-FROM")
+      (let ((block-name (second form))
+	    (return-form (third form)))
+	(unless (symbolp block-name)
+	  (error "Block name in RETURN-FROM form need to be a symbol"))
+	(make-return-from-node :name block-name :form (create-node return-form environment)))))
+
 (defun create-compile-time-constant-node (form)
   (make-compile-time-constant-node :form (second form)))
 
@@ -324,4 +346,8 @@
 	       (create-values-node form environment))
 	      ((eq first 'multiple-value-bind)
 	       (create-m-v-b-node form environment))
+	      ((eq first 'block)
+	       (create-block-node form environment))
+	      ((eq first 'return-from)
+	       (create-return-from form environment))
 	      (t (create-call-node form environment))))))
