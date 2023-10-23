@@ -30,12 +30,12 @@
   (etypecase place
     (clcomp.ssa::named-place
      (format nil "~A" (clcomp.ssa::get-place-name place)))
+    (clcomp.ssa::return-value-place (format nil "FUN-RETURN-~A" (clcomp.ssa::return-value-place-index place)))
     (clcomp.ssa::rcv-argument-place (format nil "RCV-ARG-PLACE-~A" (clcomp.ssa::rcv-argument-place-index place)) )
-    (clcomp.ssa::arg-place (format nil "ARG-REG-~A" (clcomp.ssa::argument-place-index place)))
+    (clcomp.ssa::arg-place (format nil "ARG-REG-~A" (clcomp.ssa::arg-place-index place)))
     (clcomp.ssa::argument-count-place "ARG-COUNT-REG" )
     (clcomp.ssa::immediate-constant (format nil "CONST ~A" (clcomp.ssa::immediate-constant-constant place)))
-    (clcomp.ssa::function-value-place "FUNCTION-REG")
-    (clcomp.ssa::return-value-place (format nil "FUN-RETURN-~A" (clcomp.ssa::return-value-place-index place)))))
+    (clcomp.ssa::function-value-place "FUNCTION-REG")))
 
 (defun format-ir (ir)
   (format nil "~A: ~A" (clcomp.ssa::ssa-form-index ir)
@@ -45,6 +45,7 @@
 	    (clcomp.ssa::ssa-load (format nil "load ~A, ~A"
 					  (format-ssa-place  (clcomp.ssa::ssa-load-to ir))
 					  (format-ssa-place (clcomp.ssa::ssa-load-from ir))))
+	    (clcomp.ssa::ssa-unknown-return (format nil "return-unknown"))
 	    (clcomp.ssa::ssa-multiple-return (format nil "return-multiple ~A" (clcomp.ssa::ssa-multiple-return-count ir)))
 	    (clcomp.ssa::ssa-vop (format nil "vop ~A ~A ~A"
 					 (clcomp.ssa::ssa-vop-name ir)

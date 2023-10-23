@@ -351,13 +351,17 @@
 	  (error "Block already have GO instruction"))
 	(maybe-insert-or-fix-jump-instr block to-block "LABEL"))))
 
-(defun pop-labels-env (lambda-ssa)
+(defun pop-labels-env (lambda-ssa &key block-ret)
   (let ((ssa-env (lambda-ssa-env lambda-ssa)))
-    (pop (ssa-env-labels ssa-env))))
+    (if block-ret
+	(pop (ssa-env-blocks ssa-env))
+	(pop (ssa-env-labels ssa-env)))))
 
-(defun push-labels-env (lambda-ssa)
+(defun push-labels-env (lambda-ssa &key block-ret)
   (let ((ssa-env (lambda-ssa-env lambda-ssa)))
-    (push (make-slabels) (ssa-env-labels ssa-env))))
+    (if block-ret
+	(push (make-slabels) (ssa-env-blocks ssa-env))
+	(push (make-slabels) (ssa-env-labels ssa-env)))))
 
 (defun label-ssa-block (block label &optional (emit t))
   (when emit
@@ -378,6 +382,27 @@
       (let ((lb (assoc label (slabels-alist slabel))))
 	(when lb
 	  (return-from ssa-find-block-index-by-label (second lb)))))))
+
+;;; FIXME, this is the same code as two functions above,
+;;; make generic version
+(defun ssa-add-exit-block-for-block/return-label (lambda-ssa
+						  exit-block
+						  block/return-label
+						  block/return-label-gen)
+  (declare (optimize (debug 3) (speed 0)))
+  (let* ((env (lambda-ssa-env lambda-ssa))
+	 (block/return-labels (first (ssa-env-blocks env))))
+    (label-ssa-block exit-block block/return-label-gen)
+    (push (list block/return-label (ssa-block-index exit-block) block/return-label-gen)
+	  (slabels-alist block/return-labels))))
+
+(defun ssa-get-exit-block-for-block/return-label (lambda-ssa label)
+  (let* ((env (lambda-ssa-env lambda-ssa))
+	 (slabels (ssa-env-blocks env)))
+    (dolist (slabel slabels)
+      (let ((lb (assoc label (slabels-alist slabel))))
+	(when lb
+	  (return-from ssa-get-exit-block-for-block/return-label (cdr lb)))))))
 
 (defun ssa-find-block-by-index (lambda-ssa index)
   (gethash index (lambda-ssa-blocks-index lambda-ssa)))
@@ -471,6 +496,7 @@
 ;;; FIXME, set block LABEL fieds
 ;;; FIXME, we are allways moving value to specific place, we can omit that and use existing place (and force it to register)
 (defun emit-if-node-ssa (if-node lambda-ssa leaf place block)
+  (declare (optimize debug))
   (let* ((test-node (clcomp::if-node-test-form if-node))
 	 (test-place (generate-virtual-place))
 	 (block (emit-ssa test-node lambda-ssa nil test-place block))
@@ -708,7 +734,6 @@
   (let ((label-name (clcomp::label-node-label (clcomp::go-node-label-node node))))
     (insert-block-unconditional-jump block (ssa-find-block-by-index lambda-ssa
 								    (ssa-find-block-index-by-label lambda-ssa label-name)))
-
     ;; we are emiting SSA-GO with INSERT-BLOCK-UNCONDITIONAL-JUMP
     ;; (emit-ir (make-ssa-go :label label-name) block)
     ;; reset successor to nil, if we have GO direct successor in this block is never active
@@ -817,22 +842,43 @@
   block)
 
 (defun emit-block-node-ssa (node lambda-ssa leaf place block)
-  (error "FIXME")
   ;; make new block with label of block name
   ;; return-from will jump to that block
   ;; if there is place then we will emit set ir at the begining of the new block
   ;; if it's leaf then we will emit set to retun position at the begining of the new block
   ;;
-  (let ((exit-block (make-new-ssa-block lambda-ssa)))
-    )
-  )
+  (declare (optimize debug))
+  (let* ((exit-block (make-new-ssa-block lambda-ssa))
+	 (block-name (clcomp::block-node-name node))
+	 (block-form (clcomp::block-node-form node))
+	 (block-name-gen (generate-label-for-string (symbol-name block-name))))
+    (ssa-add-block lambda-ssa exit-block)
+    (push-labels-env lambda-ssa :block-ret t)
+    (ssa-add-exit-block-for-block/return-label lambda-ssa exit-block block-name block-name-gen)
+    (let ((current-block (emit-ssa block-form lambda-ssa leaf place block)))
+      ;; FIXME, at this point we need to decide do we connect CURRENT-BLOCK to EXIT-BLOCK
+      ;; check if CURRENT-BLOCK have UNCOND-JUMP
+      (break)
+      (when current-block
+	(ssa-maybe-connect-blocks current-block exit-block))
+      (pop-labels-env lambda-ssa :block-ret t)
+      exit-block)))
 
 (defun emit-return-from-node-ssa (node lambda-ssa leaf place block)
-  ;;; return-from is just a JUMP instruction to new block (block name LABEL)
-  (error "FIXME")
- )
+  ;; return-from is just a JUMP instruction to new block (block name LABEL)
+  ;; if there is place we need to emit set form in exit block
+  (declare (optimize debug))
+  (let* ((return-from-label (clcomp::return-from-node-name node))
+	 (bl (ssa-get-exit-block-for-block/return-label lambda-ssa return-from-label))
+	 (exit-block (ssa-find-block-by-index lambda-ssa (first bl)))
+	 (label-gen (second bl)))
+    (declare (ignore label-gen))
+    (let ((form-block (emit-ssa (clcomp::return-from-node-form node) lambda-ssa leaf place block)))
+      (unless leaf
+	(insert-block-unconditional-jump form-block exit-block))
+      (make-new-ssa-block lambda-ssa))))
 
-;;; FIXME, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
+;;; fixme, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
 ;;; currently macroexpanding BLOCK to TAGBODY doesn't work for (return-from FUN (values 1 2))
 ;; simple fix is to macroexpand with MULTIPLE-VALUE-LIST ??
 
@@ -887,7 +933,6 @@
 	  (progn
 	    (print-debug "Fixing block jump, emiting SSA-GO for block " (ssa-block-index from-block))
 	    (emit-ir (make-ssa-go :label label) from-block))))))
-
 
 (defun lambda-ssa-fix-ir-indexes (lambda-ssa)
   (error-if-touch-ir)
