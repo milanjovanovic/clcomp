@@ -151,10 +151,10 @@
       (make-symbol (concatenate 'string (string-upcase str) "-" (write-to-string *ssa-symbol-counter*)))
     (incf *ssa-symbol-counter*)))
 
-(defun generate-label-symbol ()
-  (prog1
-      (make-symbol (concatenate 'string "REPLACE-LABEL-" (write-to-string *ssa-symbol-counter*)))
-    (incf *ssa-symbol-counter*)))
+(defun generate-label-for-block-if-needed (sblock str)
+  (if (ssa-block-label sblock)
+      nil
+      (generate-label-for-string str)))
 
 (defparameter *ssa-block-counter* 0)
 (defun make-new-ssa-block (lambda-ssa)
@@ -364,9 +364,12 @@
 	(push (make-slabels) (ssa-env-labels ssa-env)))))
 
 (defun label-ssa-block (block label &optional (emit t))
+  (when (ssa-block-label block)
+    (error "We already have label"))
   (when emit
     (emit-ir-first (make-ssa-label :label label) block))
   (setf (ssa-block-label block) label))
+
 
 (defun ssa-add-block-label (lambda-ssa block label label-gen)
   (let* ((env (lambda-ssa-env lambda-ssa))
@@ -528,14 +531,16 @@
     (unless leaf
       (ssa-add-block lambda-ssa next-block))
     (insert-block-conditional-jump block true-block)
-    (let ((true-block-label (generate-label-for-string "TBLOCK"))
-	  (false-block-label (generate-label-for-string "FBLOCK")))
-      (label-ssa-block true-block true-block-label)
-      (label-ssa-block false-block false-block-label)
+    (let ((true-block-label (generate-label-for-block-if-needed true-block "TBLOCK"))
+	  (false-block-label (generate-label-for-block-if-needed false-block "FBLOCK")))
+      (when true-block-label
+	(label-ssa-block true-block true-block-label))
+      (when false-block-label
+	(label-ssa-block false-block false-block-label))
       (emit-ir (make-ssa-if
 		:test test-place
 		:true-block (ssa-block-index true-block)
-		:true-block-label true-block-label
+		:true-block-label (ssa-block-label true-block)
 		;; :false-block-label false-block-label
 		;; because false block is always next in order so it's always SUCC 
 		:false-block-label nil)
@@ -713,7 +718,7 @@
 	    (when (null (ssa-block-uncond-jump current-block))
 	      (ssa-connect-blocks current-block lblock))
 	    ;; we are inserting SSA-LABEL with SSA-ADD-BLOCK-LABEL
-	    ;; (emit-ir (make-ssa-label :label (label-node-label form-node))
+	    ;; (emit-ir (make-ssa-label :label (label-node-label form-node)) ;; don't use MAKE-SSA-LABEL directly
 	    ;; 	  lblock)
 	    (setf current-block lblock))
 	  (setf current-block (emit-ssa form-node lambda-ssa nil nil current-block)))
