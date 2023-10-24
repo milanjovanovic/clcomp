@@ -39,7 +39,7 @@
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
 (defstruct slabels alist)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa blocks asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
+(defstruct lambda-ssa blocks (delayed-blocks (make-hash-table)) asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
 	   (env (make-ssa-env)) fixups sub-lambdas
 	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
 	   (redundant-phis (make-hash-table :test #'equalp)))
@@ -152,8 +152,7 @@
     (incf *ssa-symbol-counter*)))
 
 (defun generate-label-for-block-if-needed (sblock str)
-  (if (ssa-block-label sblock)
-      nil
+  (or (ssa-block-label sblock)
       (generate-label-for-string str)))
 
 (defparameter *ssa-block-counter* 0)
@@ -188,20 +187,6 @@
     (dotimes (i n)
       (push (make-return-value-place :index i) rets))
     (reverse rets)))
-
-(defun move-to-place (to from block)
-  (typecase to
-    (mvb-place
-     (typecase from
-       (mvb-place
-	;; throw error for now, in this case (if this can actually apear - do nothing)
-	(error "mvb-place to mvb-place"))
-       (otherwise
-	(emit-ir (make-ssa-load :to (first (mvb-place-var-places to)) :from from) block))))
-    (otherwise
-     (typecase from
-       (mvb-place (error "mvb-place to other place, should now happen ?"))
-       (otherwise (emit-ir (make-ssa-load :to to :from from) block))))))
 
 (defun lambda-add-fixup (fixup lambda-ssa)
   (push fixup (lambda-ssa-fixups lambda-ssa)))
@@ -325,6 +310,9 @@
       (push block (cdr (last (lambda-ssa-blocks lambda-ssa))))
       (push block (lambda-ssa-blocks lambda-ssa))))
 
+(defun ssa-add-delayed-block (lambda-ssa block)
+  (setf (gethash (ssa-block-index block) (lambda-ssa-delayed-blocks lambda-ssa)) block))
+
 (defun ssa-connect-blocks (b1 b2)
   (if (ssa-block-succ b1)
       (error "Block already have successor !")
@@ -391,12 +379,13 @@
 (defun ssa-add-exit-block-for-block/return-label (lambda-ssa
 						  exit-block
 						  block/return-label
-						  block/return-label-gen)
+						  block/return-label-gen
+						  place)
   (declare (optimize (debug 3) (speed 0)))
   (let* ((env (lambda-ssa-env lambda-ssa))
 	 (block/return-labels (first (ssa-env-blocks env))))
     (label-ssa-block exit-block block/return-label-gen)
-    (push (list block/return-label (ssa-block-index exit-block) block/return-label-gen)
+    (push (list block/return-label (ssa-block-index exit-block) block/return-label-gen place)
 	  (slabels-alist block/return-labels))))
 
 (defun ssa-get-exit-block-for-block/return-label (lambda-ssa label)
@@ -409,6 +398,9 @@
 
 (defun ssa-find-block-by-index (lambda-ssa index)
   (gethash index (lambda-ssa-blocks-index lambda-ssa)))
+
+(defun ssa-find-delayed-block-by-index (lambda-ssa index)
+  (gethash index (lambda-ssa-delayed-blocks lambda-ssa)))
 
 (defun blocks-have-same-index (b1 b2)
   (= (ssa-block-index b1)
@@ -531,8 +523,10 @@
     (unless leaf
       (ssa-add-block lambda-ssa next-block))
     (insert-block-conditional-jump block true-block)
-    (let ((true-block-label (generate-label-for-block-if-needed true-block "TBLOCK"))
-	  (false-block-label (generate-label-for-block-if-needed false-block "FBLOCK")))
+    (let ((true-block-label (unless (ssa-block-label true-block)
+			      (generate-label-for-string "TBLOCK")))
+	  (false-block-label (unless (ssa-block-label false-block)
+			       (generate-label-for-string "FBLOCK"))))
       (when true-block-label
 	(label-ssa-block true-block true-block-label))
       (when false-block-label
@@ -541,6 +535,7 @@
 		:test test-place
 		:true-block (ssa-block-index true-block)
 		:true-block-label (ssa-block-label true-block)
+		;; FIXME, sometimes we do want to label block ?? (in a case of BLOCK/RETURN-FROM) ?
 		;; :false-block-label false-block-label
 		;; because false block is always next in order so it's always SUCC 
 		:false-block-label nil)
@@ -746,6 +741,7 @@
     (make-new-ssa-block lambda-ssa)))
 
 (defun emit-setq-node-ssa (node lambda-ssa leaf place block)
+  (declare (optimize debug))
   (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
 					   lambda-ssa leaf
 					   (make-var-place
@@ -847,48 +843,42 @@
   block)
 
 (defun emit-block-node-ssa (node lambda-ssa leaf place block)
-  ;; make new block with label of block name
-  ;; return-from will jump to that block
-  ;; if there is place then we will emit set ir at the begining of the new block
-  ;; if it's leaf then we will emit set to retun position at the begining of the new block
-  ;;
   (declare (optimize debug))
   (let* ((exit-block (make-new-ssa-block lambda-ssa))
 	 (block-name (clcomp::block-node-name node))
 	 (block-form (clcomp::block-node-form node))
 	 (block-name-gen (generate-label-for-string (symbol-name block-name))))
-    (ssa-add-block lambda-ssa exit-block)
+    (ssa-add-delayed-block lambda-ssa exit-block)
     (push-labels-env lambda-ssa :block-ret t)
-    (ssa-add-exit-block-for-block/return-label lambda-ssa exit-block block-name block-name-gen)
+    (ssa-add-exit-block-for-block/return-label lambda-ssa exit-block block-name block-name-gen place)
     (let ((current-block (emit-ssa block-form lambda-ssa leaf place block)))
       ;; FIXME, at this point we need to decide do we connect CURRENT-BLOCK to EXIT-BLOCK
       ;; check if CURRENT-BLOCK have UNCOND-JUMP
-      (break)
-      (when current-block
-	(ssa-maybe-connect-blocks current-block exit-block))
+      (when (and current-block
+		 (not leaf))
+	;; we need JMP here, can't just connect
+	;; FIXME, we should add exit-block here so it's just a successor to CURRENT-BLOCK
+	(ssa-maybe-connect-blocks current-block exit-block)
+	(ssa-add-block lambda-ssa exit-block))
       (pop-labels-env lambda-ssa :block-ret t)
       exit-block)))
 
 (defun emit-return-from-node-ssa (node lambda-ssa leaf place block)
-  ;; return-from is just a JUMP instruction to new block (block name LABEL)
-  ;; if there is place we need to emit set form in exit block
   (declare (optimize debug))
   (let* ((return-from-label (clcomp::return-from-node-name node))
 	 (bl (ssa-get-exit-block-for-block/return-label lambda-ssa return-from-label))
-	 (exit-block (ssa-find-block-by-index lambda-ssa (first bl)))
-	 (label-gen (second bl)))
+	 (exit-block (ssa-find-delayed-block-by-index lambda-ssa (first bl)))
+	 (label-gen (second bl))
+	 (block-place (third bl)))
     (declare (ignore label-gen))
-    (let ((form-block (emit-ssa (clcomp::return-from-node-form node) lambda-ssa leaf place block)))
+    (let ((form-block (emit-ssa (clcomp::return-from-node-form node)
+				lambda-ssa leaf block-place
+				block)))
       (unless leaf
+	;; maybe this is SUCCESSOR but we will fix this later
 	(insert-block-unconditional-jump form-block exit-block))
       (make-new-ssa-block lambda-ssa))))
 
-;;; fixme, don't macroexpand BLOCK to TAGBODY, implement BLOCK directly in IR
-;;; currently macroexpanding BLOCK to TAGBODY doesn't work for (return-from FUN (values 1 2))
-;; simple fix is to macroexpand with MULTIPLE-VALUE-LIST ??
-
-;;; FIXME, VALUES compilation: if VALUES is at FUNCTION return position then we need to use known registers/stack positions
-;;; if other cases we can compile VALUES as multiple LET bindings
 (defun emit-ssa (node lambda-ssa leaf place block)
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
@@ -994,7 +984,8 @@
 ;; 	  (push block-index (ssa-block-predecessors sblock)))))))
 
 (defun ssa-write-variable (place block env)
-  (declare (ignore env))
+  (declare (ignore env)
+	   (optimize debug))
   (let ((vplace (generate-virtual-place "V-")))
     (set-block-def block (named-place-name place) vplace)))
 
@@ -1066,7 +1057,13 @@
   (or (get-block-def block (named-place-name place)) 
       (read-variable-recursive place block lambda-ssa)))
 
+;;; FIXME, recursive write/read issue
+;; (test-ssa '(lambda (a)
+;; 		 (let ((b (block foo
+;; 			    (return-from foo (setf b 1)))))
+;; 		   b)))
 (defun transform-write (place block lambda-ssa)
+  (declare (optimize debug))
   (typecase place
     (named-place
      (ssa-write-variable place block lambda-ssa))
