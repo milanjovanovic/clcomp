@@ -54,7 +54,9 @@
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
 
-(defstruct (ssa-go (:include ssa-form)) label)
+(defstruct (ssa-jump (:include ssa-form)) label)
+(defstruct (ssa-go (:include ssa-jump)))
+(defstruct (ssa-non-local-go (:include ssa-jump)))
 (defstruct (ssa-label (:include ssa-form)) label)
 
 ;;; Do we need SSA-VALUE ??
@@ -808,15 +810,17 @@
   (let ((fixup (rip-relative-node-to-fixup node)))
     (typecase node
       (clcomp::load-time-value-node
-       (add-sub-lambda lambda-ssa (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
+       (add-sub-lambda lambda-ssa
+		       (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
       (clcomp::lambda-node
-       (add-sub-lambda lambda-ssa (lambda-construct-ssa node) fixup)))
+       (add-sub-lambda lambda-ssa
+		       (lambda-construct-ssa node (lambda-ssa-env lambda-ssa)) fixup)))
     (lambda-add-fixup fixup lambda-ssa)
     (if place
 	(emit-ir (make-ssa-load :to place :from fixup) block)
 	(if leaf
 	    (emit-single-return-sequence fixup block)
-	    ;;; FIXME, we can omit SSA-VALUE node here ???
+	    ;; FIXME, we can omit SSA-VALUE node here ???
 	    (emit-ir (make-ssa-value :value fixup) block)))
     block))
 
@@ -1541,14 +1545,15 @@
 
 ;;; FIXME, insert (GO TAG) at the end of instruction list in blocks that have UNCOND-JUMP
 ;;; FIXME, in SSA-IF form our JUMP is econded as INDEX, replace INDEX with BLOCK LABEL
-(defun lambda-construct-ssa (lambda-node)
+(defun lambda-construct-ssa (lambda-node &optional ssa-env)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
 	 (*ssa-symbol-counter* 0)
 	 (*error-on-ir-touch* nil)
 	 (*error-on-ssa-touch* t)
-	 (lambda-ssa (make-lambda-ssa))
+	 (lambda-ssa (make-lambda-ssa :env (or ssa-env
+					       (make-ssa-env))))
 	 (entry-block (make-new-ssa-block lambda-ssa)))
     (ssa-add-block lambda-ssa entry-block)
     (emit-ir (make-lambda-entry) entry-block)
@@ -2778,6 +2783,17 @@
 		      bla
 		      (when a
 			(go exit))))))
+
+;;; UNCOND-JUMP is not translated to SUCC for next block
+;;; should it be translated ??
+#+nil
+(test-ssa '(lambda (a)
+		 (multiple-value-bind (x y)
+		     (block foo
+		       (when a
+			 (return-from foo (values 1 2)))
+		       (values 3 4))
+		   (list x y))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
