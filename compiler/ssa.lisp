@@ -1080,9 +1080,11 @@
   (let ((ssa-ir nil))
     (dolist (ir (ssa-block-ir b))
       (let ((irssa (etypecase ir
-		     (ssa-load (make-ssa-load :index (ssa-load-index ir)
-					      :to (transform-write (ssa-load-to ir) b lambda-ssa)
-					      :from (transform-read (ssa-load-from ir) b lambda-ssa)))
+		     ;; with every IR we first need to transform read place
+		     (ssa-load (let ((read (transform-read (ssa-load-from ir) b lambda-ssa) ))
+				 (make-ssa-load :index (ssa-load-index ir)
+						:to (transform-write (ssa-load-to ir) b lambda-ssa)
+						:from read)))
 		     (ssa-value (make-ssa-value :index (ssa-value-index ir)
 						:value (transform-read (ssa-value-value ir) b lambda-ssa)))
 		     (ssa-if (make-ssa-if :index (ssa-if-index ir)
@@ -1095,15 +1097,16 @@
 				    :places (mapcar (lambda (p)
 						      (transform-write p b lambda-ssa))
 						    (ssa-mvb-bind-places ir))))
-		     (ssa-vop (make-ssa-vop
-			       :index (ssa-vop-index ir)
-			       :name (ssa-vop-name ir)
-			       :args (mapcar (lambda (p)
-					       (transform-read p b lambda-ssa))
-					     (ssa-vop-args ir))
-			       :return-values (mapcar (lambda (p)
-							(transform-write p b lambda-ssa))
-						      (ssa-vop-return-values ir))))
+		     (ssa-vop (let ((args (mapcar (lambda (p)
+						    (transform-read p b lambda-ssa))
+						  (ssa-vop-args ir))))
+				(make-ssa-vop
+				 :index (ssa-vop-index ir)
+				 :name (ssa-vop-name ir)
+				 :args args
+				 :return-values (mapcar (lambda (p)
+							  (transform-write p b lambda-ssa))
+							(ssa-vop-return-values ir)))))
 		     (t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
@@ -2752,11 +2755,17 @@
 		    (go a2))
 	      z)) "default")
 
-;;; this one throws error
-#+nil
-(make-lssa '(lambda ()
-		  (tagbody foo
-		     (go foo))))
+
+;;; this doesn't work
+#+nil(test-ssa '(lambda (a)
+		 (block foo
+		   (tagbody
+		      (go bla)
+		      exit
+		      (return-from foo 1)
+		      bla
+		      (when a
+			(go exit))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
