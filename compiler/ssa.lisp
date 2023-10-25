@@ -37,7 +37,7 @@
 (defstruct (compile-function-fixup (:include fixup)) function)
 (defstruct (load-time-eval-fixup (:include fixup)))
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
-(defstruct slabels alist)
+(defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
 (defstruct lambda-ssa blocks (delayed-blocks (make-hash-table)) asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
 	   (env (make-ssa-env)) fixups sub-lambdas
@@ -45,7 +45,7 @@
 	   (redundant-phis (make-hash-table :test #'equalp)))
 
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
-  sealed processed label defined phis live-in virtuals live-gen live-kill live-out)
+  sealed processed label defined phis live-in virtuals live-gen live-kill live-out exit)
 
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
@@ -60,8 +60,9 @@
 ;;; Do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
 
-(defstruct (ssa-unknown-return (:include ssa-form)))
-(defstruct (ssa-multiple-return (:include ssa-form)) count)
+(defstruct (ssa-return (:include ssa-form)))
+(defstruct (ssa-unknown-return (:include ssa-return)))
+(defstruct (ssa-multiple-return (:include ssa-return)) count)
 
 ;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
 (defstruct (ssa-vop (:include ssa-form-rw)) name return-values args )
@@ -339,17 +340,17 @@
 	  (error "Block already have GO instruction"))
 	(maybe-insert-or-fix-jump-instr block to-block "LABEL"))))
 
-(defun pop-labels-env (lambda-ssa &key block-ret)
+(defun pop-lexenv (lambda-ssa &key block-ret)
   (let ((ssa-env (lambda-ssa-env lambda-ssa)))
     (if block-ret
 	(pop (ssa-env-blocks ssa-env))
 	(pop (ssa-env-labels ssa-env)))))
 
-(defun push-labels-env (lambda-ssa &key block-ret)
+(defun push-lexenv (lambda-ssa &key block-ret)
   (let ((ssa-env (lambda-ssa-env lambda-ssa)))
     (if block-ret
-	(push (make-slabels) (ssa-env-blocks ssa-env))
-	(push (make-slabels) (ssa-env-labels ssa-env)))))
+	(push (make-lexenv) (ssa-env-blocks ssa-env))
+	(push (make-lexenv) (ssa-env-labels ssa-env)))))
 
 (defun label-ssa-block (block label &optional (emit t))
   (when (ssa-block-label block)
@@ -361,16 +362,16 @@
 
 (defun ssa-add-block-label (lambda-ssa block label label-gen)
   (let* ((env (lambda-ssa-env lambda-ssa))
-	 (slabels (first (ssa-env-labels env))))
+	 (lexenv (first (ssa-env-labels env))))
     (label-ssa-block block label-gen)
     (push (list label (ssa-block-index block) label-gen)
-	  (slabels-alist slabels))))
+	  (lexenv-scope lexenv))))
 
 (defun ssa-find-block-index-by-label (lambda-ssa label)
   (let* ((env (lambda-ssa-env lambda-ssa))
-	 (slabels (ssa-env-labels env)))
-    (dolist (slabel slabels)
-      (let ((lb (assoc label (slabels-alist slabel))))
+	 (lexenvs (ssa-env-labels env)))
+    (dolist (lexenv lexenvs)
+      (let ((lb (assoc label (lexenv-scope lexenv))))
 	(when lb
 	  (return-from ssa-find-block-index-by-label (second lb)))))))
 
@@ -380,21 +381,28 @@
 						  exit-block
 						  block/return-label
 						  block/return-label-gen
-						  place)
+						  place
+						  leaf)
   (declare (optimize (debug 3) (speed 0)))
   (let* ((env (lambda-ssa-env lambda-ssa))
-	 (block/return-labels (first (ssa-env-blocks env))))
+	 (blocks-lexenv (first (ssa-env-blocks env))))
     (label-ssa-block exit-block block/return-label-gen)
-    (push (list block/return-label (ssa-block-index exit-block) block/return-label-gen place)
-	  (slabels-alist block/return-labels))))
+    (when (lexenv-scope blocks-lexenv)
+      (error "We should not have already set lexenv here"))
+    (setf (lexenv-scope blocks-lexenv)
+	  (list :block-label block/return-label
+		:block-index (ssa-block-index exit-block)
+		:block-gen-label block/return-label-gen
+		:place place
+		:is-leaf leaf))))
 
-(defun ssa-get-exit-block-for-block/return-label (lambda-ssa label)
+(defun ssa-get-lexenv-for-block-label (lambda-ssa label)
   (let* ((env (lambda-ssa-env lambda-ssa))
-	 (slabels (ssa-env-blocks env)))
-    (dolist (slabel slabels)
-      (let ((lb (assoc label (slabels-alist slabel))))
-	(when lb
-	  (return-from ssa-get-exit-block-for-block/return-label (cdr lb)))))))
+	 (lexenvs (ssa-env-blocks env)))
+    (dolist (lexenv lexenvs)
+      (when (eq label
+		(getf (lexenv-scope lexenv) :block-label))
+	(return-from ssa-get-lexenv-for-block-label (lexenv-scope lexenv))))))
 
 (defun ssa-find-block-by-index (lambda-ssa index)
   (gethash index (lambda-ssa-blocks-index lambda-ssa)))
@@ -413,8 +421,11 @@
 (defparameter *ir-index-counter* 0)
 (defun emit-ir (ssa block)
   (error-if-touch-ir)
-  (if (and (ssa-block-uncond-jump block)
-	   (ssa-go-p (first (ssa-block-ir block))))
+  (when (ssa-block-exit block)
+    (error "Emiting instructions to exited block"))
+  (if (or (and (ssa-block-uncond-jump block)
+	       (ssa-go-p (first (ssa-block-ir block))))
+	  (ssa-block-exit block))
       (print-debug "Skipping dead code " ssa)
       (progn
 	(if (ssa-form-p ssa)
@@ -429,7 +440,9 @@
 		(setf (ssa-block-ir-last-cons block) new)))
 	    (progn
 	      (setf (ssa-block-ir block) (cons ssa nil))
-	      (setf (ssa-block-ir-last-cons block) (ssa-block-ir block)))))))
+	      (setf (ssa-block-ir-last-cons block) (ssa-block-ir block))))))
+  (when (typep ssa 'ssa-return)
+    (setf (ssa-block-exit block) t)))
 
 (defun emit-ir-first (ssa block)
   (error-if-touch-ir)
@@ -692,7 +705,7 @@
 ;;; also wrong in a context of dynamic extent, check CLHS for TAGBODOY
 (defun emit-tagbody-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (push-labels-env lambda-ssa)
+  (push-lexenv lambda-ssa)
   (let ((labels-blocks (make-hash-table))
 	(current-block block))
     (dolist (node (clcomp::tagbody-node-forms node))
@@ -718,7 +731,7 @@
 	    (setf current-block lblock))
 	  (setf current-block (emit-ssa form-node lambda-ssa nil nil current-block)))
       (setf block current-block))
-    (pop-labels-env lambda-ssa)
+    (pop-lexenv lambda-ssa)
     (if place
 	(emit-ir (make-ssa-load :to place :from (make-immediate-constant :constant clcomp::*nil*)) block)
 	(when leaf
@@ -849,32 +862,31 @@
 	 (block-form (clcomp::block-node-form node))
 	 (block-name-gen (generate-label-for-string (symbol-name block-name))))
     (ssa-add-delayed-block lambda-ssa exit-block)
-    (push-labels-env lambda-ssa :block-ret t)
-    (ssa-add-exit-block-for-block/return-label lambda-ssa exit-block block-name block-name-gen place)
+    (push-lexenv lambda-ssa :block-ret t)
+    (ssa-add-exit-block-for-block/return-label lambda-ssa exit-block block-name block-name-gen place leaf)
     (let ((current-block (emit-ssa block-form lambda-ssa leaf place block)))
-      ;; FIXME, at this point we need to decide do we connect CURRENT-BLOCK to EXIT-BLOCK
-      ;; check if CURRENT-BLOCK have UNCOND-JUMP
       (when (and current-block
 		 (not leaf))
 	;; we need JMP here, can't just connect
 	;; FIXME, we should add exit-block here so it's just a successor to CURRENT-BLOCK
 	(ssa-maybe-connect-blocks current-block exit-block)
 	(ssa-add-block lambda-ssa exit-block))
-      (pop-labels-env lambda-ssa :block-ret t)
+      (pop-lexenv lambda-ssa :block-ret t)
       exit-block)))
 
 (defun emit-return-from-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize debug))
   (let* ((return-from-label (clcomp::return-from-node-name node))
-	 (bl (ssa-get-exit-block-for-block/return-label lambda-ssa return-from-label))
-	 (exit-block (ssa-find-delayed-block-by-index lambda-ssa (first bl)))
-	 (label-gen (second bl))
-	 (block-place (third bl)))
+	 (scope (ssa-get-lexenv-for-block-label lambda-ssa return-from-label))
+	 (exit-block (ssa-find-delayed-block-by-index lambda-ssa (getf scope :block-index)))
+	 (label-gen (getf scope :block-gen-label))
+	 (block-place (getf scope :place))
+	 (block-leaf (getf scope :is-leaf)))
     (declare (ignore label-gen))
     (let ((form-block (emit-ssa (clcomp::return-from-node-form node)
-				lambda-ssa leaf block-place
+				lambda-ssa block-leaf block-place
 				block)))
-      (unless leaf
+      (unless block-leaf
 	;; maybe this is SUCCESSOR but we will fix this later
 	(insert-block-unconditional-jump form-block exit-block))
       (make-new-ssa-block lambda-ssa))))
