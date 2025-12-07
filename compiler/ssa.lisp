@@ -39,7 +39,8 @@
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa blocks (delayed-blocks (make-hash-table)) asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
+(defstruct lambda-ssa blocks (delayed-blocks (make-hash-table))
+  asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
 	   (env (make-ssa-env)) fixups sub-lambdas
 	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
 	   (redundant-phis (make-hash-table :test #'equalp)))
@@ -83,6 +84,9 @@
 (defparameter *break-block* -1)
 
 
+(eval-when (:load-toplevel :compile-toplevel :execute)
+  (defparameter *fun-optimize-level* '(declare (optimize debug))))
+
 ;;; we can have more then one level of reduced value
 ;;; try to get reduced value of already reduced one until we get NIL
 (defun get-phi-place-reduced-value (place &optional last)
@@ -125,9 +129,19 @@
     (error "Too early to touch SSA")))
 
 (defparameter *debug-stream* t)
+
+(defparameter *print-debug* nil)
+
 (defun print-debug (&rest s)
   (format  *debug-stream* (apply #'concatenate 'string (mapcar #'write-to-string s)))
   (princ #\Newline *debug-stream*))
+
+(defmacro debug-print (&rest rest)
+  (let ((ev (gensym)))
+    `(let((,ev (list ,@(mapcan (lambda (x) (list `',x x)) rest))))
+       (when *print-debug*
+	   (print ,ev))
+       (car (last ,ev)))))
 
 
 (defparameter *gen-symbol-counter* 0)
@@ -422,6 +436,7 @@
 
 (defparameter *ir-index-counter* 0)
 (defun emit-ir (ssa block)
+  #.*fun-optimize-level*
   (error-if-touch-ir)
   (when (ssa-block-exit block)
     (error "Emiting instructions to exited block"))
@@ -945,11 +960,13 @@
 	    (print-debug "Fixing block jump, emiting SSA-GO for block " (ssa-block-index from-block))
 	    (emit-ir (make-ssa-go :label label) from-block))))))
 
-(defun lambda-ssa-fix-ir-indexes (lambda-ssa)
-  (error-if-touch-ir)
+(defun lambda-ssa-fix-instruction-indexes (lambda-ssa &optional (what #'ssa-block-ir))
+  #.*fun-optimize-level*
+  (when (eq what #'ssa-block-ir)
+    (error-if-touch-ir))
   (let ((ir-index 0))
     (dolist (b (lambda-ssa-blocks lambda-ssa))
-      (dolist (ir (ssa-block-ir b))
+      (dolist (ir (funcall what b))
 	(setf (ssa-form-index ir) ir-index)
 	(incf ir-index *instr-offset*))))
   lambda-ssa)
@@ -1546,10 +1563,11 @@
 ;;; FIXME, insert (GO TAG) at the end of instruction list in blocks that have UNCOND-JUMP
 ;;; FIXME, in SSA-IF form our JUMP is econded as INDEX, replace INDEX with BLOCK LABEL
 (defun lambda-construct-ssa (lambda-node &optional ssa-env)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  #.*fun-optimize-level*
   (let* ((*ssa-block-counter* 0)
 	 (*ir-index-counter* 0)
 	 (*ssa-symbol-counter* 0)
+	 (*phi-place-symbol-counter* 0)
 	 (*error-on-ir-touch* nil)
 	 (*error-on-ssa-touch* t)
 	 (lambda-ssa (make-lambda-ssa :env (or ssa-env
@@ -1566,7 +1584,7 @@
       ;; we've added LABEL instruction so now we don't remove blocks
       (remove-redundant-blocks lambda-ssa))
     (check-predecessors lambda-ssa)
-    (lambda-ssa-fix-ir-indexes lambda-ssa)
+    (lambda-ssa-fix-instruction-indexes lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (maybe-fix-uncond-jumps-to-succ lambda-ssa)
     (setf *error-on-ssa-touch* nil)
@@ -1578,6 +1596,7 @@
       (optimize-redundant-phis lambda-ssa))
     (fill-blocks-ordering lambda-ssa)
     (compute-block-order lambda-ssa)
+    (lambda-ssa-fix-instruction-indexes lambda-ssa #'ssa-block-ssa)
     lambda-ssa))
 
 
@@ -1709,6 +1728,22 @@
 	(clcomp::make-reg-storage :register register)
 	(clcomp::make-stack-storage :offset stack))))
 
+;; FIXME, INTERVAL-END is wrong for this interval, why we have two ranges ?
+;; (INTERVAL
+;;     :NAME #:V-11
+;;     :NUMBER 12
+;;     :RANGES (#S(RANGE
+;;                 :START 4
+;;                 :END 46
+;;                 :USE-POSITIONS (#S(USE-WRITE-POS :INDEX 4 :NEED-REG NIL)
+;;                                 #S(USE-READ-POS :INDEX 8 :NEED-REG NIL)
+;;                                 #S(USE-READ-POS :INDEX 24 :NEED-REG NIL)
+;;                                 #S(USE-READ-POS :INDEX 36 :NEED-REG NIL)))
+;;              #S(RANGE :START 34 :END 36 :USE-POSITIONS NIL))
+;;     :REGISTER :R12
+;;     :STACK NIL
+;;     :CHILD NIL
+;;     :PARENT NIL)
 (defun interval-end (interval)
   (range-end (car (last (interval-ranges interval)))))
 
@@ -1833,6 +1868,7 @@
 (defun remove-from-live (live place)
   (remove place live :test #'equalp))
 
+;;; FIXME, not sure about this
 (defun live-add-phis-operands (live phis block lambda-ssa)
   (let ((block-virtuals (ssa-block-virtuals block))
 	(block-defined (ssa-block-defined block)))
@@ -1881,24 +1917,32 @@
 	    (max e1 e2)))))
 
 (defun add-range (intervals name start end)
+  #.*fun-optimize-level*
   (let ((interval (get-interval intervals name)))
     (unless interval
       (setf interval (make-interval :name name))
       (add-interval intervals interval))
-    (let ((active-range (first (interval-ranges interval))))
-      (let ((merged-ranges (and active-range
-				(intervals-merge start end
-						 (range-start active-range)
-						 (range-end active-range)))))
-	(if merged-ranges
-	    (progn
-	      (setf (range-start active-range) (first merged-ranges))
-	      (setf (range-end active-range) (second merged-ranges)))
-	    
-	    (push (make-range :start start
-			      :end end)
-		  (interval-ranges interval))))
-      interval)))
+    (loop
+      with merged
+      do
+	 (let ((active-range (first (interval-ranges interval))))
+	   (let ((merged-ranges (and active-range
+				     (intervals-merge start end
+						      (range-start active-range)
+						      (range-end active-range)))))
+	     (if merged-ranges
+		 (progn
+		   (pop (interval-ranges interval))
+		   (setf start (first merged-ranges)
+			 end (second merged-ranges)))
+		 (progn
+		   (unless merged
+		     (push (make-range :start start
+				       :end end)
+			   (interval-ranges interval)))
+		   (return))))))
+    interval))
+
 
 (defun shorten-current-range (intervals place start)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
@@ -1965,14 +2009,11 @@
 		(append
 		 (subseq interval-ranges 0 range-position)
 		 (list first-range)))
-	  (setf (interval-ranges interval) nil)
-	  ;; (setf interval nil)
-	  )
+	  (setf (interval-ranges interval) nil))
       (values interval
 	      (make-interval :name interval-name
 			     :ranges (cons second-range
 					   (cdr rest-ranges)))))))
-
 
 (defun try-intervals-merge (intervals)
   (maphash (lambda (k interval)
@@ -2002,16 +2043,10 @@
 	 (return (max (range-start first-range )
 		      (range-start first-c-range)))))))
 
+;;; FIXME / QUESTIONABLE
 (defun intervals-first-intersection (i1 i2)
   (ranges-intersection (interval-ranges i1)
 		       (interval-ranges i2)))
-
-;;; FIXME, delete this, we don't need it
-;; (defun intervals-next-intersection (current-interval interval current-position)
-;;   (let* ((range-position (position current-position (interval-ranges current-interval) :key #'range-start))
-;; 	 (current-ranges (nthcdr range-position (interval-ranges current-interval)))
-;; 	 (ranges (interval-ranges interval)))
-;;     (ranges-intersection current-ranges ranges)))
 
 (defun interval-first-range-after-index (interval index)
   (dolist (range (interval-ranges interval))
@@ -2046,7 +2081,7 @@
 ;;; FIXME, RANGE-END should be exclusive
 
 (defun build-intervals (lambda-ssa)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  #.*fun-optimize-level*
   (let ((intervals (make-intervals))
 	(use-positions (make-use-positions)))
     
@@ -2060,12 +2095,15 @@
 	    ;; TEST just to be sure that we are not processing PHI that are reduce to simple VALUE,
 	    ;; remove later
 	    (dolist (phi phis)
+	      (debug-print (ssa-block-index block) phi)
 	      (when (phi-p phi)
 		(let ((place (phi-place phi)))
 		  (when (and (phi-place-reduced place)
 			     (funcall (phi-place-reduced place)))
-		    (error "This should now happen, we are using PHI that is reduced to normal PLACE")))))
+		    (error "This should not happen, we are using PHI that is reduced to normal PLACE")))))
+	    ;; FIXME, check LIVE-ADD-PHIS-OPERANDS
 	    (setf live (live-add-phis-operands live phis block lambda-ssa))))
+
 
 	(when (ssa-block-first-instruction block)
 	  (let ((start (ssa-form-index (ssa-block-first-instruction block)))
@@ -2099,9 +2137,9 @@
 		(when reads
 		  (dolist (orig-read (if (listp reads) reads (list reads)))
 		    (let ((read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
-		     (add-range intervals (get-place-name read) start instr-index)
-		     (add-use-positions use-positions read (make-use-read-pos :index instr-index))
-		     (pushnew read live :test #'equalp))))))
+		      (add-range intervals (get-place-name read) start instr-index)
+		      (add-use-positions use-positions read (make-use-read-pos :index instr-index))
+		      (pushnew read live :test #'equalp))))))
 
 	    (dolist (phi (ssa-block-all-phis block))
 	      (when (phi-p phi)
@@ -2111,6 +2149,8 @@
 	    (when (ssa-block-is-header block)
 	      (let* ((end-block-index (lambda-ssa-find-greatest-end-block lambda-ssa (ssa-block-index block)))
 		     (end-block (ssa-find-block-by-index lambda-ssa end-block-index)))
+		(debug-print "HEADER" (ssa-block-index block) end-block-index)
+		(debug-print live)
 		(dolist (lplace live)
 		  (add-range intervals (get-place-name lplace) start (ssa-block-last-index end-block)))))))
 	(setf (ssa-block-live-in block) live)))
@@ -2331,17 +2371,9 @@
       (or parent
 	  (error "Can't find interval parent")))))
 
-;; (defun generate-split-move-for-child-interval (alloc parent child)
-;;   (let ((load (make-ssa-load :index (1+ (interval-start child))
-;; 			     :from  (make-interval-storage parent)
-;; 			     :to (make-interval-storage child))))
-;;     (let ((moves (alloc-split-moves alloc)))
-;;       (push load (gethash (ssa-form-index load) moves)))))
-
 (defun try-allocate-free-reg (current-interval current-position alloc)
   (declare (ignore current-position)
-	   (optimize (speed 0) (debug 3) (safety 3)))
-  ;; (print (list 'try-allocate-free-reg current-interval))
+	   (optimize (debug 3)))
   (let ((fup (make-positions)))
     (dolist (reg *preserved-regs*)
       (add-position fup most-positive-fixnum reg))
@@ -2354,8 +2386,6 @@
     (let* ((reg-pair (get-register-with-max-position fup))
 	   (reg (car reg-pair))
 	   (reg-pos (cdr reg-pair)))
-
-      ;; (print (list 'reg 'pos reg reg-pos))
       (cond ((zerop reg-pos)
 	     nil)
 	    ((< (interval-end current-interval) reg-pos)
@@ -2364,8 +2394,6 @@
 	    (t
 	     (multiple-value-bind (original-interval new-interval)
 		 (split-interval current-interval reg-pos)
-	       ;; (print (list 'try-allocate-free-reg 'splitint-interval current-interval) )
-	       ;; (print (list 'try-allocate-free-reg 'split-interval original-interval new-interval))
 	       (interval-add-child alloc original-interval new-interval)
 	       (setf (interval-register original-interval) reg)
 	       (alloc-add-active alloc original-interval)
@@ -2376,9 +2404,8 @@
 ;;; Currently we don't look if USE-POS needs register so we dont' split at those position
 ;;; FIXME, implement splitting at USE-POS that needs register (for VOP for example)
 (defun allocate-blocked-reg (current-interval alloc)
-  (declare (optimize (speed 0) (debug 3) (safety 3)))
-  ;; (print (list 'allocate-blocked-reg current-interval))
-
+  (declare (optimize  (debug 3)))
+  
   (let ((positions (make-positions))
 	(current-index (interval-start current-interval))
 	(current-first-usage (interval-get-next-use current-interval)))
@@ -2398,8 +2425,8 @@
     (let* ((reg-pair (get-register-with-max-position positions))
 	   (reg (car reg-pair))
 	   (reg-pos (cdr reg-pair)))
-      ;; (print (list 'reg 'pos reg reg-pos))
-
+      (debug-print reg-pair)
+      
       (cond ((> current-first-usage reg-pos)
 	     ;; (multiple-value-bind (original-interval new-interval)
 	     ;; 	 ;; FIXME, currently we don't split at first USE-POINT that need register
@@ -2440,6 +2467,7 @@
 
 
 (defun linear-scan (sorted-intervals)
+  (declare (optimize debug))
   (let ((alloc (make-alloc :unhandled sorted-intervals :stack-index -1)))
     (tagbody
      START
@@ -2450,7 +2478,6 @@
 	     (let ((position (interval-start current-interval)))
 	
 	       (dolist (act-interval (alloc-active alloc))
-		 
 		 (cond ((< (interval-end act-interval) position)
 			(alloc-remove-active alloc act-interval)
 			(alloc-add-handled alloc act-interval))
@@ -2471,7 +2498,8 @@
 		 (unless register
 		   (allocate-blocked-reg current-interval alloc))))
 
-	     (go start)))))
+	     (go START)))))
+    
     (dolist (int (alloc-active alloc))
       (alloc-add-handled alloc int))
 
@@ -2590,6 +2618,7 @@
     (generate-graph lambda-ssa graph-name)))
 
 (defun test-ssa (exp &optional (graph-name "default"))
+  #.*fun-optimize-level*
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
 	 (_ (generate-graph lambda-ssa graph-name))
 	 (intervals (build-intervals lambda-ssa))
@@ -2906,6 +2935,8 @@
 (defun get-storage (alloc place index)
   (etypecase place
     (fixed-place (get-fixed-place-storage place))
+    (phi-place (let ((reduced (funcall (phi-place-reduced place))))
+		 (get-alloc-storage alloc (named-place-name (or reduced place)) index)))
     (virtual-place (get-alloc-storage alloc (named-place-name place) index))
     (immediate-constant (immediate-constant-constant place))
     ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
@@ -3078,13 +3109,17 @@
 ;;; FIXME, do we do register allocation for SUB-LAMBDAS ?
 ;;; FIXME, we do not translate SUB-LAMBDA's to ASM
 
+(defparameter *last-intervals* nil)
+(defparameter *last-alloc* nil)
+
 (defun clcomp-compile (exp &optional (graph-name "default"))
+  (declare (optimize debug))
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
 	 (_ (generate-graph lambda-ssa graph-name))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
-    (declare (ignore _))
-    (generate-graph lambda-ssa graph-name)
+    (setf *last-intervals* intervals)
+    (setf *last-alloc* alloc)
     (resolve-data-flow lambda-ssa alloc)
     (translate-to-asm lambda-ssa alloc)
     lambda-ssa))
@@ -3099,3 +3134,78 @@
 (defun optimize-loads (lambda-ssa)
   (dolist (sblock (lambda-ssa-blocks lambda-ssa))
     (optimize-block-loads sblock)))
+
+
+#|
+This is fist example we need to solve regarding PHI mergings
+(clcomp-compile '(lambda (a b)
+		       (if b
+			   (setf a 1)
+			   (setf a 2))
+		       a
+))
+
+
+Irreducible control flow example
+(clcomp-compile '(lambda (x)
+  (tagbody
+    start
+      (if (> x 0)
+          (progn
+            (setf x (- x 1))
+            (go mid))
+          (go end))
+
+    mid
+      (if (oddp x)
+          (progn
+            (setf x (+ x 2))
+            (go start))
+          (setf x (* x 2)))
+    
+    end
+      (print x))))
+
+|#
+
+
+
+
+;; 
+#+nil
+(test-ssa '(lambda  (x)
+	    (tagbody
+	     start
+	       (when (> x 0)
+		 (decf x)
+		 (go mid))
+	       (go end)
+
+	     mid
+	       (when (oddp x)
+		 (go start))
+	       (go end)
+
+	     end
+	       (prin 1))))
+
+#+nil
+(test-ssa '(lambda (x)
+	    (tagbody
+	     start
+	       (if (> x 0)
+		   (progn
+		     (setf x (- x 1))
+		     (go mid))
+		   (go end))
+
+	     mid
+	       (if (oddp x)
+		   (progn
+		     (setf x (+ x 2))
+		     (go start))
+		   (setf x (* x 2)))
+    
+	     end
+	       (print x))))
+
