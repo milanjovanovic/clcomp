@@ -73,6 +73,10 @@
 
 (defun format-defined-place (dplace)
   (format nil "~A : ~A" (car dplace) (clcomp.ssa::get-place-name (cdr dplace))))
+
+(defun format-place (place what)
+  (format nil "~A: ~A"  what (clcomp.ssa::get-place-name place)))
+
 (defun format-block (block)
   (let ((dplaces (clcomp.ssa::ssa-block-defined block))
 	(ir (clcomp.ssa::ssa-block-ssa block)))
@@ -88,9 +92,15 @@
 			(cl-who:htm
 			 (:tr (:td (:b (cl-who:str (cl-who:escape-string (format nil "HEADER ~A"
 										 (clcomp.ssa::ssa-block-is-header block)))))))))
-		      (:tr (:td 
+		      (:tr (:td
 			    (loop for place in dplaces
 				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-defined-place place))) (:br)))))
+		      (:tr (:td
+			    (loop for place in (clcomp.ssa::ssa-block-live-in block)
+				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-place place "live_in"))) (:br)))))
+		      (:tr (:td
+			    (loop for place in (clcomp.ssa::ssa-block-live-out block)
+				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-place place "live_out"))) (:br)))))
 		      (:tr (:td 
 			    (loop for phi in (clcomp.ssa::ssa-block-phis block)
 				  when (clcomp.ssa::phi-p (cdr phi))

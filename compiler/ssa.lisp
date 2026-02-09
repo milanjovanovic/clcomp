@@ -133,8 +133,9 @@
 (defparameter *print-debug* nil)
 
 (defun print-debug (&rest s)
-  (format  *debug-stream* (apply #'concatenate 'string (mapcar #'write-to-string s)))
-  (princ #\Newline *debug-stream*))
+  (when *print-debug*
+   (format  *debug-stream* (apply #'concatenate 'string (mapcar #'write-to-string s)))
+   (princ #\Newline *debug-stream*)))
 
 (defmacro debug-print (&rest rest)
   (let ((ev (gensym)))
@@ -210,6 +211,16 @@
 
 (defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
+
+(defun lambda-ssa-all-phis (lambda-ssa)
+  (declare (optimize debug))
+  (let (phis)
+    (dolist (b (lambda-ssa-blocks lambda-ssa))
+      (dolist (phi-cons (ssa-block-phis b))
+	(let ((phi (cdr phi-cons)))
+	  (unless (or (not (phi-p phi)) (get-phi-place-reduced-value (phi-place phi)))
+	    (push phi phis)))))
+    phis))
 
 ;;; FIXME, all end blocks are in one plist
 #+nil
@@ -2201,6 +2212,7 @@
 		     (setf operand-block (insert-block-between block operand-block)))
 		   )))))))
 
+
 (defun compute-local-live-sets (lambda-ssa)
   (dolist (block (lambda-ssa-blocks lambda-ssa))
     (dolist (sform (ssa-block-ssa block))
@@ -2208,48 +2220,182 @@
 	    (writes (ssa-place (ssa-form-write-place sform))))
 	(when reads
 	  ;; READS can be LIST in a case of SSA-VOP
-	  (dolist (read (if (listp reads) reads (list reads)))
+	  (dolist (read (if (listp reads)
+			    reads
+			    (list reads)))
 	    (when (and read
 		       (not (find read (ssa-block-live-kill block) :test #'equalp)))
 	      (pushnew read (ssa-block-live-gen block) :test #'equalp))))
 	(when writes
 	  ;; writes can be LIST in a case of SSA-MVB-BIND
-	  (dolist (write (if (listp writes) writes (list writes)))
-	    (pushnew write (ssa-block-live-kill block) :test #'equalp))))))
-  lambda-ssa)
+	  (dolist (write (if (listp writes)
+			     writes
+			     (list writes)))
+	    (pushnew write (ssa-block-live-kill block) :test #'equalp)))
+	;; PHIS
+	(dolist (phi-cons (ssa-block-phis block))
+	  (pushnew (car phi-cons) (ssa-block-live-kill block) :test #'equalp))))))
+
+;;; FIXME, INVESTIGATE WHAT IS THE DEAL WITH PHI-PLACE-REDUCED that return function when :reduced is nil
+(defun phi-places-from-block (tblock succ-block)
+  "Get only places that merges to this block PHI, place will be in succ-block live-gen"
+  (declare (optimize debug))
+  (let (res)
+    (dolist (pp (ssa-block-phis succ-block))
+      (let* ((phi (cdr pp)))
+	(when (phi-p phi)
+	  (let* ((pplace (phi-place phi))
+		 (reduced (get-phi-place-reduced-value pplace)))
+	    (unless reduced
+	      (dolist (virtual-place (phi-operands phi))
+		(when (find virtual-place (ssa-block-live-kill tblock) :test #'equal)
+		  (push virtual-place res))))))))
+    res))
+
+(defun filter-block-phis (places block)
+  "Filter PHI places that are defined in this block"
+  (declare (optimize debug))
+  (let (r)
+    (dolist (p places)
+      (if (phi-place-p p)
+	  (unless (assoc (get-place-name  p) (ssa-block-phis block))
+	    (push p r))
+	  (push p r)))
+    r))
+
+(defun is-place-phi-operand (place phis)
+  (dolist (phi phis)
+    (when (find place (phi-operands phi))
+      (return-from is-place-phi-operand t))))
+
+(defun get-block-phi-operands (b phis)
+  (let (places)
+    ;; in DEFINED field are all the SSA places this block uses
+    (dolist (p (ssa-block-defined b))
+      (let ((place (cdr p)))
+	(when (is-place-phi-operand place phis)
+	  (push place places))))
+    places))
 
 (defun compute-global-live-sets (lambda-ssa)
+  (declare (optimize debug))
   (let ((blocks (reverse (lambda-ssa-blocks lambda-ssa)))
-	(changed nil))
+	(changed nil)
+	(phis (lambda-ssa-all-phis lambda-ssa)))
     (tagbody
      start
        (setf changed nil)
        (dolist (block blocks)
 	 (let ((live-out nil))
 	   (dolist (sblock (ssa-block-successors block lambda-ssa))
-	     (setf live-out (union live-out (ssa-block-live-in sblock) :test #'equalp)))
+	     (setf live-out (union live-out
+				   (filter-block-phis (ssa-block-live-in sblock) sblock)
+				   :test #'equalp))
+	     (setf live-out (union live-out (phi-places-from-block block sblock))))
+	   (setf live-out (union live-out (get-block-phi-operands block phis)))
 	   (setf (ssa-block-live-out block) live-out)
 	   (let ((old-live-in (ssa-block-live-in block))
 		 (live-in (union (set-difference (ssa-block-live-out block)
 						 (ssa-block-live-kill block) :test #'equalp)
-				 (ssa-block-live-gen block) :test #'equalp)))
+				 (ssa-block-live-gen block)
+				 :test #'equalp)))
 	     (when (/= (length old-live-in)
 		       (length live-in))
 	       (setf changed t))
 	     (setf (ssa-block-live-in block) live-in))))
        (when changed
-	 (go start)))
-    lambda-ssa))
+	 (go start)))))
 
-;;; FIXME
-#+nil(defun resolve-data-flow (lambda-ssa)
-  (dolist (from (lambda-ssa-blocks lambda-ssa))
-    (let ((successors (ssa-block-successors block lambda-ssa))))))
+(defparameter *live-vars-tests* '(("simple-1" (LAMBDA (A B C)
+						(WHEN C
+						  (IF A
+						      (SETF B (+ 1 B))
+						      (SETF B (+ 2 B))))
+						B)
+				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-8 V-9))))
+				    (2 ((LIVE-IN (V-8 V-9)) (LIVE-OUT (V-9))))
+				    (4 ((LIVE-IN (V-9)) (LIVE-OUT (V-13))))
+				    (5 ((LIVE-IN (V-9)) (LIVE-OUT (V-14))))
+				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))
+				  
+				  ("simple-2" (LAMBDA (A B C)
+						(WHEN C
+						  (IF A
+						      (SETF B (+ 1 B))
+						      (SETF B (+ 2 B))))
+						(IF 1
+						    (FOO B)
+						    (BAR B)))
+				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-11 V-12))))
+				    (2 ((LIVE-IN (V-11 V-12)) (LIVE-OUT (V-12))))
+				    (4 ((LIVE-IN (V-12)) (LIVE-OUT (V-16))))
+				    (5 ((LIVE-IN (V-12)) (LIVE-OUT (V-18))))
+				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT (PHI-PLACE-0))))
+				    (8 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))
+				  ("simple-3" (LAMBDA (A B C)
+						(WHEN C
+						  (IF A
+						      (SETF B (+ 1 B))
+						      (PROGN
+							(SETF B (+ 2 B))
+							(IF 1
+							    (PRINT 2)
+							    (PRINT 3)))))
+						B)
+				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-12 V-13))))
+				    (2 ((LIVE-IN (V-12 V-13)) (LIVE-OUT (V-13))))
+				    (4 ((LIVE-IN (V-13)) (LIVE-OUT (V-17))))
+				    (7 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
+				    (8 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
+				    (5 ((LIVE-IN (V-13)) (LIVE-OUT (V-19))))
+				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))))
+
+(defun execute-test-compute-form (form)
+  (let ((ssa (make-lssa form)))
+    (compute-local-live-sets ssa)
+    (compute-global-live-sets ssa)
+    ssa))
+
+(defun test-assert-vars (res block-results block-index error)
+  (declare (optimize debug))
+  (unless (= (length res)
+	     (length block-results))
+    (format t "~%")
+    (format t "Different number of places, block-index: ~A, res: ~A and block-result: ~A~%" block-index res block-results)
+    (when error
+      (error "Different count of places")))
+  (dolist (r res)
+    (unless (find (symbol-name r) block-results :test #'equalp)
+      (format t "Can't find place, block-index: ~A, ~A in ~A~%" block-index r block-results)
+      (when error
+	(error "Can't find place")))))
+
+
+(defun test-compute-live-sets (&optional throw-error)
+  (dolist (test *live-vars-tests*)
+    (let* ((form-name (first test))
+	   (form (second test))
+	   (ssa (execute-test-compute-form form))
+	   (results (third test)))
+      (format t "Running test for form ~A~%~%" form-name)
+      (dolist (block-res results)
+	(format t ".")
+	(let* ((block-index (first block-res))
+	       (b (ssa-find-block-by-index ssa block-index))
+	       (live-in (second (assoc 'LIVE-IN (second block-res))))
+	       (live-out (second (assoc 'LIVE-OUT (second block-res)))))
+	  (test-assert-vars live-in (mapcar (lambda (x) (symbol-name (get-place-name x)))
+					    (ssa-block-live-in b))
+			    block-index throw-error)
+	  (test-assert-vars live-out (mapcar (lambda (x) (symbol-name (get-place-name x)))
+					     (ssa-block-live-out b))
+			    block-index throw-error)))
+      (format t "~%"))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;; if *ALLOCATION-METHOD* is :simple don't split intervals
+;;; if *ALLOCATION-EMTHOD* is :simple don't split intervals
 ;;; other method is :split
 (defparameter *allocation-method* :simple)
 
