@@ -7,6 +7,7 @@
   (ql:quickload '("cl-who" "cl-dot"))
   (declaim (optimize (debug 3) (safety 3) (speed 0))))
 
+;; FIXME, dont use GET-PLACE-NAME
 
 (setf cl-dot::*dot-path* "/opt/homebrew/bin/dot")
 
@@ -75,7 +76,7 @@
   (format nil "~A : ~A" (car dplace) (clcomp.ssa::get-place-name (cdr dplace))))
 
 (defun format-place (place what)
-  (format nil "~A: ~A"  what (clcomp.ssa::get-place-name place)))
+  (format nil "~A: ~A"  what (clcomp.ssa::named-place-name place)))
 
 (defun format-block (block)
   (let ((dplaces (clcomp.ssa::ssa-block-defined block))

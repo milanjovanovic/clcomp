@@ -46,7 +46,7 @@
 	   (redundant-phis (make-hash-table :test #'equalp)))
 
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
-  sealed processed label defined phis live-in virtuals live-gen live-kill live-out exit)
+  sealed processed label defined phis live-in virtuals live-gen live-kill live-out live-phi-operands exit)
 
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
@@ -212,16 +212,6 @@
 (defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
 
-(defun lambda-ssa-all-phis (lambda-ssa)
-  (declare (optimize debug))
-  (let (phis)
-    (dolist (b (lambda-ssa-blocks lambda-ssa))
-      (dolist (phi-cons (ssa-block-phis b))
-	(let ((phi (cdr phi-cons)))
-	  (unless (or (not (phi-p phi)) (get-phi-place-reduced-value (phi-place phi)))
-	    (push phi phis)))))
-    phis))
-
 ;;; FIXME, all end blocks are in one plist
 #+nil
 (defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
@@ -306,6 +296,17 @@
 (defun ssa-block-is-place-phi (ssa-block phi-place)
   (phi-p (ssa-block-get-maybe-phi ssa-block phi-place)))
 
+(defun ssa-block-all-phi-operands (b)
+  (let (operands)
+    (dolist (phi-cons (ssa-block-phis b))
+      (let ((phi (cdr phi-cons)))
+	(when (and (phi-p phi)
+		   (not (get-phi-place-reduced-value (phi-place phi))))
+	  (dolist (operand (phi-operands phi))
+	    (let ((op (get-maybe-reduced-place operand)))
+	      (pushnew op operands :test #'equalp))))))
+    operands))
+
 (defun add-phi-connections (phi operand lambda-ssa)
   (unless (equalp (phi-place phi) operand)
     (let ((name (named-place-name operand)))
@@ -348,7 +349,9 @@
 	(setf (ssa-block-succ b1) (ssa-block-index b2))
 	(push (ssa-block-index b1) (ssa-block-predecessors b2)))))
 
+;; FIXME, see where else we use this, maybe inserting SSA-GO brakes something else
 (defun ssa-maybe-connect-blocks (b1 b2)
+  (declare (optimize debug))
   (if (ssa-block-uncond-jump b1)
       (error "Block already have UNCOND-JUMP")
       (ssa-connect-blocks b1 b2)))
@@ -553,14 +556,15 @@
 				 (clcomp::if-node-false-form if-node)
 				 lambda-ssa leaf place false-block)))
       (unless leaf
+
 	(if (blocks-have-same-index true-block true-form-ret-block)
-	    (ssa-maybe-connect-blocks true-block next-block)
-	    (ssa-maybe-connect-blocks true-form-ret-block next-block))
+	    (insert-block-unconditional-jump true-block next-block)
+	    (insert-block-unconditional-jump true-form-ret-block next-block))
 	(if (blocks-have-same-index false-block false-form-ret-block)
 	    (insert-block-unconditional-jump false-block next-block)
 	    (insert-block-unconditional-jump false-form-ret-block next-block))))
     ;; it's important to add next-block after emiting IR for false and true blocks
-    ;; if any of false/true blocks creates new blocks than we keep good block order
+    ;; if any of false/true blocks creates new blocks then we keep good block order
     (unless leaf
       (ssa-add-block lambda-ssa next-block))
     (insert-block-conditional-jump block true-block)
@@ -899,7 +903,9 @@
 		 (not leaf))
 	;; we need JMP here, can't just connect
 	;; FIXME, we should add exit-block here so it's just a successor to CURRENT-BLOCK
-	(ssa-maybe-connect-blocks current-block exit-block)
+	;; NOTE, this was bug with EMIT-IF when exit-block (next-block) is not after current-block(true-block) in order
+	;; (ssa-maybe-connect-blocks current-block exit-block)
+	(insert-block-unconditional-jump current-block exit-block)
 	(ssa-add-block lambda-ssa exit-block))
       (pop-lexenv lambda-ssa :block-ret t)
       exit-block)))
@@ -1061,9 +1067,9 @@
 
 (defun phi-add-operands (place phi predecessors block lambda-ssa)
   (dolist (pblock predecessors)
-    (phi-add-operand phi
-		     (ssa-read-variable place (ssa-find-block-by-index lambda-ssa pblock) lambda-ssa)
-		     lambda-ssa))
+    (let ((operand (ssa-read-variable place (ssa-find-block-by-index lambda-ssa pblock) lambda-ssa)))
+      ;; FIXME, save PHI and OPERAND in pblock
+      (phi-add-operand phi operand lambda-ssa)))
   (try-remove-trivial-phi phi block lambda-ssa))
 
 (defun seal-block (ssa-block lambda-ssa)
@@ -2090,8 +2096,46 @@
     (sort itls #'< :key #'interval-start)))
 
 ;;; FIXME, RANGE-END should be exclusive
-
 (defun build-intervals (lambda-ssa)
+  #.*fun-optimize-level*
+  (let ((intervals (make-intervals))
+	(use-positions (make-use-positions)))
+    (dolist (b (reverse (lambda-ssa-blocks lambda-ssa)))
+      (when (ssa-block-first-instruction b)
+	(let ((start (ssa-form-index (ssa-block-first-instruction b)))
+	      (end (ssa-form-index (ssa-block-last-instruction b)))
+	      (live-out (ssa-block-live-out b)))
+
+	  (dolist (place live-out)
+	    (let ((place-name (get-place-name place)))
+	      (add-range intervals place-name start end)))
+
+	  (dolist (instr (reverse (ssa-block-ssa b)))
+	    (let* ((instr-index (ssa-form-index instr))
+		   (writes (ssa-place (ssa-form-write-place instr)))
+		   (reads (ssa-place (ssa-form-read-place instr))))
+	      (when writes
+		;; in a case of SSA-MVB-BIND we can have multiple places
+		(dolist (write (if (listp writes)
+				   writes
+				   (list writes)))
+		  ;; FIXME, just one write to place that is never read
+		  ;; we sure need to allocate register for this
+		  (let ((write (get-maybe-reduced-place write)))
+		    (unless (shorten-current-range intervals write instr-index)
+		      (add-range intervals (get-place-name write) instr-index instr-index))
+		    (add-use-positions use-positions write (make-use-write-pos :index instr-index)))))
+	      ;; FIXME, read is always adding RANGE
+	      ;; when we then have WRITE we only shorten last RANGE
+	      ;; READS can be LIST in a case of SSA-VOP
+	      (when reads
+		(dolist (orig-read (if (listp reads) reads (list reads)))
+		  (let ((read (get-maybe-reduced-place orig-read)))
+		    (add-range intervals (get-place-name read) start instr-index)
+		    (add-use-positions use-positions read (make-use-read-pos :index instr-index))))))))))
+    (add-intervals-use-positions intervals use-positions)))
+
+#+nil(defun _build-intervals (lambda-ssa)
   #.*fun-optimize-level*
   (let ((intervals (make-intervals))
 	(use-positions (make-use-positions)))
@@ -2188,7 +2232,7 @@
 	   (setf (ssa-block-uncond-jump after-block) (ssa-block-index new-block))))
     new-block))
 
-(defun find-phi-operand-block (blocks operand)
+#+nil(defun find-phi-operand-block (blocks operand)
   (dolist (b blocks)
     (when (or (find operand (first (ssa-block-virtuals b)) :test #'equalp)
 	      (find operand (second (ssa-block-virtuals b)) :test #'equalp))
@@ -2212,61 +2256,49 @@
 		     (setf operand-block (insert-block-between block operand-block)))
 		   )))))))
 
+;;; FIXME, if PHI have two or more ir operands that are the same then we can replace this PHI with just OPERAND
+;;; See TRY-REMOVE-TRIVIAL-PHI
 
 (defun compute-local-live-sets (lambda-ssa)
+  (declare (optimize debug))
   (dolist (block (lambda-ssa-blocks lambda-ssa))
+    (setf (ssa-block-live-gen block) nil)
+    (setf (ssa-block-live-kill block) nil)
+    (setf (ssa-block-live-phi-operands block) (ssa-block-all-phi-operands block))
+    (dolist (phi (ssa-block-all-phis block))
+      (when (phi-p phi)
+	(let ((reduced-place (get-phi-place-reduced-value (phi-place phi))))
+	  ;; We should not have reduce-place to be PHI-PLACE (at least I think it can't be reduced to another PHI)
+	  (assert (not (phi-place-p reduced-place)))
+	  (if reduced-place
+	      (pushnew reduced-place (ssa-block-live-gen block) :test #'equalp)
+	      (pushnew (phi-place phi) (ssa-block-live-kill block) :test #'equalp)))))
     (dolist (sform (ssa-block-ssa block))
-      (let ((reads (ssa-place (ssa-form-read-place sform )))
+      (let ((reads (ssa-place (ssa-form-read-place sform)))
 	    (writes (ssa-place (ssa-form-write-place sform))))
-	(when reads
-	  ;; READS can be LIST in a case of SSA-VOP
-	  (dolist (read (if (listp reads)
-			    reads
-			    (list reads)))
-	    (when (and read
-		       (not (find read (ssa-block-live-kill block) :test #'equalp)))
-	      (pushnew read (ssa-block-live-gen block) :test #'equalp))))
 	(when writes
 	  ;; writes can be LIST in a case of SSA-MVB-BIND
 	  (dolist (write (if (listp writes)
 			     writes
 			     (list writes)))
+	    ;; write places can't be reduced ?
+	    (assert (null (get-phi-place-reduced-value write)))
 	    (pushnew write (ssa-block-live-kill block) :test #'equalp)))
-	;; PHIS
-	(dolist (phi-cons (ssa-block-phis block))
-	  (pushnew (car phi-cons) (ssa-block-live-kill block) :test #'equalp))))))
-
-;;; FIXME, INVESTIGATE WHAT IS THE DEAL WITH PHI-PLACE-REDUCED that return function when :reduced is nil
-(defun phi-places-from-block (tblock succ-block)
-  "Get only places that merges to this block PHI, place will be in succ-block live-gen"
-  (declare (optimize debug))
-  (let (res)
-    (dolist (pp (ssa-block-phis succ-block))
-      (let* ((phi (cdr pp)))
-	(when (phi-p phi)
-	  (let* ((pplace (phi-place phi))
-		 (reduced (get-phi-place-reduced-value pplace)))
-	    (unless reduced
-	      (dolist (virtual-place (phi-operands phi))
-		(when (find virtual-place (ssa-block-live-kill tblock) :test #'equal)
-		  (push virtual-place res))))))))
-    res))
-
-(defun filter-block-phis (places block)
-  "Filter PHI places that are defined in this block"
-  (declare (optimize debug))
-  (let (r)
-    (dolist (p places)
-      (if (phi-place-p p)
-	  (unless (assoc (get-place-name  p) (ssa-block-phis block))
-	    (push p r))
-	  (push p r)))
-    r))
+	(when reads
+	  ;; reads can be LIST in a case of SSA-VOP
+	  (dolist (read (if (listp reads)
+			    reads
+			    (list reads)))
+	    (let ((read (get-maybe-reduced-place read)))
+	      (when (and read
+			 (not (find read (ssa-block-live-kill block) :test #'equal)))
+		(pushnew read (ssa-block-live-gen block) :test #'equalp)))))))))
 
 (defun is-place-phi-operand (place phis)
   (dolist (phi phis)
-    (when (find place (phi-operands phi))
-      (return-from is-place-phi-operand t))))
+    (dolist (op (phi-operands phi))
+      (when (equal place (get-maybe-reduced-place op))
+	(return-from is-place-phi-operand t)))))
 
 (defun get-block-phi-operands (b phis)
   (let (places)
@@ -2277,11 +2309,25 @@
 	  (push place places))))
     places))
 
+(defun get-block-phi-operands-out (b)
+  (let (places)
+    ;; in DEFINED field are all the SSA places this block uses
+    (dolist (p (ssa-block-defined b))
+      (let ((place (cdr p)))
+	(when (find place (ssa-block-live-phi-operands b) :test #'equal)
+	  (push place places))))
+    places))
+
+;; Compute phi uses per edge (pred -> succ) directly in global pass:
+;; live-out(pred) = U_succ ((live-in(succ) - phi-defs(succ)) U phi-operands-for-edge(pred,succ))
+;; Don’t propagate a transitive live-phi-operands set across successors.
+
+;; live_out(B) = union over successors S of ((live_in(S) - phi_defs(S)) U phi_uses(B->S))
+;; live_in(B) = live_gen(B) U (live_out(B) - live_kill(B))
 (defun compute-global-live-sets (lambda-ssa)
   (declare (optimize debug))
   (let ((blocks (reverse (lambda-ssa-blocks lambda-ssa)))
-	(changed nil)
-	(phis (lambda-ssa-all-phis lambda-ssa)))
+	(changed nil))
     (tagbody
      start
        (setf changed nil)
@@ -2289,18 +2335,25 @@
 	 (let ((live-out nil))
 	   (dolist (sblock (ssa-block-successors block lambda-ssa))
 	     (setf live-out (union live-out
-				   (filter-block-phis (ssa-block-live-in sblock) sblock)
+				   (ssa-block-live-in sblock)
 				   :test #'equalp))
-	     (setf live-out (union live-out (phi-places-from-block block sblock))))
-	   (setf live-out (union live-out (get-block-phi-operands block phis)))
+	     (setf (ssa-block-live-phi-operands block)
+		   (union (ssa-block-live-phi-operands block)
+			  (ssa-block-live-phi-operands sblock)
+			  :test #'equalp)))
+	   ;; this is most important part here, we are looking at block DEFINED field
+	   ;; and all PHI's in the block, if there are places in DEFINED that are operand of any of the PHI's
+	   ;; then we need to add that place to LIVE-OUT
+	   (setf live-out (union live-out
+				 (get-block-phi-operands-out block)))
 	   (setf (ssa-block-live-out block) live-out)
 	   (let ((old-live-in (ssa-block-live-in block))
 		 (live-in (union (set-difference (ssa-block-live-out block)
 						 (ssa-block-live-kill block) :test #'equalp)
 				 (ssa-block-live-gen block)
 				 :test #'equalp)))
-	     (when (/= (length old-live-in)
-		       (length live-in))
+	     (when (or (set-difference live-in old-live-in :test #'equalp)
+		       (set-difference old-live-in live-in :test #'equalp))
 	       (setf changed t))
 	     (setf (ssa-block-live-in block) live-in))))
        (when changed
@@ -2349,6 +2402,37 @@
 				    (8 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
 				    (5 ((LIVE-IN (V-13)) (LIVE-OUT (V-19))))
 				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))))
+
+(defparameter *block-bug-1-?* '(lambda (a b c)
+				(block out
+				  (let ((x b))
+				    (if c
+					(return-from out 99)
+					(progn
+					  (if a
+					      (setf x (+ x 1))
+					      (setf x (+ x 2)))
+					  x)))))
+  "Look at IF after GO in block ")
+
+(defparameter *block-bug-2* '(lambda (a b c d)
+			      (let ((x a))
+				(if c
+				    (progn
+				      (if b
+					  (setf x (+ x 1))
+					  (setf x (+ x 2)))
+				      (print x)) 
+				    (if d (print 1) (print 2)))
+				0))
+  "Triggers errors in compilation")
+
+(defparameter *if-bug-simple-form* '(lambda (c d)
+				     (if c
+					 (print 1)
+					 (if d (print 2) (print 3)))
+				     0)
+  "Triggers SUCC bug, triggets GO before IF BUG also")
 
 (defun execute-test-compute-form (form)
   (let ((ssa (make-lssa form)))
