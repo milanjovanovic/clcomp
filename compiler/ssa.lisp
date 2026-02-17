@@ -211,21 +211,6 @@
 (defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
 
-;;; FIXME, all end blocks are in one plist
-#+nil
-(defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
-  (let ((indexes nil))
-    (dolist (pair (lambda-ssa-loop-header-blocks lambda-ssa))
-      (let ((header (car pair))
-	    (end (cdr pair)))
-	(when (= header-block-index header)
-	  (push end indexes))))
-    indexes))
-
-(defun lambda-ssa-is-last-block (lambda-ssa block)
-  (= (ssa-block-index block)
-     (ssa-block-index (car (last (lambda-ssa-blocks lambda-ssa))))))
-
 ;;; FIXME, check this one
 (defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
   (dolist (hb (lambda-ssa-loop-header-blocks lambda-ssa))
@@ -309,10 +294,8 @@
   (let ((phi-place (phi-place phi)))
     (setf (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)) value)
     ;; not point off adding conections to PHI if VALUE is not PHI-PLACE
-    (add-phi-connections phi value lambda-ssa)
-    ;; (when (phi-place-p value)
-    ;;   (add-phi-connections phi value lambda-ssa))
-    ))
+    (when (phi-place-p value)
+      (add-phi-connections phi value lambda-ssa))))
 
 (defun get-phi-value-replacement (phi-place lambda-ssa)
   (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)))
@@ -791,7 +774,6 @@
     (if place
 	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
     new-block))
-
 
 (defun get-minimum-number-of-args (args)
   (let ((i 0))
@@ -2294,179 +2276,8 @@
        (when changed
 	 (go start)))))
 
-(defparameter *live-vars-tests* '(("simple-1" (LAMBDA (A B C)
-						(WHEN C
-						  (IF A
-						      (SETF B (+ 1 B))
-						      (SETF B (+ 2 B))))
-						B)
-				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-8 V-9))))
-				    (2 ((LIVE-IN (V-8 V-9)) (LIVE-OUT (V-9))))
-				    (4 ((LIVE-IN (V-9)) (LIVE-OUT (V-13))))
-				    (5 ((LIVE-IN (V-9)) (LIVE-OUT (V-14))))
-				    (3 ((LIVE-IN ()) (LIVE-OUT ()) (PHIS ((PHI-PLACE-0 (V-14 V-13 V-9))))))))
-				  
-				  ("simple-2" (LAMBDA (A B C)
-						(WHEN C
-						  (IF A
-						      (SETF B (+ 1 B))
-						      (SETF B (+ 2 B))))
-						(IF 1
-						    (FOO B)
-						    (BAR B)))
-				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-11 V-12))))
-				    (2 ((LIVE-IN (V-11 V-12)) (LIVE-OUT (V-12))))
-				    (4 ((LIVE-IN (V-12)) (LIVE-OUT (V-16))))
-				    (5 ((LIVE-IN (V-12)) (LIVE-OUT (V-18))))
-				    (3 ((LIVE-IN ()) (LIVE-OUT (PHI-PLACE-0)) (PHIS ((PHI-PLACE-0 (V-12 V-16 V-18))))))
-				    (8 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))
-				  ("simple-3" (LAMBDA (A B C)
-						(WHEN C
-						  (IF A
-						      (SETF B (+ 1 B))
-						      (PROGN
-							(SETF B (+ 2 B))
-							(IF 1
-							    (PRINT 2)
-							    (PRINT 3)))))
-						B)
-				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-12 V-13))))
-				    (2 ((LIVE-IN (V-12 V-13)) (LIVE-OUT (V-13))))
-				    (4 ((LIVE-IN (V-13)) (LIVE-OUT (V-17))))
-				    (7 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
-				    (8 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
-				    (5 ((LIVE-IN (V-13)) (LIVE-OUT (V-19))))
-				    ;; FIXME, don't duplicate operands in PHI
-				    (3 ((LIVE-IN ()) (LIVE-OUT ()) (PHIS ((PHI-PLACE-0 (V-17 V-17 V-19 V-13))))))))
-
-				  ("early-return-from" (LAMBDA (A B C)
-							 (BLOCK OUT
-							   (LET ((X B))
-							     (IF C
-								 (RETURN-FROM OUT 99)
-								 (PROGN
-								   (IF A
-								       (SETF X (+ X 1))
-								       (SETF X (+ X 2)))
-								   X)))))
-				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-8 V-11))))
-				    (2 ((LIVE-IN (V-8 V-11)) (LIVE-OUT (V-11))))
-				    (3 ((LIVE-IN ()) (LIVE-OUT ())))
-				    (5 ((LIVE-IN (V-11)) (LIVE-OUT (V-15))))
-				    (6 ((LIVE-IN (V-11)) (LIVE-OUT (V-14))))
-				    (7 ((LIVE-IN ()) (LIVE-OUT ()) (PHIS ((PHI-PLACE-0 (V-14 V-15))))))))
-				  ("irreducible-1" (LAMBDA (X)
-						     (LET ((SAVED (* X 2)))
-						       (TAGBODY
-							  (IF (> X 0) (GO A) (GO B))
-							A
-							  (SETF X (+ X SAVED))
-							  (WHEN (< X 50) (GO B))
-							  (GO END)
-							B
-							  (SETF X (- X SAVED))
-							  (WHEN (> X 0) (GO A))
-							END)
-						       (+ X SAVED)))
-				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-15 V-16))))
-				    (1 ((LIVE-IN (V-16)) (LIVE-OUT (V-16 V-18)) (PHIS ((PHI-PLACE-0 (V-20 V-15))))))
-				    (2 ((LIVE-IN (V-16)) (LIVE-OUT (V-16 V-20)) (PHIS ((PHI-PLACE-2 (V-18 V-15))))))
-				    (3 ((LIVE-IN (V-16)) (LIVE-OUT ())(PHIS ((PHI-PLACE-4 (V-20 V-18))))))))))
-
-(DEFPARAMETER *block-bug-1-?* '(lambda (a b c)
-				(block out
-				  (let ((x b))
-				    (if c
-					(return-from out 99)
-					(progn
-					  (if a
-					      (setf x (+ x 1))
-					      (setf x (+ x 2)))
-					  x)))))
-  "Look at IF after GO in block ")
-
-(defparameter *block-bug-2* '(lambda (a b c d)
-			      (let ((x a))
-				(if c
-				    (progn
-				      (if b
-					  (setf x (+ x 1))
-					  (setf x (+ x 2)))
-				      (print x)) 
-				    (if d (print 1) (print 2)))
-				0))
-  "Triggers errors in compilation")
-
-(defparameter *if-bug-simple-form* '(lambda (c d)
-				     (if c
-					 (print 1)
-					 (if d (print 2) (print 3)))
-				     0)
-  "Triggers SUCC bug, triggets GO before IF BUG also")
-
-(defun execute-test-compute-form (form)
-  (let ((ssa (make-lssa form)))
-    (compute-local-live-sets ssa)
-    (compute-global-live-sets ssa)
-    ssa))
-
-(defun test-assert-vars (res block-results block-index error)
-  (declare (optimize debug))
-  (unless (= (length res)
-	     (length block-results))
-    (format t "~%")
-    (format t "Different number of places, block-index: ~A, res: ~A and block-result: ~A~%" block-index res block-results)
-    (when error
-      (error "Different count of places")))
-  (dolist (r res)
-    (unless (find (symbol-name r) block-results :test #'equalp)
-      (format t "Can't find place, block-index: ~A, ~A in ~A~%" block-index r block-results)
-      (when error
-	(error "Can't find place")))))
-
-(defun test-assert-phis (phis block-res)
-  (declare (optimize debug))
-  (let ((block-phis (ssa-block-all-phis block-res)))
-    (setf block-phis (remove-if-not #'phi-p block-phis))
-    (assert (= (length phis)
-	       (length block-phis)))
-    (let ((block-phi-map (make-hash-table :test #'equalp)))
-      (dolist (p block-phis)
-	(let ((name (symbol-name (get-place-name (phi-place p))))
-	      (ops (mapcar #'get-place-name (mapcar #'get-maybe-reduced-place (phi-operands p)))))
-	  (setf (gethash  name block-phi-map) ops)))
-      (dolist (phi phis)
-	(let* ((phi-place-name (symbol-name (first phi)))
-	       (operands (mapcar #'symbol-name (second phi)))
-	       (res-phi-operands (mapcar #'symbol-name (gethash phi-place-name block-phi-map))))
-	  (assert res-phi-operands)
-	  (setf res-phi-operands (sort res-phi-operands #'string<))
-	  (setf operands (sort operands #'string<))
-	  (assert (equalp operands res-phi-operands))	)))))
 
 
-(defun test-compute-live-sets (&optional throw-error)
-  (dolist (test *live-vars-tests*)
-    (let* ((form-name (first test))
-	   (form (second test))
-	   (ssa (execute-test-compute-form form))
-	   (results (third test)))
-      (format t "Running test for form ~A~%~%" form-name)
-      (dolist (block-res results)
-	(format t ".")
-	(let* ((block-index (first block-res))
-	       (b (ssa-find-block-by-index ssa block-index))
-	       (live-in (second (assoc 'LIVE-IN (second block-res))))
-	       (live-out (second (assoc 'LIVE-OUT (second block-res))))
-	       (phis (second (assoc 'PHIS (second block-res)))))
-	  (test-assert-vars live-in (mapcar (lambda (x) (symbol-name (get-place-name x)))
-					    (ssa-block-live-in b))
-			    block-index throw-error)
-	  (test-assert-vars live-out (mapcar (lambda (x) (symbol-name (get-place-name x)))
-					     (ssa-block-live-out b))
-			    block-index throw-error)
-	  (test-assert-phis phis b)))
-      (format t "~%"))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
