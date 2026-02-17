@@ -109,7 +109,6 @@
   (and (typep place 'phi-place)
        (not (funcall (phi-place-reduced place)))))
 
-
 (defparameter *testb* nil)
 
 (defparameter *instr-offset* 2)
@@ -278,8 +277,9 @@
 		  (ssa-block-index b2)))))))
 
 (defun ssa-block-add-phi (ssa-block phi)
-  (setf (ssa-block-phis ssa-block) (acons (named-place-name (phi-place phi)) phi
-					  (ssa-block-phis ssa-block))))
+  (setf (ssa-block-phis ssa-block)
+	(acons (named-place-name (phi-place phi)) phi
+	       (ssa-block-phis ssa-block))))
 
 (defun ssa-block-replace-phi (ssa-block phi-place new-value)
   (let ((cons (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
@@ -296,17 +296,6 @@
 (defun ssa-block-is-place-phi (ssa-block phi-place)
   (phi-p (ssa-block-get-maybe-phi ssa-block phi-place)))
 
-(defun ssa-block-all-phi-operands (b)
-  (let (operands)
-    (dolist (phi-cons (ssa-block-phis b))
-      (let ((phi (cdr phi-cons)))
-	(when (and (phi-p phi)
-		   (not (get-phi-place-reduced-value (phi-place phi))))
-	  (dolist (operand (phi-operands phi))
-	    (let ((op (get-maybe-reduced-place operand)))
-	      (pushnew op operands :test #'equalp))))))
-    operands))
-
 (defun add-phi-connections (phi operand lambda-ssa)
   (unless (equalp (phi-place phi) operand)
     (let ((name (named-place-name operand)))
@@ -319,7 +308,9 @@
 (defun add-phi-value-replacement (phi value lambda-ssa)
   (let ((phi-place (phi-place phi)))
     (setf (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)) value)
-    (add-phi-connections phi value lambda-ssa)))
+    ;; not point off adding conections to PHI if VALUE is not PHI-PLACE
+    (when (phi-place value)
+      (add-phi-connections phi value lambda-ssa))))
 
 (defun get-phi-value-replacement (phi-place lambda-ssa)
   (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)))
@@ -544,10 +535,9 @@
 	 (next-block (unless leaf (make-new-ssa-block lambda-ssa))))
     ;; we can just set successor if this block is last block
     ;; if not set UNCOND-JUMP
-    (if (= (ssa-block-index block)
-	   (ssa-block-index (car (last (lambda-ssa-blocks lambda-ssa)))))
-	(ssa-connect-blocks block false-block)
-	(insert-block-unconditional-jump block false-block))
+    (when (= (ssa-block-index block)
+	     (ssa-block-index (car (last (lambda-ssa-blocks lambda-ssa)))))
+      (ssa-connect-blocks block false-block))
     (ssa-add-block lambda-ssa false-block)
     (ssa-add-block lambda-ssa true-block)
     (let ((true-form-ret-block (emit-ssa (clcomp::if-node-true-form if-node)
@@ -582,9 +572,12 @@
 		:true-block-label (ssa-block-label true-block)
 		;; FIXME, sometimes we do want to label block ?? (in a case of BLOCK/RETURN-FROM) ?
 		;; :false-block-label false-block-label
-		;; because false block is always next in order so it's always SUCC 
+		;; because false block is always next in order so it's always SUCC
+		;; previous comment is wrong, false block is not always SUCC
 		:false-block-label nil)
-	       block))
+	       block)
+      (unless (ssa-block-succ block)
+	(insert-block-unconditional-jump block false-block)))
     next-block))
 
 (defun maybe-emit-direct-load (node lambda-ssa leaf place block)
@@ -1041,16 +1034,19 @@
 
 ;;; we need to use reduced value here
 (defun try-remove-trivial-phi (phi block lambda-ssa)
-  (declare (optimize (debug 3) (speed 0)))
+  #.*fun-optimize-level*
+  ;; (when (get-phi-place-reduced-value (phi-place phi))
+  ;;   (return-from try-remove-trivial-phi phi))
   (let ((same nil)
 	(phi-place (phi-place phi)))
     (dolist (operand (phi-operands phi))
       (let ((operand (get-maybe-reduced-place operand)))
 	(cond ((or (eql operand same)
-		   (eq operand (phi-place phi))))
+		   (eql operand (phi-place phi))))
 	      ((not (null same))
 	       (return-from try-remove-trivial-phi phi))
 	      (t (setf same operand)))))
+    (assert same) ; by paper this can be nil (phi without operands), but not in our case
     (ssa-block-replace-phi block phi-place same)
     ;; FIXME, when adding replacement, if replacement is new PHI then we need to fix PHI operand usages
     (add-phi-value-replacement phi same lambda-ssa)
@@ -1067,9 +1063,10 @@
 
 (defun phi-add-operands (place phi predecessors block lambda-ssa)
   (dolist (pblock predecessors)
-    (let ((operand (ssa-read-variable place (ssa-find-block-by-index lambda-ssa pblock) lambda-ssa)))
-      ;; FIXME, save PHI and OPERAND in pblock
-      (phi-add-operand phi operand lambda-ssa)))
+    (let* ((pred-block (ssa-find-block-by-index lambda-ssa pblock))
+	   (operand (ssa-read-variable place pred-block lambda-ssa)))
+      (phi-add-operand phi operand lambda-ssa)
+      (push (cons phi operand) (ssa-block-live-phi-operands pred-block))))
   (try-remove-trivial-phi phi block lambda-ssa))
 
 (defun seal-block (ssa-block lambda-ssa)
@@ -1173,11 +1170,12 @@
 
 
 (defun compute-scc (successors nodes)
+  #.*fun-optimize-level*
   (labels ((fill-order (node visited stack)
 	     (setf (gethash node visited) t)
 	     (dolist (snode (gethash node successors))
 	       (unless (gethash node visited)
-		 (fill-order snode visited stack)))
+		 (fill-order node visited stack)))
 	     (vector-push-extend node stack))
 	   (dfs-util (node visited adj result)
 	     (setf (gethash  node visited) t)
@@ -1208,6 +1206,11 @@
        end)
       res)))
 
+(defun sort-sccs (sccs phc)
+  #.*fun-optimize-level*
+  (break)
+  (list phc))
+
 (defun lambda-ssa-find-and-replace-phis (lambda-ssa phi-places value)
   (dolist (sblock (lambda-ssa-blocks lambda-ssa))
     (dolist (phi-place phi-places)
@@ -1218,8 +1221,9 @@
   (unless (null phi-places)
     (error "Can't find all PHI's to replace")))
 
- (defun replace-scc-by-value (phc scc-phis value lambda-ssa)
+(defun replace-scc-by-value (phc scc-phis value lambda-ssa)
   (declare (optimize (debug 3) (speed 0)))
+  (print (list 'replace-scc-by-value scc-phis value))
   (let ((phi-places nil))
     (dolist (phi-node scc-phis)
       (let ((phi-place (phc-get-place phc phi-node)))
@@ -1249,19 +1253,31 @@
 	     (remove-redundant-phis inner phc lambda-ssa))))))
 
 (defun remove-redundant-phis (nodes phc lambda-ssa)
-  ;; TODO, we need to  apply topological-sort on phis SCC
-  (dolist (scc (compute-scc (phis-connections-successors phc) nodes))
-    (process-scc scc phc lambda-ssa)))
+  (declare (optimize debug))
+  (let* ((sccs (compute-scc (phis-connections-successors phc) nodes)))
+    (sort sccs (lambda (x y)
+		 (> (phis-connections-scc-conections x y phc)
+		    (phis-connections-scc-conections y x phc))))
+    (dolist (scc sccs)
+      (process-scc scc phc lambda-ssa))
+    ;; now try again to remove trivial PHI's
+    (dolist (b (lambda-ssa-blocks lambda-ssa))
+      (dolist (phi-cons (ssa-block-phis b))
+	(when (and (phi-p (cdr phi-cons))
+		   (not (get-phi-place-reduced-value  (phi-place (cdr phi-cons)))))
+	  (try-remove-trivial-phi (cdr phi-cons) b lambda-ssa))))))
 
 (defun collect-maybe-redundant-phis (lambda-ssa)
+  (declare (optimize debug))
   (let (good-phis)
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
       (let ((phis (ssa-block-all-phis sblock)))
 	(dolist (maybe-phi phis)
- 	  (when (phi-p maybe-phi)
+ 	  (when  (phi-p maybe-phi)
+	    ;; FIXME, check this
+	    ;; but we can't simplify PHI's that don't have other PHI's as operabd
 	    ;; (and (phi-p maybe-phi)
 	    ;;      (some #'place-is-phi (phi-operands maybe-phi)))
-	      t
 	    (push maybe-phi good-phis)))))
     good-phis))
 
@@ -1274,6 +1290,16 @@
   graphs
   sccs)
 
+(defun phis-connections-scc-conections (to from phc)
+  "Return number of predecessors in FROM to TO"
+  (let ((count 0))
+    (dolist (i to)
+      (let ((predecessors (gethash i (phis-connections-successors phc))))
+	(dolist (node from)
+	  (when (find node predecessors :test #'eql)
+	    (incf count)))))
+    count))
+
 (defun phc-add-phi (phc place phi)
   (setf (gethash place (phis-connections-phis phc)) phi))
 
@@ -1284,7 +1310,7 @@
   (gethash place (phis-connections-phis phc)))
 
 (defun phc-get-phi-by-node (phc node)
-  (phc-get-phi phc  (phc-get-place phc node)))
+  (phc-get-phi phc (phc-get-place phc node)))
 
 (defun get-or-make-identity (phc identity)
   (let ((i (gethash identity (phis-connections-identity phc))))
@@ -1303,14 +1329,16 @@
 
 (defun make-places-connections (phis)
   "Make successors map for every PHI operand"
+  (declare (optimize debug))
   (let ((phc (make-phis-connections)))
     (dolist (phi phis)
       (phc-add-phi phc (phi-place phi) phi)
-      (let ((phi-index (get-or-make-identity phc  (phi-place phi))))
+      (let ((phi-index (get-or-make-identity phc (phi-place phi))))
 	(dolist (operand (phi-operands phi))
-	  (when (place-is-phi operand)
-	    (let ((op-index (get-or-make-identity phc operand)))
-	      (push phi-index (gethash op-index (phis-connections-successors phc))))))))
+	  (let ((operand (get-maybe-reduced-place operand)))
+	    (when (place-is-phi operand)
+	      (let ((op-index (get-or-make-identity phc operand)))
+		(push phi-index (gethash op-index (phis-connections-successors phc)))))))))
     (setf (phis-connections-graphs phc)
 	  (make-graphs-from-successors (phis-connections-successors phc)))
     phc))
@@ -1347,7 +1375,7 @@
       graphs)))
 
 (defun optimize-redundant-phis (lambda-ssa)
-  (declare (optimize (debug 3) (speed 0)))
+  (declare (optimize (debug 3)))
   (let* ((phis (collect-maybe-redundant-phis lambda-ssa))
 	 (phc (make-places-connections phis))
 	 ;; FIXME, this is not topological sort, see paper
@@ -2135,86 +2163,10 @@
 		    (add-use-positions use-positions read (make-use-read-pos :index instr-index))))))))))
     (add-intervals-use-positions intervals use-positions)))
 
-#+nil(defun _build-intervals (lambda-ssa)
-  #.*fun-optimize-level*
-  (let ((intervals (make-intervals))
-	(use-positions (make-use-positions)))
-    
-    (dolist (block (reverse (lambda-ssa-blocks lambda-ssa)))
-      (let*((successor-blocks (ssa-block-successors block lambda-ssa))
-	    (successors-live-in (mapcar #'ssa-block-live-in successor-blocks))
-	    (live (merge-all-blocks-live-in successors-live-in)))
-
-	(dolist (sb successor-blocks)
-	  (let ((phis (ssa-block-all-phis sb)))
-	    ;; TEST just to be sure that we are not processing PHI that are reduce to simple VALUE,
-	    ;; remove later
-	    (dolist (phi phis)
-	      (debug-print (ssa-block-index block) phi)
-	      (when (phi-p phi)
-		(let ((place (phi-place phi)))
-		  (when (and (phi-place-reduced place)
-			     (funcall (phi-place-reduced place)))
-		    (error "This should not happen, we are using PHI that is reduced to normal PLACE")))))
-	    ;; FIXME, check LIVE-ADD-PHIS-OPERANDS
-	    (setf live (live-add-phis-operands live phis block lambda-ssa))))
-
-
-	(when (ssa-block-first-instruction block)
-	  (let ((start (ssa-form-index (ssa-block-first-instruction block)))
-		(end (ssa-form-index (ssa-block-last-instruction block))))
-
-	    (dolist (place live)
-	      (let ((place-name (get-place-name place)))
-		(add-range intervals place-name start end)))
-
-	    (dolist (instr (reverse (ssa-block-ssa block)))
-	      (let* ((instr-index (ssa-form-index instr))
-		     ;; we can't have PHI-PLACE in write position
-		     (writes (ssa-place (ssa-form-write-place instr)))
-		     (reads (ssa-place (ssa-form-read-place instr)))
-		     ;; (read (maybe-get-simplified-phi-value orig-read block lambda-ssa))
-		     )
-		(when writes
-		  ;; in a case of SSA-MVB-BIND we can have multiple places
-		  (dolist (write (if (listp writes)
-				     writes
-				     (list writes)))
-		    ;; FIXME, just one write to place that is never read
-		    ;; we sure need to allocate register for this
-		    (unless (shorten-current-range intervals write instr-index)
-		      (add-range intervals (get-place-name write) instr-index instr-index))
-		    (setf live (remove-from-live live write))
-		    (add-use-positions use-positions write (make-use-write-pos :index instr-index))))
-		;; FIXME, read is always adding RANGE
-		;; when we then have WRITE we only shorten last RANGE
-		;; READS can be LIST in a case of SSA-VOP
-		(when reads
-		  (dolist (orig-read (if (listp reads) reads (list reads)))
-		    (let ((read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
-		      (add-range intervals (get-place-name read) start instr-index)
-		      (add-use-positions use-positions read (make-use-read-pos :index instr-index))
-		      (pushnew read live :test #'equalp))))))
-
-	    (dolist (phi (ssa-block-all-phis block))
-	      (when (phi-p phi)
-		(let ((phi-place (phi-place phi)))
-		  (setf live (remove-from-live live phi-place)))))
-
-	    (when (ssa-block-is-header block)
-	      (let* ((end-block-index (lambda-ssa-find-greatest-end-block lambda-ssa (ssa-block-index block)))
-		     (end-block (ssa-find-block-by-index lambda-ssa end-block-index)))
-		(debug-print "HEADER" (ssa-block-index block) end-block-index)
-		(debug-print live)
-		(dolist (lplace live)
-		  (add-range intervals (get-place-name lplace) start (ssa-block-last-index end-block)))))))
-	(setf (ssa-block-live-in block) live)))
-    ;; (try-intervals-merge intervals)
-    (add-intervals-use-positions intervals use-positions)))
-
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Alternative Intervals building/Linear Scan from "Linear scan register allocation for Java HotSpot Client Compiler"
+;;; we are not using original Wimmer & Franz algorithm because of irreducible loops
+;;; It's a pity because now we are using fixpoint computation to calculate intervals
 
 #+nil(defun insert-block-between (before-block after-block)
        (let ((new-block (make-new-ssa-block)) ;; FIXME, MAKE-NEW-SSA neds LAMBDA-SSA as argument
@@ -2264,7 +2216,8 @@
   (dolist (block (lambda-ssa-blocks lambda-ssa))
     (setf (ssa-block-live-gen block) nil)
     (setf (ssa-block-live-kill block) nil)
-    (setf (ssa-block-live-phi-operands block) (ssa-block-all-phi-operands block))
+    (setf (ssa-block-live-in block) nil)
+    (setf (ssa-block-live-out block) nil)
     (dolist (phi (ssa-block-all-phis block))
       (when (phi-p phi)
 	(let ((reduced-place (get-phi-place-reduced-value (phi-place phi))))
@@ -2294,36 +2247,22 @@
 			 (not (find read (ssa-block-live-kill block) :test #'equal)))
 		(pushnew read (ssa-block-live-gen block) :test #'equalp)))))))))
 
-(defun is-place-phi-operand (place phis)
-  (dolist (phi phis)
-    (dolist (op (phi-operands phi))
-      (when (equal place (get-maybe-reduced-place op))
-	(return-from is-place-phi-operand t)))))
+(defun get-block-phi-operands-out (b succ-block)
+  (let ((succ-phis (remove-if-not #'phi-p (ssa-block-all-phis succ-block)))
+	(operands nil))
+    (when succ-phis
+      (dolist (phi-cons (ssa-block-live-phi-operands b))
+	(let ((phi (find (car phi-cons) succ-phis :test #'equal)))
+	  (when (and phi
+		     (not (get-phi-place-reduced-value (phi-place phi))))
+	    (let ((operand (get-maybe-reduced-place (cdr phi-cons))))
+	      (when  (dolist (o (phi-operands phi))
+		       (when (equal (get-maybe-reduced-place o) operand)
+			 (return t)))
+		(push operand operands))))))
 
-(defun get-block-phi-operands (b phis)
-  (let (places)
-    ;; in DEFINED field are all the SSA places this block uses
-    (dolist (p (ssa-block-defined b))
-      (let ((place (cdr p)))
-	(when (is-place-phi-operand place phis)
-	  (push place places))))
-    places))
+      operands)))
 
-(defun get-block-phi-operands-out (b)
-  (let (places)
-    ;; in DEFINED field are all the SSA places this block uses
-    (dolist (p (ssa-block-defined b))
-      (let ((place (cdr p)))
-	(when (find place (ssa-block-live-phi-operands b) :test #'equal)
-	  (push place places))))
-    places))
-
-;; Compute phi uses per edge (pred -> succ) directly in global pass:
-;; live-out(pred) = U_succ ((live-in(succ) - phi-defs(succ)) U phi-operands-for-edge(pred,succ))
-;; Don’t propagate a transitive live-phi-operands set across successors.
-
-;; live_out(B) = union over successors S of ((live_in(S) - phi_defs(S)) U phi_uses(B->S))
-;; live_in(B) = live_gen(B) U (live_out(B) - live_kill(B))
 (defun compute-global-live-sets (lambda-ssa)
   (declare (optimize debug))
   (let ((blocks (reverse (lambda-ssa-blocks lambda-ssa)))
@@ -2337,15 +2276,9 @@
 	     (setf live-out (union live-out
 				   (ssa-block-live-in sblock)
 				   :test #'equalp))
-	     (setf (ssa-block-live-phi-operands block)
-		   (union (ssa-block-live-phi-operands block)
-			  (ssa-block-live-phi-operands sblock)
-			  :test #'equalp)))
-	   ;; this is most important part here, we are looking at block DEFINED field
-	   ;; and all PHI's in the block, if there are places in DEFINED that are operand of any of the PHI's
-	   ;; then we need to add that place to LIVE-OUT
-	   (setf live-out (union live-out
-				 (get-block-phi-operands-out block)))
+	     ;; this take care of PHI operands that need to be in the LIVE-OUT
+	     (setf live-out (union live-out
+				   (get-block-phi-operands-out block sblock))))
 	   (setf (ssa-block-live-out block) live-out)
 	   (let ((old-live-in (ssa-block-live-in block))
 		 (live-in (union (set-difference (ssa-block-live-out block)
@@ -2369,7 +2302,7 @@
 				    (2 ((LIVE-IN (V-8 V-9)) (LIVE-OUT (V-9))))
 				    (4 ((LIVE-IN (V-9)) (LIVE-OUT (V-13))))
 				    (5 ((LIVE-IN (V-9)) (LIVE-OUT (V-14))))
-				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))
+				    (3 ((LIVE-IN ()) (LIVE-OUT ())))))
 				  
 				  ("simple-2" (LAMBDA (A B C)
 						(WHEN C
@@ -2383,7 +2316,7 @@
 				    (2 ((LIVE-IN (V-11 V-12)) (LIVE-OUT (V-12))))
 				    (4 ((LIVE-IN (V-12)) (LIVE-OUT (V-16))))
 				    (5 ((LIVE-IN (V-12)) (LIVE-OUT (V-18))))
-				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT (PHI-PLACE-0))))
+				    (3 ((LIVE-IN ()) (LIVE-OUT (PHI-PLACE-0))))
 				    (8 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))
 				  ("simple-3" (LAMBDA (A B C)
 						(WHEN C
@@ -2401,7 +2334,24 @@
 				    (7 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
 				    (8 ((LIVE-IN (V-17)) (LIVE-OUT (V-17))))
 				    (5 ((LIVE-IN (V-13)) (LIVE-OUT (V-19))))
-				    (3 ((LIVE-IN (PHI-PLACE-0)) (LIVE-OUT ())))))))
+				    (3 ((LIVE-IN ()) (LIVE-OUT ())))))
+
+				  ("early-return-from" (LAMBDA (A B C)
+							 (BLOCK OUT
+							   (LET ((X B))
+							     (IF C
+								 (RETURN-FROM OUT 99)
+								 (PROGN
+								   (IF A
+								       (SETF X (+ X 1))
+								       (SETF X (+ X 2)))
+								   X)))))
+				   ((0 ((LIVE-IN ()) (LIVE-OUT (V-8 V-11))))
+				    (2 ((LIVE-IN (V-8 V-11)) (LIVE-OUT (V-11))))
+				    (3 ((LIVE-IN ()) (LIVE-OUT ())))
+				    (5 ((LIVE-IN (V-11)) (LIVE-OUT (V-15))))
+				    (6 ((LIVE-IN (V-11)) (LIVE-OUT (V-14))))
+				    (7 ((LIVE-IN ()) (LIVE-OUT ())))))))
 
 (defparameter *block-bug-1-?* '(lambda (a b c)
 				(block out
