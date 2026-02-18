@@ -1130,8 +1130,8 @@
   (labels ((fill-order (node visited stack)
 	     (setf (gethash node visited) t)
 	     (dolist (snode (gethash node successors))
-	       (unless (gethash node visited)
-		 (fill-order node visited stack)))
+	       (unless (gethash snode visited)
+		 (fill-order snode visited stack)))
 	     (vector-push-extend node stack))
 	   (dfs-util (node visited adj result)
 	     (setf (gethash  node visited) t)
@@ -1161,11 +1161,6 @@
 		 (go start))))
        end)
       res)))
-
-(defun sort-sccs (sccs phc)
-  #.*fun-optimize-level*
-  (break)
-  (list phc))
 
 (defun lambda-ssa-find-and-replace-phis (lambda-ssa phi-places value)
   ;; (dolist (sblock (lambda-ssa-blocks lambda-ssa))
@@ -1197,11 +1192,12 @@
 	(let ((is-inner t))
 	  (let ((phi (phc-get-phi-by-node phc phi-node)))
 	    (dolist (operand (phi-operands phi))
-	      (when (not (find operand (mapcar (lambda (node)
-						 (phc-get-place phc node))
-					       scc)))
-		(pushnew operand outer-ops)
-		(setf is-inner nil)))
+	      (let ((operand (get-maybe-reduced-place operand)))
+	       (when (not (find operand (mapcar (lambda (node)
+						  (phc-get-place phc node))
+						scc)))
+		 (pushnew operand outer-ops)
+		 (setf is-inner nil))))
 	    (when is-inner
 	      (pushnew phi inner)))))
       (cond ((= 1 (length outer-ops))
@@ -2169,7 +2165,7 @@
 ;;; See TRY-REMOVE-TRIVIAL-PHI
 
 (defun compute-local-live-sets (lambda-ssa)
-  (declare (optimize debug))
+  #.*fun-optimize-level*
   (dolist (block (lambda-ssa-blocks lambda-ssa))
     (setf (ssa-block-live-gen block) nil)
     (setf (ssa-block-live-kill block) nil)
@@ -2181,8 +2177,8 @@
 	  ;; We should not have reduce-place to be PHI-PLACE (at least I think it can't be reduced to another PHI)
 	  (assert (not (phi-place-p reduced-place)))
 	  (if reduced-place
-	      (pushnew reduced-place (ssa-block-live-gen block) :test #'equalp)
-	      (pushnew (phi-place phi) (ssa-block-live-kill block) :test #'equalp)))))
+	      (pushnew reduced-place (ssa-block-live-gen block))
+	      (pushnew (phi-place phi) (ssa-block-live-kill block))))))
     (dolist (sform (ssa-block-ssa block))
       (let ((reads (ssa-place (ssa-form-read-place sform)))
 	    (writes (ssa-place (ssa-form-write-place sform))))
@@ -2193,7 +2189,7 @@
 			     (list writes)))
 	    ;; write places can't be reduced ?
 	    (assert (null (get-phi-place-reduced-value write)))
-	    (pushnew write (ssa-block-live-kill block) :test #'equalp)))
+	    (pushnew write (ssa-block-live-kill block))))
 	(when reads
 	  ;; reads can be LIST in a case of SSA-VOP
 	  (dolist (read (if (listp reads)
@@ -2201,15 +2197,16 @@
 			    (list reads)))
 	    (let ((read (get-maybe-reduced-place read)))
 	      (when (and read
-			 (not (find read (ssa-block-live-kill block) :test #'equal)))
-		(pushnew read (ssa-block-live-gen block) :test #'equalp)))))))))
+			 (not (find read (ssa-block-live-kill block))))
+		(pushnew read (ssa-block-live-gen block))))))))))
 
 (defun get-block-phi-operands-out (b succ-block)
+  #.*fun-optimize-level*
   (let ((succ-phis (remove-if-not #'phi-p (ssa-block-phis succ-block)))
 	(operands nil))
     (when succ-phis
       (dolist (phi-cons (ssa-block-live-phi-operands b))
-	(let ((phi (find (car phi-cons) succ-phis :test #'equal)))
+	(let ((phi (find (car phi-cons) succ-phis)))
 	  (when (and phi
 		     (not (get-phi-place-reduced-value (phi-place phi))))
 	    (let ((operand (get-maybe-reduced-place (cdr phi-cons))))
@@ -2221,7 +2218,7 @@
       operands)))
 
 (defun compute-global-live-sets (lambda-ssa)
-  (declare (optimize debug))
+  #.*fun-optimize-level*
   (let ((blocks (reverse (lambda-ssa-blocks lambda-ssa)))
 	(changed nil))
     (tagbody
@@ -2231,26 +2228,22 @@
 	 (let ((live-out nil))
 	   (dolist (sblock (ssa-block-successors block lambda-ssa))
 	     (setf live-out (union live-out
-				   (ssa-block-live-in sblock)
-				   :test #'equalp))
+				   (ssa-block-live-in sblock)))
 	     ;; this take care of PHI operands that need to be in the LIVE-OUT
 	     (setf live-out (union live-out
 				   (get-block-phi-operands-out block sblock))))
 	   (setf (ssa-block-live-out block) live-out)
 	   (let ((old-live-in (ssa-block-live-in block))
 		 (live-in (union (set-difference (ssa-block-live-out block)
-						 (ssa-block-live-kill block) :test #'equalp)
+						 (ssa-block-live-kill block))
 				 (ssa-block-live-gen block)
-				 :test #'equalp)))
-	     (when (or (set-difference live-in old-live-in :test #'equalp)
-		       (set-difference old-live-in live-in :test #'equalp))
+				 :test #'eq)))
+	     (when (or (set-difference live-in old-live-in)
+		       (set-difference old-live-in live-in))
 	       (setf changed t))
 	     (setf (ssa-block-live-in block) live-in))))
        (when changed
 	 (go start)))))
-
-
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2945,3 +2938,10 @@
 ;;;;; TODOs
 ;;; - Don't duplicate PLACE's in PHI-OPERANDS
 ;;; - Search for this comment: FIXME, recursive write/read issue
+
+(defun load-clcomp ()
+  (push "/Users/milan/projects/cl-dot/" asdf:*central-registry*)
+  (push "/Users/milan/projects/clcomp.github/" asdf:*central-registry*)
+  (ql:quickload "cl-dot")
+  (ql:quickload "clcomp")
+  (load "/Users/milan/projects/clcomp.github/compiler/cldot.lisp"))
