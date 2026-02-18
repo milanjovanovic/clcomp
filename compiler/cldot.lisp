@@ -65,12 +65,10 @@
 	    (clcomp.ssa::ssa-value (format nil "SSA-VALUE ~A" (clcomp.ssa::ssa-value-value ir))))))
 
 (defun format-phi (phi)
-  (format nil "~A: ~{~a~^, ~}" (car phi)
-	  (etypecase (cdr phi)
-	    (clcomp.ssa::phi 
-	     (mapcar #'clcomp.ssa::get-place-name (clcomp.ssa::phi-operands (cdr phi))))
-	    (clcomp.ssa::virtual-place
-	     (list (clcomp.ssa::get-place-name (cdr phi)))))))
+  (format nil "~A: ~{~a~^, ~}" (clcomp.ssa::get-place-name (clcomp.ssa::phi-place phi))
+	  (if (clcomp.ssa::get-phi-place-reduced-value (clcomp.ssa::phi-place phi))
+	      (list (clcomp.ssa::get-place-name (clcomp.ssa::get-phi-place-reduced-value (clcomp.ssa::phi-place phi)) ))
+	      (mapcar #'clcomp.ssa::get-place-name (clcomp.ssa::phi-operands  phi)))))
 
 (defun format-defined-place (dplace)
   (format nil "~A : ~A" (car dplace) (clcomp.ssa::get-place-name (cdr dplace))))
@@ -104,7 +102,7 @@
 				  do (cl-who:htm (cl-who:str (cl-who:escape-string (format-place place "live_out"))) (:br)))))
 		      (:tr (:td 
 			    (loop for phi in (clcomp.ssa::ssa-block-phis block)
-				  when (clcomp.ssa::phi-p (cdr phi))
+				  when (clcomp.ssa::phi-p  phi)
 				    do (cl-who:htm (cl-who:str (cl-who:escape-string (format-phi phi))) (:br)))))
 		      (:tr (:td :align "left"
 				(loop for ins in ir

@@ -41,9 +41,9 @@
 (defstruct ssa-env labels blocks)
 (defstruct lambda-ssa blocks (delayed-blocks (make-hash-table))
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
-	   (env (make-ssa-env)) fixups sub-lambdas
-	   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
-	   (redundant-phis (make-hash-table :test #'equalp)))
+  (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
+  (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
+  (redundant-phis (make-hash-table :test #'equalp)))
 
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
   sealed processed label defined phis live-in virtuals live-gen live-kill live-out live-phi-operands exit)
@@ -261,25 +261,10 @@
 	       (= (ssa-block-index next-block)
 		  (ssa-block-index b2)))))))
 
-(defun ssa-block-add-phi (ssa-block phi)
-  (setf (ssa-block-phis ssa-block)
-	(acons (named-place-name (phi-place phi)) phi
-	       (ssa-block-phis ssa-block))))
-
-(defun ssa-block-replace-phi (ssa-block phi-place new-value)
-  (let ((cons (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
-    (setf (cdr cons) new-value)))
-
-(defun ssa-block-maybe-replace-phi (ssa-block phi-place new-value)
-  (let ((cons (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
-    (when cons
-      (setf (cdr cons) new-value))))
-
-(defun ssa-block-get-maybe-phi (ssa-block phi-place)
-  (cdr (assoc (named-place-name phi-place) (ssa-block-phis ssa-block))))
-
-(defun ssa-block-is-place-phi (ssa-block phi-place)
-  (phi-p (ssa-block-get-maybe-phi ssa-block phi-place)))
+(defun ssa-block-add-phi (ssa-block phi lambda-ssa)
+  (push phi (ssa-block-phis ssa-block))
+  (let ((all-phis-map (lambda-ssa-all-phis lambda-ssa)))
+    (setf (gethash (phi-place phi) all-phis-map) phi)))
 
 (defun add-phi-connections (phi operand lambda-ssa)
   (unless (equalp (phi-place phi) operand)
@@ -289,26 +274,13 @@
 (defun get-phi-connections (phi-place lambda-ssa)
   (gethash (named-place-name phi-place) (lambda-ssa-phi-connections lambda-ssa)))
 
-;;; FIXME, when addiing replacement we need to create new operand to PHI connection
+;;; FIXME, when adding replacement we need to create new operand to PHI connection
 (defun add-phi-value-replacement (phi value lambda-ssa)
   (let ((phi-place (phi-place phi)))
     (setf (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)) value)
     ;; not point off adding conections to PHI if VALUE is not PHI-PLACE
     (when (phi-place-p value)
       (add-phi-connections phi value lambda-ssa))))
-
-(defun get-phi-value-replacement (phi-place lambda-ssa)
-  (gethash phi-place (lambda-ssa-redundant-phis lambda-ssa)))
-
-(defun maybe-get-simplified-phi-value (place block lambda-ssa)
-  (declare (ignore block lambda-ssa))
-  (if (phi-place-p place)
-      (let ((reduced (get-phi-place-reduced-value place)))
-	(or reduced place))
-      place))
-
-(defun ssa-block-all-phis (ssa-block)
-  (mapcar #'cdr (ssa-block-phis ssa-block)))
 
 (defun ssa-add-block (lambda-ssa block)
   (if (lambda-ssa-blocks lambda-ssa)
@@ -1031,7 +1003,6 @@
 	       (return-from try-remove-trivial-phi phi))
 	      (t (setf same operand)))))
     (assert same) ; by paper this can be nil (phi without operands), but not in our case
-    (ssa-block-replace-phi block phi-place same)
     ;; FIXME, when adding replacement, if replacement is new PHI then we need to fix PHI operand usages
     (add-phi-value-replacement phi same lambda-ssa)
     (let ((phi-usages (get-phi-connections phi-place lambda-ssa)))
@@ -1055,7 +1026,7 @@
 
 (defun seal-block (ssa-block lambda-ssa)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (let ((phis (ssa-block-all-phis ssa-block)))
+  (let ((phis (ssa-block-phis ssa-block)))
     (dolist (phi phis)
       (when (phi-incomplete phi)
 	(setf (phi-incomplete phi) nil)
@@ -1069,7 +1040,7 @@
 	(let* ((phi-place (generate-phi-place lambda-ssa))
 	       (phi (make-phi :incomplete t :variable place
 			      :place phi-place :block-index (ssa-block-index block))))
-	  (ssa-block-add-phi block phi)
+ 	  (ssa-block-add-phi block phi lambda-ssa)
 	  (set-block-def block (named-place-name place) phi-place))
 	(when predecessors
 	  (if (= (length predecessors) 1)
@@ -1078,7 +1049,7 @@
 	      (let* ((phi-place (generate-phi-place lambda-ssa))
 		     (phi (make-phi :variable place :place phi-place
 				    :block-index (ssa-block-index block))))
-		(ssa-block-add-phi block phi)
+		(ssa-block-add-phi block phi lambda-ssa)
 		(set-block-def block (named-place-name place) phi-place)
 		(phi-add-operands place phi predecessors block lambda-ssa)
 		phi-place))))))
@@ -1089,6 +1060,7 @@
       (read-variable-recursive place block lambda-ssa)))
 
 ;;; FIXME, recursive write/read issue
+;;; Looks like this is working, not sure how
 ;; (test-ssa '(lambda (a)
 ;; 		 (let ((b (block foo
 ;; 			    (return-from foo (setf b 1)))))
@@ -1196,24 +1168,25 @@
   (list phc))
 
 (defun lambda-ssa-find-and-replace-phis (lambda-ssa phi-places value)
-  (dolist (sblock (lambda-ssa-blocks lambda-ssa))
-    (dolist (phi-place phi-places)
-      (when (ssa-block-maybe-replace-phi sblock phi-place value)
-	(setf phi-places (remove phi-place phi-places))))
-    (when (null phi-places)
-      (return-from lambda-ssa-find-and-replace-phis)))
-  (unless (null phi-places)
-    (error "Can't find all PHI's to replace")))
+  ;; (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+  ;;   (dolist (phi-place phi-places)
+  ;;     (when (ssa-block-maybe-replace-phi sblock phi-place value)
+  ;; 	(setf phi-places (remove phi-place phi-places))))
+  ;;   (when (null phi-places)
+  ;;     (return-from lambda-ssa-find-and-replace-phis)))
+  ;; (unless (null phi-places)
+  ;;   (error "Can't find all PHI's to replace"))
+  )
 
 (defun replace-scc-by-value (phc scc-phis value lambda-ssa)
-  (declare (optimize (debug 3) (speed 0)))
-  (print (list 'replace-scc-by-value scc-phis value))
+  #.*fun-optimize-level*
   (let ((phi-places nil))
     (dolist (phi-node scc-phis)
       (let ((phi-place (phc-get-place phc phi-node)))
 	(push phi-place phi-places)
 	(add-phi-value-replacement (phc-get-phi phc phi-place) value lambda-ssa)))
-    (lambda-ssa-find-and-replace-phis lambda-ssa phi-places value)))
+    ;; (lambda-ssa-find-and-replace-phis lambda-ssa phi-places value)
+    ))
 
 (defun process-scc (scc phc lambda-ssa)
   (declare (optimize (debug 3) (speed 0)))
@@ -1246,16 +1219,16 @@
       (process-scc scc phc lambda-ssa))
     ;; now try again to remove trivial PHI's
     (dolist (b (lambda-ssa-blocks lambda-ssa))
-      (dolist (phi-cons (ssa-block-phis b))
-	(when (and (phi-p (cdr phi-cons))
-		   (not (get-phi-place-reduced-value  (phi-place (cdr phi-cons)))))
-	  (try-remove-trivial-phi (cdr phi-cons) b lambda-ssa))))))
+      (dolist (phi (ssa-block-phis b))
+	(when (and (phi-p phi)
+		   (not (get-phi-place-reduced-value  (phi-place  phi))))
+	  (try-remove-trivial-phi phi b lambda-ssa))))))
 
 (defun collect-maybe-redundant-phis (lambda-ssa)
   (declare (optimize debug))
   (let (good-phis)
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
-      (let ((phis (ssa-block-all-phis sblock)))
+      (let ((phis (ssa-block-phis sblock)))
 	(dolist (maybe-phi phis)
  	  (when  (phi-p maybe-phi)
 	    ;; FIXME, check this
@@ -1690,7 +1663,7 @@
 
 (defun follow-end-blocks (loop-end-blocks header-block lambda-ssa)
   (dolist (end-block loop-end-blocks)
-    (trace end-block header-block lambda-ssa)))
+    (trace-end-block end-block header-block lambda-ssa)))
 
 (defun mark-loop-blocks (lambda-ssa)
   (dolist (header-end-blocks (lambda-ssa-loop-header-blocks lambda-ssa))
@@ -1842,7 +1815,7 @@
 	(when lread
 	  ;; LREAD can be LIST in a case of SSA-VOP
 	  (dolist (orig-read (if (listp lread) lread (list lread)))
-	    (let ((read (maybe-get-simplified-phi-value orig-read block lambda-ssa)))
+	    (let ((read (get-maybe-reduced-place orig-read)))
 	      (pushnew read reads :test #'equalp))))))
     (list reads writes)))
 
@@ -1898,7 +1871,7 @@
   (remove place live :test #'equalp))
 
 ;;; FIXME, not sure about this
-(defun live-add-phis-operands (live phis block lambda-ssa)
+#+nil(defun live-add-phis-operands (live phis block lambda-ssa)
   (let ((block-virtuals (ssa-block-virtuals block))
 	(block-defined (ssa-block-defined block)))
     (declare (ignorable block-defined))
@@ -2202,7 +2175,7 @@
     (setf (ssa-block-live-kill block) nil)
     (setf (ssa-block-live-in block) nil)
     (setf (ssa-block-live-out block) nil)
-    (dolist (phi (ssa-block-all-phis block))
+    (dolist (phi (ssa-block-phis block))
       (when (phi-p phi)
 	(let ((reduced-place (get-phi-place-reduced-value (phi-place phi))))
 	  ;; We should not have reduce-place to be PHI-PLACE (at least I think it can't be reduced to another PHI)
@@ -2232,7 +2205,7 @@
 		(pushnew read (ssa-block-live-gen block) :test #'equalp)))))))))
 
 (defun get-block-phi-operands-out (b succ-block)
-  (let ((succ-phis (remove-if-not #'phi-p (ssa-block-all-phis succ-block)))
+  (let ((succ-phis (remove-if-not #'phi-p (ssa-block-phis succ-block)))
 	(operands nil))
     (when succ-phis
       (dolist (phi-cons (ssa-block-live-phi-operands b))
@@ -2576,7 +2549,7 @@
 
 (defun hash-block-phis (block)
   (let ((h (make-hash-table)))
-    (dolist (phi (ssa-block-all-phis block))
+    (dolist (phi (ssa-block-phis block))
       (when (phi-p phi)
 	(setf (gethash (named-place-name (phi-place phi)) h) phi)))
     h))
@@ -2666,196 +2639,6 @@
   (let ((*optimize-redundant-blocks* nil))
     (test-ssa exp "not_optimized")))
 
-;;; ChatGPT example of PHIS redundant elimination
-#+nil
-(make-lssa '(lambda (x y)
-	     (let ((z (if (< x y) x y))
-		   (w (if (< x y) x y)))
-	       (+ z w))))
-;;; Test case that currently doesn't work
-#+nil
-(test-ssa '(lambda (a)
-	    (let ((c 0))
-	      (tagbody 
-	       bar
-		 (setf c (+ c 1))
-		 (when a (go bar)))
-	      c)))
-;;; this one triggers redundant phi's optimization
-#+nil
-(test-ssa '(lambda (a)
-	    (tagbody
-	       (when 1 (go third))
-	     second
-	       (print 1)
-	     third
-	       (when 2 (go second)))
-	    a))
-#+nil
-(test-ssa '(lambda (a b)
-	    (tagbody
-	     start
-	       (setf a 1)
-	       (when b
-		 (go end))
-	     baz
-	       (read a)
-	       (if b
-		   (go start)
-		   (go end))
-	     end)
-	    a))
-
-;;; maybe we can trigger reduced PHI here ?
-#+nil
-(lambda (x)
-  (tagbody
-   bla
-     (if x
-	 (progn
-	   (setf x (+ x 20))
-	   (go while))
-	 (go exit))
-   while
-     (tagbody
-      start
-	(when (> x 1)
-	  (setf x (+ x 10))
-	  (go bla)))
-   exit)
-  x)
-
-
-;;; triggets stack overflow
-;;; fixed with WHEN macro bug fix but this will be triggered somewhere else
-#+nil
-(generate  (make-lssa  '(lambda (a b)
-			 (tagbody
-			  start
-			    (setf a 1)
-			    (when b (print 10)
-				  (go end))
-			  baz
-			    (read a)
-			    (if b
-				(go start)
-				(go end))
-			  end)
-			 a)))
-
-;;; notes
-;;; * kad se interval zavrsava negde u istoj tacki moze da pocne drugi interval ako se tu definise nova varijabla, samo mora da seobrati paznja na redosled
-;;; * kad resavamo phi, insertujemo move na kraju prethodnog bloka, mozda treba da napravimo novi blok 
-
-;;; FIXME
-;; 
-;;; triggers endless loop
-#+nil
-(test-ssa '(lambda (a)
-            (dotimes (i a)
-              (dotimes (c i)
-                (print 1)))))
-
-;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order
-
-;; throws error
-#+nil
-(test-ssa '(lambda (a)
-	    (dolist (l a)
-	      (dolist (g l)
-		(print l)))))
-
-
-;;; SSA, blocks order
-;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order (when emiting assembly code we can do IF-NOT and in that way just emit one JUMP instead of TWO)
-;; 
-;;; sometimes we have UNCOND-JUMP (in SSA-IF) form that jumps to next BLOCK in order
-
-
-;;; cl-dot, we are drawing this incorrectly, order is not accurate
-#+nil
-(test-ssa '(lambda (x a)
-	    (tagbody 
-	       (go end)
-	     x
-	       (setf x (+ 1 x))
-	       (go real-end)
-	     y
-	       (setf x (+ 2 x))
-	       (go real-end)
-	     end
-	       (if a
-		   (go x)
-		   (go y))
-	     real-end)
-	    x))
-
-;;; FIXME
-;;; there is bug when removing redundant blocks, we are removing necessary blocks
-;;; There is error in BUILD-INTERVALS here
-
-#+nil
-(test-ssa '(lambda (x a)
-	    (tagbody foo
-	       (tagbody 
-		  (go end)
-		x
-		  (setf x (+ 1 x))
-		  (go real-end)
-		y
-		  (setf x (+ 2 x))
-		  (go real-end)
-		end
-		  (if a
-		      (go x)
-		      (go y))
-		real-end)
-	       (go foo))))
-#+nil
-(test-ssa '(lambda (x a)
-	    (tagbody foo
-	       (print x)
-	       (go foo))))
-
-
-#+nil
-(make-lssa '(lambda (a)
-	     (tagbody 
-		(go foo)
-	      a1
-		(print 1)
-	      a2 
-		(print 2) 
-	      a3
-		(print 3)
-	      foo
-		(if a 
-		    (go a1)
-		    (go a2))
-	      z)) "default")
-
-
-;;; this doesn't work
-#+nil(test-ssa '(lambda (a)
-		 (block foo
-		   (tagbody
-		      (go bla)
-		      exit
-		      (return-from foo 1)
-		      bla
-		      (when a
-			(go exit))))))
-
-;;; UNCOND-JUMP is not translated to SUCC for next block
-;;; should it be translated ??
-#+nil
-(test-ssa '(lambda (a)
-		 (multiple-value-bind (x y)
-		     (block foo
-		       (when a
-			 (return-from foo (values 1 2)))
-		       (values 3 4))
-		   (list x y))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -3157,91 +2940,8 @@
     (translate-to-asm lambda-ssa alloc)
     lambda-ssa))
 
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; eliminate excessive moves
-
-(defun optimize-block-loads (sblock)
-  (declare (ignore sblock)))
-
-(defun optimize-loads (lambda-ssa)
-  (dolist (sblock (lambda-ssa-blocks lambda-ssa))
-    (optimize-block-loads sblock)))
-
-
-#|
-This is fist example we need to solve regarding PHI mergings
-(clcomp-compile '(lambda (a b)
-		       (if b
-			   (setf a 1)
-			   (setf a 2))
-		       a
-))
-
-
-Irreducible control flow example
-(clcomp-compile '(lambda (x)
-  (tagbody
-    start
-      (if (> x 0)
-          (progn
-            (setf x (- x 1))
-            (go mid))
-          (go end))
-
-    mid
-      (if (oddp x)
-          (progn
-            (setf x (+ x 2))
-            (go start))
-          (setf x (* x 2)))
-    
-    end
-      (print x))))
-
-|#
-
-
-
-
-;; 
-#+nil
-(test-ssa '(lambda  (x)
-	    (tagbody
-	     start
-	       (when (> x 0)
-		 (decf x)
-		 (go mid))
-	       (go end)
-
-	     mid
-	       (when (oddp x)
-		 (go start))
-	       (go end)
-
-	     end
-	       (prin 1))))
-
-#+nil
-(test-ssa '(lambda (x)
-	    (tagbody
-	     start
-	       (if (> x 0)
-		   (progn
-		     (setf x (- x 1))
-		     (go mid))
-		   (go end))
-
-	     mid
-	       (if (oddp x)
-		   (progn
-		     (setf x (+ x 2))
-		     (go start))
-		   (setf x (* x 2)))
-    
-	     end
-	       (print x))))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;; TODO
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; TODOs
 ;;; - Don't duplicate PLACE's in PHI-OPERANDS
+;;; - Search for this comment: FIXME, recursive write/read issue

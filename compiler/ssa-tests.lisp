@@ -61,6 +61,30 @@
 				    (5 ((LIVE-IN (V-11)) (LIVE-OUT (V-15))))
 				    (6 ((LIVE-IN (V-11)) (LIVE-OUT (V-14))))
 				    (7 ((LIVE-IN ()) (LIVE-OUT ()) (PHIS ((PHI-PLACE-0 (V-14 V-15))))))))
+				  ;; ("old-test" (LAMBDA (X)
+				  ;; 		(TAGBODY
+				  ;; 		 START
+				  ;; 		   (IF (> X 0)
+				  ;; 		       (PROGN
+				  ;; 			 (SETF X (- X 1))
+				  ;; 			 (GO MID))
+				  ;; 		       (GO END))
+
+				  ;; 		 MID
+				  ;; 		   (IF (ODDP X)
+				  ;; 		       (PROGN
+				  ;; 			 (SETF X (+ X 2))
+				  ;; 			 (GO START))
+				  ;; 		       (SETF X (* X 2)))
+    
+				  ;; 		 END
+				  ;; 		   (PRINT X)))
+				  ;;  ((0 ((LIVE-IN ()) (LIVE-OUT (V-8 V-11))))
+				  ;;   (2 ((LIVE-IN (V-8 V-11)) (LIVE-OUT (V-11))))
+				  ;;   (3 ((LIVE-IN ()) (LIVE-OUT ())))
+				  ;;   (5 ((LIVE-IN (V-11)) (LIVE-OUT (V-15))))
+				  ;;   (6 ((LIVE-IN (V-11)) (LIVE-OUT (V-14))))
+				  ;;   (7 ((LIVE-IN ()) (LIVE-OUT ()) (PHIS ((PHI-PLACE-0 (V-14 V-15))))))))
 				  ("irreducible-1" (LAMBDA (X)
 						     (LET ((SAVED (* X 2)))
 						       (TAGBODY
@@ -126,9 +150,9 @@
 	(error "Can't find place")))))
 
 (defun test-assert-phis (phis block-res)
-  (declare (optimize debug))
-  (let ((block-phis (ssa-block-all-phis block-res)))
-    (setf block-phis (remove-if-not #'phi-p block-phis))
+  #.*fun-optimize-level*
+  (let ((block-phis (ssa-block-phis block-res)))
+    (setf block-phis (remove-if (lambda (phi) (get-phi-place-reduced-value (phi-place phi))) block-phis))
     (assert (= (length phis)
 	       (length block-phis)))
     (let ((block-phi-map (make-hash-table :test #'equalp)))
@@ -168,3 +192,194 @@
 			    block-index throw-error)
 	  (test-assert-phis phis b)))
       (format t "~%"))))
+
+
+#+nil
+(make-lssa '(lambda (x y)
+	     (let ((z (if (< x y) x y))
+		   (w (if (< x y) x y)))
+	       (+ z w))))
+;;; Test case that currently doesn't work
+#+nil
+(test-ssa '(lambda (a)
+	    (let ((c 0))
+	      (tagbody 
+	       bar
+		 (setf c (+ c 1))
+		 (when a (go bar)))
+	      c)))
+;;; this one triggers redundant phi's optimization
+#+nil
+(test-ssa '(lambda (a)
+	    (tagbody
+	       (when 1 (go third))
+	     second
+	       (print 1)
+	     third
+	       (when 2 (go second)))
+	    a))
+#+nil
+(test-ssa '(lambda (a b)
+	    (tagbody
+	     start
+	       (setf a 1)
+	       (when b
+		 (go end))
+	     baz
+	       (read a)
+	       (if b
+		   (go start)
+		   (go end))
+	     end)
+	    a))
+
+;;; maybe we can trigger reduced PHI here ?
+#+nil
+(lambda (x)
+  (tagbody
+   bla
+     (if x
+	 (progn
+	   (setf x (+ x 20))
+	   (go while))
+	 (go exit))
+   while
+     (tagbody
+      start
+	(when (> x 1)
+	  (setf x (+ x 10))
+	  (go bla)))
+   exit)
+  x)
+
+
+;;; triggets stack overflow
+;;; fixed with WHEN macro bug fix but this will be triggered somewhere else
+#+nil
+(generate  (make-lssa  '(lambda (a b)
+			 (tagbody
+			  start
+			    (setf a 1)
+			    (when b (print 10)
+				  (go end))
+			  baz
+			    (read a)
+			    (if b
+				(go start)
+				(go end))
+			  end)
+			 a)))
+
+;;; notes
+;;; * kad se interval zavrsava negde u istoj tacki moze da pocne drugi interval ako se tu definise nova varijabla, samo mora da seobrati paznja na redosled
+;;; * kad resavamo phi, insertujemo move na kraju prethodnog bloka, mozda treba da napravimo novi blok 
+
+;;; FIXME
+;; 
+;;; triggers endless loop
+#+nil
+(test-ssa '(lambda (a)
+            (dotimes (i a)
+              (dotimes (c i)
+                (print 1)))))
+
+;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order
+
+;; throws error
+#+nil
+(test-ssa '(lambda (a)
+	    (dolist (l a)
+	      (dolist (g l)
+		(print l)))))
+
+
+;;; SSA, blocks order
+;;; sometimes we have COND-JUMP that jumps to BLOCK that is next in order (when emiting assembly code we can do IF-NOT and in that way just emit one JUMP instead of TWO)
+;; 
+;;; sometimes we have UNCOND-JUMP (in SSA-IF) form that jumps to next BLOCK in order
+
+
+;;; cl-dot, we are drawing this incorrectly, order is not accurate
+#+nil
+(test-ssa '(lambda (x a)
+	    (tagbody 
+	       (go end)
+	     x
+	       (setf x (+ 1 x))
+	       (go real-end)
+	     y
+	       (setf x (+ 2 x))
+	       (go real-end)
+	     end
+	       (if a
+		   (go x)
+		   (go y))
+	     real-end)
+	    x))
+
+;;; FIXME
+;;; there is bug when removing redundant blocks, we are removing necessary blocks
+;;; There is error in BUILD-INTERVALS here
+
+#+nil
+(test-ssa '(lambda (x a)
+	    (tagbody foo
+	       (tagbody 
+		  (go end)
+		x
+		  (setf x (+ 1 x))
+		  (go real-end)
+		y
+		  (setf x (+ 2 x))
+		  (go real-end)
+		end
+		  (if a
+		      (go x)
+		      (go y))
+		real-end)
+	       (go foo))))
+#+nil
+(test-ssa '(lambda (x a)
+	    (tagbody foo
+	       (print x)
+	       (go foo))))
+
+
+#+nil
+(make-lssa '(lambda (a)
+	     (tagbody 
+		(go foo)
+	      a1
+		(print 1)
+	      a2 
+		(print 2) 
+	      a3
+		(print 3)
+	      foo
+		(if a 
+		    (go a1)
+		    (go a2))
+	      z)) "default")
+
+
+;;; this doesn't work
+#+nil(test-ssa '(lambda (a)
+		 (block foo
+		   (tagbody
+		      (go bla)
+		      exit
+		      (return-from foo 1)
+		      bla
+		      (when a
+			(go exit))))))
+
+;;; UNCOND-JUMP is not translated to SUCC for next block
+;;; should it be translated ??
+#+nil
+(test-ssa '(lambda (a)
+		 (multiple-value-bind (x y)
+		     (block foo
+		       (when a
+			 (return-from foo (values 1 2)))
+		       (values 3 4))
+		   (list x y))))
