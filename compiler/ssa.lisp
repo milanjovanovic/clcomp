@@ -87,6 +87,9 @@
 (eval-when (:load-toplevel :compile-toplevel :execute)
   (defparameter *fun-optimize-level* '(declare (optimize debug))))
 
+(defun instr-fun-call-p (instr)
+  (typep instr 'ssa-fun-call))
+
 ;;; we can have more then one level of reduced value
 ;;; try to get reduced value of already reduced one until we get NIL
 (defun get-phi-place-reduced-value (place &optional last)
@@ -1749,15 +1752,10 @@
   (range-start (first (interval-ranges interval))))
 
 (defun interval-live-at-index-p (interval index)
-  (do* ((ranges (interval-ranges interval) (cdr ranges))
-	(range (car ranges) (car ranges)))
-       ((or (null range)
-	    (> (range-start range)
-	       index))
-	nil)
+  (dolist (range (interval-ranges interval))
     (when (and (>= index (range-start range))
-	       (<= index (range-end range)))
-      (return t))))
+	       (< index (range-end range)))
+      (return-from interval-live-at-index-p t))))
 
 (defun ssa-place (place)
   (etypecase place
@@ -1866,25 +1864,6 @@
 (defun remove-from-live (live place)
   (remove place live :test #'equalp))
 
-;;; FIXME, not sure about this
-#+nil(defun live-add-phis-operands (live phis block lambda-ssa)
-  (let ((block-virtuals (ssa-block-virtuals block))
-	(block-defined (ssa-block-defined block)))
-    (declare (ignorable block-defined))
-    (dolist (phi phis)
-      (when (phi-p phi)
-	(dolist (orig-pop (phi-operands phi))
-	  (let ((pop (maybe-get-simplified-phi-value orig-pop block lambda-ssa)))
-	    ;; we should only use PHI operand that is live in block we are processing
-	    ;; FIXME, what in case that we have reduced value of operand that was PHI ?
-	    (when (and (not (find pop live :test #'equalp))
-		       (or (find pop (first block-virtuals) :test #'equalp)
-			   (find pop (second block-virtuals) :test #'equalp))
-		       ;; (find pop block-defined :key #'cdr)
-		       )
-	      (push pop live)))))))
-  live)
-
 (defun make-intervals ()
   (make-hash-table))
 
@@ -1892,10 +1871,9 @@
   (make-hash-table))
 
 (defun add-use-positions (use-positions virtual use-position)
-  (let ((vname (get-place-name virtual)))
-    (setf (gethash vname use-positions)
-	  (cons use-position
-		(gethash vname use-positions)))))
+  (setf (gethash virtual use-positions)
+	(cons use-position
+	      (gethash virtual use-positions))))
 
 (defun get-use-positions (use-positions vname)
   (gethash vname use-positions))
@@ -1908,49 +1886,49 @@
 
 (defun intervals-merge (s1 e1 s2 e2)
   (flet ((overlap (s1 e1 s2 e2)
-	   (and (<= s1 (+ e2 *instr-offset*))
-		(>= e1 (- s2 *instr-offset*)))))
+	   (and (<= s1 e2)
+		(>= e1 s2))))
     (when (overlap s1 e1 s2 e2)
       (list (min s1 s2)
 	    (max e1 e2)))))
 
+(defun ranges-merge-loop (range current-range rest-ranges &optional first-merge result-ranges)
+  #.*fun-optimize-level*
+  (if current-range
+      (let ((merge (intervals-merge (range-start current-range) (range-end current-range)
+				    (range-start range) (range-end range))))
+	(if merge
+	    (let ((new-range (make-range :start (first merge) :end (second merge))))
+	      (ranges-merge-loop new-range (car rest-ranges) (cdr rest-ranges) t result-ranges))
+	    (if first-merge
+		(append (reverse result-ranges) (cons range (cons current-range rest-ranges)))
+		(ranges-merge-loop range (car rest-ranges) (cdr rest-ranges) nil (cons current-range result-ranges)))))
+      (cons range (reverse result-ranges))))
+
+(defun add-range-loop (interval start end)
+  #.*fun-optimize-level*
+  (let ((ranges (interval-ranges interval)))
+    (sort  (ranges-merge-loop (make-range :start start :end end) (car ranges) (cdr ranges))
+	   (lambda (r1 r2)
+	     (< (range-start r1) (range-start r2))))))
+
 (defun add-range (intervals name start end)
   #.*fun-optimize-level*
   (let ((interval (get-interval intervals name)))
-    (unless interval
-      (setf interval (make-interval :name name))
-      (add-interval intervals interval))
-    (loop
-      with merged
-      do
-	 (let ((active-range (first (interval-ranges interval))))
-	   (let ((merged-ranges (and active-range
-				     (intervals-merge start end
-						      (range-start active-range)
-						      (range-end active-range)))))
-	     (if merged-ranges
-		 (progn
-		   (pop (interval-ranges interval))
-		   (setf start (first merged-ranges)
-			 end (second merged-ranges)))
-		 (progn
-		   (unless merged
-		     (push (make-range :start start
-				       :end end)
-			   (interval-ranges interval)))
-		   (return))))))
-    interval))
-
+    (if interval
+	(setf (interval-ranges interval) (add-range-loop interval start end))
+	(let ((interval (make-interval :name name :ranges (list (make-range :start start :end end)))))
+	  (add-interval intervals interval)))))
 
 (defun shorten-current-range (intervals place start)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (let* ((name (get-place-name place))
-	 (interval (get-interval intervals name)))
-    (when interval
-      (let ((range (first (interval-ranges interval))))
-	(setf (range-start range) start)))))
+  #.*fun-optimize-level*
+  (let* ((interval (get-interval intervals place)))
+    (if interval
+	(let ((range (first (interval-ranges interval))))
+	  (setf (range-start range) start))
+	(debug-print "Missing range, probably single WRITE no READ" place))))
 
-(defun maybe-merge-ranges (ranges)
+#+nil(defun maybe-merge-ranges (ranges)
   (let (merged-ranges)
     (let* ((sorted (sort ranges #'< :key #'range-start))) 
       (dolist (range sorted)
@@ -1969,21 +1947,24 @@
 (defun range-split (range position)
   (if (= position (range-start range))
       (values nil range)
-      (let ((old-range (make-range :start (range-start range) :end (- position *instr-offset*)))
-	    (new-range (make-range :start position :end (range-end range))))
-	(dolist (pos (range-use-positions range))
-	  (if (<= (use-pos-index pos)
-		  (range-end old-range))
-	      (push pos (range-use-positions old-range))
-	      (push pos (range-use-positions new-range))))
-	(setf (range-use-positions old-range)
-	      (reverse (range-use-positions old-range)))
-	(setf (range-use-positions new-range)
-	      (reverse (range-use-positions new-range)))
-	(values old-range new-range))))
+      (if (and (> position (range-start range))
+	       (< position (range-end range)))
+	  (let ((old-range (make-range :start (range-start range) :end position))
+		(new-range (make-range :start position :end (range-end range))))
+	    (dolist (pos (range-use-positions range))
+	      (if (>= (use-pos-index pos)
+		      (range-start new-range))
+		  (push pos (range-use-positions new-range))
+		  (push pos (range-use-positions old-range))))
+	    (setf (range-use-positions old-range)
+		  (reverse (range-use-positions old-range)))
+	    (setf (range-use-positions new-range)
+		  (reverse (range-use-positions new-range)))
+	    (values old-range new-range))
+	  range)))
 
 (defun interval-get-next-use (interval &optional (index 0))
-  (prog1 0
+  (prog1 most-positive-fixnum
     (dolist (range (interval-ranges interval))
       (unless (< (range-end range) index)
 	(dolist (use-pos (range-use-positions range))
@@ -1992,28 +1973,33 @@
 	      (return-from interval-get-next-use up-index))))))))
 
 (defun split-interval (interval position)
-  (let* ((range-position (position position (interval-ranges interval)
-				   :test (lambda (v e)
-					   (and (>= v (range-start e))
-						(<= v (range-end e))))))
-	 (interval-ranges (interval-ranges interval))
-	 (rest-ranges (nthcdr range-position (interval-ranges interval)))
-	 (split-range (first rest-ranges))
-	 (interval-name (interval-name interval)))
-    (multiple-value-bind (first-range second-range)
-	(range-split split-range position)
-      (if first-range
-	  (setf (interval-ranges interval)
-		(append
-		 (subseq interval-ranges 0 range-position)
-		 (list first-range)))
-	  (setf (interval-ranges interval) nil))
-      (values interval
-	      (make-interval :name interval-name
-			     :ranges (cons second-range
-					   (cdr rest-ranges)))))))
+  #.*fun-optimize-level*
+  (let ((range-position (position position (interval-ranges interval)
+				  :test (lambda (v e)
+					  (and (>= v (range-start e))
+					       (< v (range-end e)))))))
+    (if range-position
+	(let* ((interval-ranges (interval-ranges interval))
+	       (rest-ranges (nthcdr range-position (interval-ranges interval)))
+	       (split-range (first rest-ranges))
+	       (interval-name (interval-name interval)))
+	  (multiple-value-bind (first-range second-range)
+	      (range-split split-range position)
+	    (when second-range
+	      (setf (interval-ranges interval)
+		    (append
+		     (subseq interval-ranges 0 range-position)
+		     (if first-range
+			 (list first-range)
+			 (list)))))
+	    (values (when (interval-ranges interval)
+		      interval)
+		    (when second-range
+		      (make-interval :name interval-name
+				     :ranges (cons second-range (cdr rest-ranges)))))))
+	interval)))
 
-(defun try-intervals-merge (intervals)
+#+nil(defun try-intervals-merge (intervals)
   (maphash (lambda (k interval)
 	     (declare (ignore k))
 	     (setf (interval-ranges interval)
@@ -2030,18 +2016,18 @@
 	 (return  nil))
        (let ((first-range (first r2))
 	     (first-c-range (first r1)))
-	 (when (> (range-start first-range)
-		  (range-end first-c-range))
+	 (when (>= (range-start first-range)
+		   (range-end first-c-range))
 	   (setf r1 (cdr r1))
 	   (go loop-start))
-	 (when (> (range-start first-c-range)
-		  (range-end first-range))
+	 (when (>= (range-start first-c-range)
+		   (range-end first-range))
 	   (setf r2 (cdr r2))
 	   (go loop-start))
 	 (return (max (range-start first-range )
 		      (range-start first-c-range)))))))
 
-;;; FIXME / QUESTIONABLE
+;;; fixme / QUESTIONABLE
 (defun intervals-first-intersection (i1 i2)
   (ranges-intersection (interval-ranges i1)
 		       (interval-ranges i2)))
@@ -2071,10 +2057,10 @@
 (defun add-intervals-use-positions (intervals use-positions)
   (let (itls)
     (maphash (lambda (name interval)
-	       (fill-use-positions interval (get-use-positions use-positions name) )
+	       (fill-use-positions interval (get-use-positions use-positions name))
 	       (push interval itls))
 	     intervals)
-    (sort itls #'< :key #'interval-start)))
+    itls))
 
 ;;; FIXME, RANGE-END should be exclusive
 (defun build-intervals (lambda-ssa)
@@ -2084,12 +2070,15 @@
     (dolist (b (reverse (lambda-ssa-blocks lambda-ssa)))
       (when (ssa-block-first-instruction b)
 	(let ((start (ssa-form-index (ssa-block-first-instruction b)))
-	      (end (ssa-form-index (ssa-block-last-instruction b)))
+	      (end (+ 2 (ssa-form-index (ssa-block-last-instruction b))))
 	      (live-out (ssa-block-live-out b)))
 
 	  (dolist (place live-out)
-	    (let ((place-name (get-place-name place)))
-	      (add-range intervals place-name start end)))
+	    (add-range intervals place start end))
+
+	  ;; FIXME, SSA-PLACE currently only works on VIRTUAL-PLACE and PHI-PLACE
+	  ;; extend this logic to handle all the places (physical registers too)
+	  ;; Look at "fixed intervals" from the "Linear scan" paper
 
 	  (dolist (instr (reverse (ssa-block-ssa b)))
 	    (let* ((instr-index (ssa-form-index instr))
@@ -2100,69 +2089,25 @@
 		(dolist (write (if (listp writes)
 				   writes
 				   (list writes)))
-		  ;; FIXME, just one write to place that is never read
-		  ;; we sure need to allocate register for this
 		  (let ((write (get-maybe-reduced-place write)))
 		    (unless (shorten-current-range intervals write instr-index)
-		      (add-range intervals (get-place-name write) instr-index instr-index))
+		      ;; NOTE, this is for just one write to place that is never read
+		      ;; we sure need to allocate register for this
+		      (add-range intervals write instr-index (+ 1 instr-index)))
 		    (add-use-positions use-positions write (make-use-write-pos :index instr-index)))))
-	      ;; FIXME, read is always adding RANGE
-	      ;; when we then have WRITE we only shorten last RANGE
 	      ;; READS can be LIST in a case of SSA-VOP
 	      (when reads
 		(dolist (orig-read (if (listp reads) reads (list reads)))
 		  (let ((read (get-maybe-reduced-place orig-read)))
-		    (add-range intervals (get-place-name read) start instr-index)
+		    (add-range intervals read start instr-index)
 		    (add-use-positions use-positions read (make-use-read-pos :index instr-index))))))))))
-    (add-intervals-use-positions intervals use-positions)))
+    (let ((ints (add-intervals-use-positions intervals use-positions)))
+      (sort ints #'< :key #'interval-start))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Alternative Intervals building/Linear Scan from "Linear scan register allocation for Java HotSpot Client Compiler"
 ;;; we are not using original Wimmer & Franz algorithm because of irreducible loops
 ;;; It's a pity because now we are using fixpoint computation to calculate intervals
-
-#+nil(defun insert-block-between (before-block after-block)
-       (let ((new-block (make-new-ssa-block)) ;; FIXME, MAKE-NEW-SSA neds LAMBDA-SSA as argument
-	(before-index (ssa-block-index before-block))
-	(after-index (ssa-block-index after-block)))
-    (setf (ssa-block-succ new-block) before-index)
-    (setf (ssa-block-predecessors before-block)
-	  (substitute (ssa-block-index new-block) after-index
-		      (ssa-block-predecessors before-block)))
-    (cond ((= before-index (ssa-block-succ after-block))
-	   (setf (ssa-block-succ after-block) (ssa-block-index new-block)))
-	  ((= before-index (ssa-block-cond-jump after-block))
-	   (setf (ssa-block-cond-jump after-block) (ssa-block-index new-block)))
-	  ((= before-index (ssa-block-uncond-jump after-block))
-	   (setf (ssa-block-uncond-jump after-block) (ssa-block-index new-block))))
-    new-block))
-
-#+nil(defun find-phi-operand-block (blocks operand)
-  (dolist (b blocks)
-    (when (or (find operand (first (ssa-block-virtuals b)) :test #'equalp)
-	      (find operand (second (ssa-block-virtuals b)) :test #'equalp))
-      (return b))))
-
-#+nil(defun insert-moves-for-phi (lambda-ssa)
-       (dolist (block lambda-ssa)
-	 (let ((phis (ssa-block-phis block))
-	       (predecessors (ssa-block-predecessors block)))
-	   (when phis
-	     (unless (> (length predecessors) 1)
-	       (error "We should have more than 1 predecessor here !"))
-	     (let ((pblocks (mapcar (lambda (i)
-				      (ssa-find-block-by-index lambda-ssa i))
-				    predecessors)))
-	       (dolist (operand (phi-operands phi))
-		 (let ((operand-block (find-phi-operand-block pblocks operand)))
-		   (unless operand-block
-		     (error "Can't find block for PHI operand"))
-		   (when (> 1 (length (ssa-block-successors-indexes operand-block)))
-		     (setf operand-block (insert-block-between block operand-block)))
-		   )))))))
-
-;;; FIXME, if PHI have two or more ir operands that are the same then we can replace this PHI with just OPERAND
-;;; See TRY-REMOVE-TRIVIAL-PHI
 
 (defun compute-local-live-sets (lambda-ssa)
   #.*fun-optimize-level*
@@ -2174,7 +2119,7 @@
     (dolist (phi (ssa-block-phis block))
       (when (phi-p phi)
 	(let ((reduced-place (get-phi-place-reduced-value (phi-place phi))))
-	  ;; We should not have reduce-place to be PHI-PLACE (at least I think it can't be reduced to another PHI)
+	  ;; We should not have reduce-place to be PHI-PLACE (or maybe it can ?)
 	  (assert (not (phi-place-p reduced-place)))
 	  (if reduced-place
 	      (pushnew reduced-place (ssa-block-live-gen block))
@@ -2202,20 +2147,18 @@
 
 (defun get-block-phi-operands-out (b succ-block)
   #.*fun-optimize-level*
-  (let ((succ-phis (remove-if-not #'phi-p (ssa-block-phis succ-block)))
-	(operands nil))
-    (when succ-phis
-      (dolist (phi-cons (ssa-block-live-phi-operands b))
-	(let ((phi (find (car phi-cons) succ-phis)))
-	  (when (and phi
-		     (not (get-phi-place-reduced-value (phi-place phi))))
-	    (let ((operand (get-maybe-reduced-place (cdr phi-cons))))
-	      (when  (dolist (o (phi-operands phi))
-		       (when (equal (get-maybe-reduced-place o) operand)
-			 (return t)))
-		(push operand operands))))))
-
-      operands)))
+  (let ((operands nil)
+	(succ-index (ssa-block-index succ-block)))
+    (dolist (phi-cons (ssa-block-live-phi-operands b))
+      (let ((phi (car phi-cons)))
+	(when (and (phi-p phi)
+		   ;; we need to match PHI index with B index, we only want operands if it matches
+		   (= (phi-block-index phi) succ-index)
+		   (not (get-phi-place-reduced-value (phi-place phi))))
+	  (let ((operand (get-maybe-reduced-place (cdr phi-cons))))
+	    (when operand
+	      (pushnew operand operands))))))
+    operands))
 
 (defun compute-global-live-sets (lambda-ssa)
   #.*fun-optimize-level*
@@ -2270,16 +2213,22 @@
 	(sort (alloc-unhandled alloc) #'< :key #'interval-start)))
 
 (defun alloc-remove-active (alloc interval)
+  (alloc-remove-active-by-number alloc (interval-number interval)))
+
+(defun alloc-remove-active-by-number (alloc int-number)
   (setf (alloc-active alloc)
-	(remove (interval-number interval)
+	(remove int-number
 		(alloc-active alloc) :key #'interval-number)))
 
 (defun alloc-add-active (alloc interval)
   (push interval (alloc-active alloc)))
 
 (defun alloc-remove-inactive (alloc interval)
+  (alloc-remove-inactive-by-number alloc (interval-number interval)))
+
+(defun alloc-remove-inactive-by-number (alloc int-number)
   (setf (alloc-inactive alloc)
-	(remove (interval-number interval)
+	(remove int-number
 		(alloc-inactive alloc) :key #'interval-number)))
 
 (defun alloc-add-handled (alloc interval)
@@ -2357,7 +2306,11 @@
     rp))
 
 (defun find-interval-that-use-reg (intervals register)
-  (find register intervals :key #'interval-register))
+  (let (res)
+    (dolist (i intervals)
+      (when (eq register (interval-register i))
+	(push i res)))
+    res))
 
 (defun spill-interval (alloc interval)
   (setf (interval-stack interval) (get-stack-index alloc))
@@ -2371,103 +2324,106 @@
 	  (error "Can't find interval parent")))))
 
 (defun try-allocate-free-reg (current-interval current-position alloc)
-  (declare (ignore current-position)
-	   (optimize (debug 3)))
+  #.*fun-optimize-level*
+  (declare (ignore current-position))
   (let ((fup (make-positions)))
+    
     (dolist (reg *preserved-regs*)
       (add-position fup most-positive-fixnum reg))
+    
     (dolist (interval (alloc-active alloc))
       (add-position fup 0 (interval-register interval)))
+    
     (dolist (interval (alloc-inactive alloc))
-      (when (intervals-first-intersection current-interval interval)
-	(add-position fup (interval-register interval)
-		      (intervals-first-intersection current-interval interval))))
+      (let ((intersection-index (intervals-first-intersection current-interval interval)))
+	(when intersection-index
+	  (add-position fup intersection-index (interval-register interval)))))
+    
     (let* ((reg-pair (get-register-with-max-position fup))
 	   (reg (car reg-pair))
 	   (reg-pos (cdr reg-pair)))
       (cond ((zerop reg-pos)
 	     nil)
-	    ((< (interval-end current-interval) reg-pos)
+	    ((<= (interval-end current-interval) reg-pos)
 	     (setf (interval-register current-interval) reg)
-	     (alloc-add-active alloc current-interval))
+	     (alloc-add-active alloc current-interval)
+	     t)
+	    ;; if interval starts exactly at this position then we can't do anything here
+	    ;; if we add interval to unhandled we can enter infinite loop
+	    ((<= reg-pos (interval-start current-interval))
+	     nil)
 	    (t
 	     (multiple-value-bind (original-interval new-interval)
 		 (split-interval current-interval reg-pos)
-	       (interval-add-child alloc original-interval new-interval)
-	       (setf (interval-register original-interval) reg)
-	       (alloc-add-active alloc original-interval)
-	       (alloc-add-unhandled alloc new-interval)))))))
+	       (assert new-interval)
+	       (when original-interval 
+		 (interval-add-child alloc original-interval new-interval)
+		 (setf (interval-register original-interval) reg)
+		 (alloc-add-active alloc original-interval)
+		 (alloc-add-unhandled alloc new-interval))))))))
 
 ;;; TODO
 ;;; Implement fixed intervals
 ;;; Currently we don't look if USE-POS needs register so we dont' split at those position
 ;;; FIXME, implement splitting at USE-POS that needs register (for VOP for example)
+;; FIXME, in DOLIST, should we check if interval has REG as alocation (it's not possible, we are adding stack intervals to handled)
 (defun allocate-blocked-reg (current-interval alloc)
-  (declare (optimize  (debug 3)))
-  
-  (let ((positions (make-positions))
+  #.*fun-optimize-level*
+  (let ((fup (make-positions))
 	(current-index (interval-start current-interval))
 	(current-first-usage (interval-get-next-use current-interval)))
-
+    
     (dolist (reg *preserved-regs*)
-      (add-position positions most-positive-fixnum reg))
+      (add-position fup most-positive-fixnum reg))
     
     (dolist (interval (alloc-active alloc))
-      (add-position positions (interval-get-next-use interval (1+ current-index))
-		    (interval-register interval)))
+      (add-position fup (interval-get-next-use interval current-index) (interval-register interval)))
     
     (dolist (interval (alloc-inactive alloc))
-      (if (intervals-first-intersection current-interval interval)
-	  (add-position positions (interval-get-next-use interval (1+ current-index))
-			(interval-register interval))))
-
-    (let* ((reg-pair (get-register-with-max-position positions))
+      (when (intervals-first-intersection current-interval interval)
+	(add-position fup (interval-get-next-use interval current-index) (interval-register interval))))
+    
+    (let* ((reg-pair (get-register-with-max-position fup))
 	   (reg (car reg-pair))
 	   (reg-pos (cdr reg-pair)))
-      (debug-print reg-pair)
-      
-      (cond ((> current-first-usage reg-pos)
-	     ;; (multiple-value-bind (original-interval new-interval)
-	     ;; 	 ;; FIXME, currently we don't split at first USE-POINT that need register
-	     ;; 	 ;; we just spill whole current interval
-	     ;; 	 ;; when we implement VOP with fixed register change this to split
-	     ;; 	 (split-interval current-interval current-first-usage)
-
-	     ;;   (interval-add-child alloc original-interval new-interval)
-	     ;;   ;; (print (list 'allocate-blocked-reg 'spliting-interval 1 current-interval))
-	     ;;   ;; (print (list 'allocate-blocked-reg 'split-interval 1 original-interval new-interval))
-	     ;;   (spill-interval alloc original-interval)
-	     ;;   (alloc-add-unhandled alloc new-interval))
+      (cond ((>= current-first-usage reg-pos)
+	     ;; paper here say that we split on index where REG is required
+	     ;; in our current implementation this is not required
+	     ;; TODO, fix later when we have stable implementation
 	     (spill-interval alloc current-interval))
 	    (t
-	     (let* ((ainterval (find-interval-that-use-reg (alloc-active alloc) reg)))
-	       (multiple-value-bind (old-interval new-interval)
-		   ;; spliting at current-index can yield RANGES NIL for old-interval
-		   (split-interval ainterval current-index)
-		 (interval-add-child alloc old-interval new-interval)
-		 (spill-interval alloc new-interval)
-		 (when (interval-ranges old-interval)
-		   (alloc-add-handled alloc old-interval))
-		 ;; FIXME, if there is USE-POSITION that need register we need to split it again
-		 ;; look at function comment
-		 (setf (interval-register current-interval) reg)
-		 (alloc-add-active alloc current-interval)
-		 ;; (print (list 'allocate-blocked-reg 'spliting-interval 2 ainterval))
-		 ;; (print (list 'allocate-blocked-reg 'split-interval 2 old-interval new-interval))
-		 (dolist (inactive-interval (find-interval-that-use-reg (alloc-inactive alloc) reg))
-		   (multiple-value-bind (old-interval new-interval)
-		       (split-interval inactive-interval
-				       (range-start
-					(interval-first-range-after-index inactive-interval current-index)))
-		     (interval-add-child alloc old-interval new-interval)
-		     (spill-interval alloc new-interval)
-		     (when (interval-ranges old-interval)
-		       (alloc-add-handled alloc old-interval)))))))))))
+	     ;; spill interval that blocks the reg
+	     (let ((active-reg-intervals (find-interval-that-use-reg (alloc-active alloc) reg)))
+	       (assert (= 1 (length active-reg-intervals)))
+	       (let* ((active-interval (first active-reg-intervals))
+		      (active-int-num (interval-number active-interval)))
+		 (multiple-value-bind (int sint) (split-interval active-interval current-index)
+		   ;; since this is still active interval we should always have SINT
+		   ;; if it starts at the same POSITION as CURRENT-INTERVAL then it will not have INT
+		   (assert sint)
+		   (if int
+		       (progn
+			 (interval-add-child alloc int sint)
+			 (alloc-add-handled alloc int))
+		       (alloc-remove-active-by-number alloc active-int-num))
+		   (spill-interval alloc sint)))
+	       (setf (interval-register current-interval) reg)
+	       (alloc-add-active alloc current-interval)
+	       (let ((inactive-reg-intervals (find-interval-that-use-reg (alloc-inactive alloc) reg)))
+		 (dolist (inactive-interval inactive-reg-intervals)
+		   (let ((next-range (interval-first-range-after-index inactive-interval current-index))
+			 (next-intersection (intervals-first-intersection current-interval  inactive-interval)))
+		     (when (and next-range next-intersection)
+		       (multiple-value-bind (old new) (split-interval inactive-interval next-intersection)
+			 ;; We should always have both old and new
+			 (assert (and old new))
+			 (interval-add-child alloc old new)
+			 (alloc-add-handled alloc old)
+			 (spill-interval alloc new))))))))))))
 
-
-(defun linear-scan (sorted-intervals)
-  (declare (optimize debug))
-  (let ((alloc (make-alloc :unhandled sorted-intervals :stack-index -1)))
+(defun linear-scan (intervals)
+  #.*fun-optimize-level*
+  (let ((alloc (make-alloc :unhandled intervals :stack-index -1)))
     (tagbody
      START
        (let ((current-interval (pop (alloc-unhandled alloc))))
@@ -2475,9 +2431,9 @@
 	   (progn
 
 	     (let ((position (interval-start current-interval)))
-	
+	       
 	       (dolist (act-interval (alloc-active alloc))
-		 (cond ((< (interval-end act-interval) position)
+		 (cond ((<= (interval-end act-interval) position)
 			(alloc-remove-active alloc act-interval)
 			(alloc-add-handled alloc act-interval))
 		       ((not (interval-live-at-index-p act-interval position))
@@ -2485,16 +2441,15 @@
 			(alloc-add-inactive alloc act-interval))))
 
 	       (dolist (ia-interval (alloc-inactive alloc))
-		 
-		 (cond ((< (interval-end ia-interval) position)
+		 (cond ((<= (interval-end ia-interval) position)
 			(alloc-remove-inactive alloc ia-interval)
 			(alloc-add-handled alloc ia-interval))
 		       ((interval-live-at-index-p ia-interval position)
 			(alloc-remove-inactive alloc ia-interval)
 			(alloc-add-active alloc ia-interval))))
 
-	       (let ((register (try-allocate-free-reg current-interval position alloc)))
-		 (unless register
+	       (let ((allocated (try-allocate-free-reg current-interval position alloc)))
+		 (unless allocated
 		   (allocate-blocked-reg current-interval alloc))))
 
 	     (go START)))))
