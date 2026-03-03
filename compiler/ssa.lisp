@@ -10,6 +10,7 @@
 
 (defstruct place)
 (defstruct (named-place (:include place)) name)
+(defstruct (storage-place (:include place)) storage)
 
 (defstruct (fixed-place (:include place)))
 (defstruct (arg-place (:include fixed-place)) index)
@@ -45,8 +46,10 @@
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
   (redundant-phis (make-hash-table :test #'equalp)))
 
-(defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump predecessors is-loop-end is-header (branch-to-count 0)
-  sealed processed label defined phis live-in virtuals live-gen live-kill live-out live-phi-operands exit)
+(defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump
+  predecessors is-loop-end is-header (branch-to-count 0) sealed processed label
+  defined phis live-in virtuals live-gen live-kill live-out live-phi-operands
+  exit true-moves false-moves fall-through-moves)
 
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
@@ -178,7 +181,8 @@
 (defparameter *ssa-block-counter* 0)
 (defun make-new-ssa-block (lambda-ssa)
   (let ((block (make-ssa-block :index *ssa-block-counter*)))
-    (setf (gethash *ssa-block-counter* (lambda-ssa-blocks-index lambda-ssa)) block)
+    (setf (gethash *ssa-block-counter*
+		   (lambda-ssa-blocks-index lambda-ssa)) block)
     (incf *ssa-block-counter*)
     block))
 
@@ -213,6 +217,12 @@
 
 (defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
+
+#+nil(defun lambda-ssa-is-start-block-index (lambda-ssa index)
+  (dolist (b (lambda-ssa-blocks lambda-ssa))
+    (when (and (> index (ssa-block-first-index b))
+	       (<= index (ssa-block-last-index b)))
+      (return-from lambda-ssa-is-start-block-index t))))
 
 ;;; FIXME, check this one
 (defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
@@ -255,6 +265,15 @@
     (ssa-block-index (first (sort blocks (lambda (b1 b2)
 					   (>= (ssa-block-order b1) (ssa-block-order b2))))))))
 
+(defun ssa-block-successor-type (b succ-block-index)
+  (cond ((eql succ-block-index (ssa-block-succ b))
+	 :succ)
+	((eql succ-block-index (ssa-block-cond-jump b))
+	 :cond-jump)
+	((eql succ-block-index (ssa-block-uncond-jump b))
+	 :uncond-jump)
+	(t (error "Wrong succ-block-index"))))
+
 (defun ssa-block-is-next-block (b1 b2 lambda-ssa)
   (do* ((blocks (lambda-ssa-blocks lambda-ssa) (cdr blocks))
 	(b (car blocks) (car blocks)))
@@ -268,6 +287,21 @@
   (push phi (ssa-block-phis ssa-block))
   (let ((all-phis-map (lambda-ssa-all-phis lambda-ssa)))
     (setf (gethash (phi-place phi) all-phis-map) phi)))
+
+(defun ssa-block-get-predecessors-blocks (sblock lambda-ssa)
+  (let (blocks)
+    (dolist (bindex (ssa-block-predecessors sblock))
+      (let* ((pblock (ssa-find-block-by-index lambda-ssa bindex)))
+	(assert pblock)
+	(push pblock blocks)))
+    blocks))
+
+(defun get-block-real-phis (sblock)
+  (let (real-phis)
+    (dolist (phi (ssa-block-phis sblock))
+      (unless (get-phi-place-reduced-value (phi-place phi))
+	(push phi real-phis)))
+    real-phis))
 
 (defun add-phi-connections (phi operand lambda-ssa)
   (unless (equalp (phi-place phi) operand)
@@ -1751,6 +1785,12 @@
 (defun interval-start (interval)
   (range-start (first (interval-ranges interval))))
 
+(defun interval-contains-index (interval index)
+  (dolist (range (interval-ranges interval))
+    (when (and (>= index (range-start range))
+	       (< index (range-end range)))
+      (return-from interval-contains-index t))))
+
 (defun interval-live-at-index-p (interval index)
   (dolist (range (interval-ranges interval))
     (when (and (>= index (range-start range))
@@ -1972,6 +2012,7 @@
 	    (when (>= up-index index)
 	      (return-from interval-get-next-use up-index))))))))
 
+;; NOTE we are mutating original INTERVAL, do wee need to do that ?
 (defun split-interval (interval position)
   #.*fun-optimize-level*
   (let ((range-position (position position (interval-ranges interval)
@@ -2065,6 +2106,8 @@
 ;;; FIXME, RANGE-END should be exclusive
 (defun build-intervals (lambda-ssa)
   #.*fun-optimize-level*
+  (compute-local-live-sets lambda-ssa)
+  (compute-global-live-sets lambda-ssa)
   (let ((intervals (make-intervals))
 	(use-positions (make-use-positions)))
     (dolist (b (reverse (lambda-ssa-blocks lambda-ssa)))
@@ -2145,13 +2188,14 @@
 			 (not (find read (ssa-block-live-kill block))))
 		(pushnew read (ssa-block-live-gen block))))))))))
 
-(defun get-block-phi-operands-out (b succ-block)
+(defun get-block-phi-operands-out (b succ-block &optional only-phi)
   #.*fun-optimize-level*
   (let ((operands nil)
 	(succ-index (ssa-block-index succ-block)))
     (dolist (phi-cons (ssa-block-live-phi-operands b))
       (let ((phi (car phi-cons)))
 	(when (and (phi-p phi)
+		   (or (null only-phi) (eq phi only-phi))
 		   ;; we need to match PHI index with B index, we only want operands if it matches
 		   (= (phi-block-index phi) succ-index)
 		   (not (get-phi-place-reduced-value (phi-place phi))))
@@ -2190,19 +2234,9 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;; if *ALLOCATION-EMTHOD* is :simple don't split intervals
-;;; other method is :split
-(defparameter *allocation-method* :simple)
-
-;;; FIXME, this is just for test
-(defstruct move block index from to)
-
-(defstruct alloc unhandled active inactive handled
-	   (per-name-handled (make-hash-table))
-	   (block-intervals (make-hash-table))
-	   (split-moves (make-hash-table))
-	   stack-index)
+;;; Actual LINEAR-SCAN implementation
+(defstruct alloc unhandled active inactive handled (per-name-handled (make-hash-table))
+	   intervals-index split-moves phi-moves stack-index)
 
 (defun get-stack-index (alloc)
   (incf (alloc-stack-index alloc)))
@@ -2260,31 +2294,28 @@
     (when childs
       (cons interval (reverse childs)))))
 
-#+nil
-(defun maybe-generate-move-load (from-interval to-interval block)
+(defun maybe-insert-interval-move (alloc from-interval to-interval split-index)
   (unless (intervals-same-storage-p from-interval to-interval nil)
-    (make-move :block (ssa-block-index block)
-	       :index index
-	       :from  (make-interval-storage from-interval)
-	       :to (make-interval-storage to-interval))))
+    (let ((from-number (interval-number from-interval))
+	  (to-number (interval-number to-interval)))
+      (push (list :split (list :from-interval from-number :to-interval to-number :split-index split-index))
+	    (alloc-split-moves alloc)))))
 
-;;; FIXME, generate split moves at the time when interval is splitted 
-(defun generate-split-intervals-moves (alloc)
-  (let ((moves (alloc-split-moves alloc)))
-    (dolist (pair (alloc-handled alloc))
-      (let ((interval (cdr pair)))
-	(when (and (interval-child interval)
-		   (not (interval-parent interval)))
-	  (let ((intervals (collect-interval-childs alloc interval))
-		(current-interval nil))
-	    (dolist (intv intervals)
-	      (when current-interval
-		(let ((load (make-ssa-load :index (1+ (interval-end current-interval))
-					   :from  (make-interval-storage current-interval)
-					   :to (make-interval-storage intv))))
-		  (push load (gethash (ssa-form-index load) moves))))
-	      (setf current-interval intv)))))))
-  alloc)
+(defun maybe-insert-interval-edge-move (alloc from-interval from-block to-interval to-block)
+  (unless (intervals-same-storage-p from-interval to-interval nil)
+    (let ((from-number (interval-number from-interval))
+	  (to-number (interval-number to-interval)))
+      (push (list :edge (list :from-block (ssa-block-index from-block) :from-interval from-number
+			      :to-block (ssa-block-index to-block) :to-interval to-number))
+	    (alloc-split-moves alloc)))))
+
+;; FIXME, we need blocks numbers here
+(defun maybe-insert-phi-move (alloc from-interval from-block to-interval to-block)
+  (unless (intervals-same-storage-p from-interval to-interval nil)
+    (let ((from-number (interval-number from-interval))
+	  (to-number (interval-number to-interval)))
+      (push (list :from-block from-block :from-interval from-number :to-interval to-number :to-block to-block)
+	    (alloc-phi-moves alloc)))))
 
 (defun make-positions ()
   (make-hash-table))
@@ -2356,7 +2387,8 @@
 	     (multiple-value-bind (original-interval new-interval)
 		 (split-interval current-interval reg-pos)
 	       (assert new-interval)
-	       (when original-interval 
+	       (when original-interval
+		 (maybe-insert-interval-move alloc original-interval new-interval reg-pos)
 		 (interval-add-child alloc original-interval new-interval)
 		 (setf (interval-register original-interval) reg)
 		 (alloc-add-active alloc original-interval)
@@ -2403,6 +2435,7 @@
 		   (assert sint)
 		   (if int
 		       (progn
+			 (maybe-insert-interval-move alloc int sint current-index)
 			 (interval-add-child alloc int sint)
 			 (alloc-add-handled alloc int))
 		       (alloc-remove-active-by-number alloc active-int-num))
@@ -2417,6 +2450,7 @@
 		       (multiple-value-bind (old new) (split-interval inactive-interval next-intersection)
 			 ;; We should always have both old and new
 			 (assert (and old new))
+			 (maybe-insert-interval-move alloc old new next-intersection)
 			 (interval-add-child alloc old new)
 			 (alloc-add-handled alloc old)
 			 (spill-interval alloc new))))))))))))
@@ -2459,93 +2493,122 @@
 
     (dolist (int (alloc-inactive alloc))
       (alloc-add-handled alloc int))
-    (generate-split-intervals-moves alloc)
-    alloc))
+    (make-interval-index alloc)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; SPILL MOVES AND PHI MOVES
 
+(defun make-interval-index (alloc)
+  (let ((intervals (mapcar #'cdr (alloc-handled alloc)))
+	(root-intervals (make-hash-table))
+	(all-intervals (make-hash-table)))
+    (dolist (interval intervals)
+      (setf (gethash (interval-number interval) all-intervals) interval)
+      (unless (interval-parent interval)
+	(setf (gethash (interval-name interval) root-intervals)
+	      interval)))
+    (setf (alloc-intervals-index alloc)
+	  (cons root-intervals all-intervals))
+    alloc))
 
-(defun make-block-used-intervals (lambda-ssa alloc)
-  (let ((intervals (sort (mapcar #'cdr (alloc-handled alloc)) #'< :key #'interval-start))
-	(block-intervals (make-hash-table)))
-    (dolist (block (lambda-ssa-blocks lambda-ssa))
-      (let ((block-start (ssa-block-first-index block))
-	    (block-end (ssa-block-last-index block)))
-	(dolist (interval intervals)
-	  (let* ((istart (interval-start interval))
-		 (iend (interval-end interval)))
-	    (if (or (and (>= istart block-start)
-			 (<= istart block-end))
-		    (and (>= iend block-start)
-			 (<= iend block-end)))
-		(push interval (gethash (ssa-block-index block) block-intervals))
-		(when (> istart block-start)
-		  (return)))))))
-    (setf (alloc-block-intervals alloc) block-intervals)))
+(defun get-root-interval (alloc place)
+  (gethash place (first (alloc-intervals-index alloc))))
 
-(defun get-first-or-last-intervals-in-block (block alloc what)
-  (let ((block-intervals (gethash (ssa-block-index block) (alloc-block-intervals alloc)))
-	(fih (make-hash-table))
-	(compare-fun (if (eq :first what) #'< #'>)))
-    (dolist (interval block-intervals)
-      (let ((existing-interval (gethash (interval-name interval) fih)))
-	(if existing-interval
-	    (when (funcall compare-fun (interval-start interval) (interval-start existing-interval))
-	      (setf (gethash (interval-name interval) fih) interval))
-	    (setf (gethash (interval-name interval) fih) interval))))
-    fih))
+(defun alloc-get-interval (alloc num)
+  (gethash num (cdr (alloc-intervals-index alloc))))
 
-(defun hash-block-phis (block)
-  (let ((h (make-hash-table)))
-    (dolist (phi (ssa-block-phis block))
-      (when (phi-p phi)
-	(setf (gethash (named-place-name (phi-place phi)) h) phi)))
-    h))
+(defun get-interval-at-index (alloc root-interval index)
+  (let ((current root-interval))
+    (tagbody
+     loop
+       (when (interval-contains-index current index)
+	 (return-from get-interval-at-index current))
+       (let ((child-num (interval-child current)))
+	 (assert child-num)
+	 (let ((child-interval (gethash child-num (cdr (alloc-intervals-index alloc)))))
+	   (assert child-interval)
+	   (setf current child-interval)
+	   (go loop))))))
 
-;;; FIXME
-;;; when inserting resolve moves check to see if last instruction is JUMP
-;;; if it is MOV's need to be inserted before JUMP
+(defun insert-splitted-intervals-move (lambda-ssa alloc)
+  #.*fun-optimize-level*
+  (dolist (blck (lambda-ssa-blocks lambda-ssa))
+    (let ((succ-indexes (ssa-block-successors-indexes blck)))
+      (dolist (si succ-indexes)
+	(let ((sblock (ssa-find-block-by-index lambda-ssa si)))
+	  (assert sblock)
+	  (dolist (live-place (ssa-block-live-in sblock))
+	    (let ((root-interval (get-root-interval alloc live-place))
+		  (from-last-index (ssa-block-last-index blck))
+		  (to-first-index (ssa-block-first-index sblock)))
+	      (assert root-interval)
+	      (let ((from (get-interval-at-index alloc root-interval from-last-index))
+		    (to (get-interval-at-index alloc root-interval to-first-index)))
+		(assert (and from to))
+		(maybe-insert-interval-edge-move alloc from blck to sblock))))))))
+  alloc)
 
-(defun resolve-phi-move (phi phi-interval sblock pblock pblock-intervals lambda-ssa alloc)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (let ((operand-names (mapcar #'named-place-name (phi-operands phi))))
-    (dolist (name operand-names)
-      (let ((sint (gethash name pblock-intervals)))
-	(when sint
-	  (print 'phi-move)
-	  (print (list 'maybe-generate-move-load sint phi-interval)))))))
+(defun insert-phi-moves (lambda-ssa alloc)
+  #.*fun-optimize-level*
+  (dolist (blck (lambda-ssa-blocks lambda-ssa))
+    (let ((phis (get-block-real-phis blck)))
+      (when phis
+	(let* ((pblocks (ssa-block-get-predecessors-blocks blck lambda-ssa)))
+	  (dolist (phi phis)
+	    (when (= (phi-block-index phi) (ssa-block-index blck))
+	      (dolist (pblock pblocks)
+		(let ((pblock-phi-operands (get-block-phi-operands-out pblock blck phi)))
+		  (when pblock-phi-operands
+		    (assert (= 1 (length pblock-phi-operands)))
+		    (dolist (operand pblock-phi-operands )
+		      (let* ((operand-root-interval (get-root-interval alloc operand))
+			     (_ (assert operand-root-interval))
+			     (operand-interval (get-interval-at-index alloc operand-root-interval (ssa-block-last-index pblock)))
+			     (phi-root-interval (get-root-interval alloc (phi-place phi)))
+			     (__ (assert phi-root-interval))
+			     (phi-interval (get-interval-at-index alloc phi-root-interval (ssa-block-first-index blck))))
+			(declare (ignore _ __))
+			(maybe-insert-phi-move alloc operand-interval (ssa-block-index pblock)
+					       phi-interval (ssa-block-index blck))
+			(assert (and operand-interval phi-interval)))))))))))))
+  alloc)
 
-(defun resolve-interval-block-move (sinterval pinterval)
-  (print (list sinterval pinterval)))
+(defun add-move (move block succ-type)
+  (ecase succ-type
+    (:succ (push move (ssa-block-fall-through-moves block)))
+    (:cond-jump (push move (ssa-block-true-moves block)))
+    (:uncond-jump (push move (ssa-block-false-moves block)))))
+
+(defun resolve-interval-split-move-data (lambda-ssa alloc)
+  (dolist (move (alloc-split-moves alloc))
+    (let* ((from-interval-number (first move))
+	   (from-interval (alloc-get-interval alloc from-interval-number))
+	   (to-interval-number (second move))
+	   (to-interval (alloc-get-interval alloc to-interval-number))))))
+
+(defun resolve-phi-move-data (lambda-ssa alloc)
+  #.*fun-optimize-level*
+  (dolist (move (alloc-phi-moves alloc))
+    (let* ((from-block (ssa-find-block-by-index lambda-ssa (getf move :from-block)))
+	   (to-block-index (getf move :to-block))
+	   (from-interval (alloc-get-interval alloc (getf move :from-interval)))
+	   (from-storage (make-interval-storage from-interval))
+	   (to-interval (alloc-get-interval  alloc(getf move :to-interval)))
+	   (to-storage (make-interval-storage to-interval))
+	   (succ-block-branch-type (ssa-block-successor-type from-block to-block-index)))
+      (assert (and from-block to-block-index from-interval to-interval succ-block-branch-type))
+      (add-move (make-ssa-load :to (make-storage-place :storage to-storage) :from (make-storage-place :storage from-storage))
+		from-block
+		succ-block-branch-type))))
+
+(defun resolve-move-data (lambda-ssa alloc)
+  (resolve-interval-split-move-data lambda-ssa alloc)
+  (resolve-phi-move-data lambda-ssa alloc))
 
 (defun resolve-data-flow (lambda-ssa alloc)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
-  (make-block-used-intervals lambda-ssa alloc)
-  (dolist (sblock (lambda-ssa-blocks lambda-ssa))
-    (let ((pindexes (ssa-block-predecessors sblock))
-	  (sblock-phis (hash-block-phis sblock)))
-      (when pindexes
-	(let ((sintervals (get-first-or-last-intervals-in-block sblock alloc :first)))
-	  (dolist (index pindexes)
-	    (let* ((pblock (ssa-find-block-by-index lambda-ssa index))
-		   (pintervals (get-first-or-last-intervals-in-block pblock alloc :last)))
-	      (dolist (interval (clcomp::hash-values sintervals))
-		(let ((maybe-phi (gethash (interval-name interval) sblock-phis)))
-		  (if maybe-phi
-		      (progn
-			(resolve-phi-move maybe-phi interval sblock pblock pintervals lambda-ssa alloc))
-		      (when (interval-parent interval)
-			(let ((pinterval (gethash (interval-name interval) pintervals)))
-			  ;; FIXME, what if split index is betwen blocks ?!?!
-			  ;; test where child interval begins
-			  (when (and pinterval
-				     (/= (interval-number pinterval) (interval-number interval))
-				     (not (intervals-same-storage-p interval pinterval nil)))
-			    (resolve-interval-block-move interval pinterval))))))))))))))
-
-
-
-
+  (insert-splitted-intervals-move lambda-ssa alloc)
+  (insert-phi-moves lambda-ssa alloc)
+  (resolve-move-data lambda-ssa alloc))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defparameter *generate-graph-fun* nil)
