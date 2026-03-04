@@ -49,7 +49,7 @@
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump
   predecessors is-loop-end is-header (branch-to-count 0) sealed processed label
   defined phis live-in virtuals live-gen live-kill live-out live-phi-operands
-  exit true-moves false-moves fall-through-moves)
+  exit true-moves false-moves fall-through-moves spill-moves)
 
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
@@ -218,11 +218,28 @@
 (defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
 
-#+nil(defun lambda-ssa-is-start-block-index (lambda-ssa index)
+(defun lambda-ssa-is-start-block-index (lambda-ssa index)
   (dolist (b (lambda-ssa-blocks lambda-ssa))
-    (when (and (> index (ssa-block-first-index b))
+    (when (= index (ssa-block-first-index b))
+      (return-from lambda-ssa-is-start-block-index b))))
+
+(defun lambda-ssa-find-block-at-end-index (lambda-ssa index)
+  (dolist (b (lambda-ssa-blocks lambda-ssa))
+    (when (= index (+ 2 (ssa-block-last-index b)))
+      (return-from lambda-ssa-find-block-at-end-index b))))
+
+(defun lambda-ssa-find-block-at-index (lambda-ssa index)
+  (dolist (b (lambda-ssa-blocks lambda-ssa))
+    (when (and (>= index (ssa-block-first-index b))
 	       (<= index (ssa-block-last-index b)))
-      (return-from lambda-ssa-is-start-block-index t))))
+      (return-from lambda-ssa-find-block-at-index b))))
+
+(defun lambda-ssa-clear-data-moves (lambda-ssa)
+  (dolist (b (lambda-ssa-blocks lambda-ssa))
+    (setf (ssa-block-true-moves b) nil)
+    (setf (ssa-block-false-moves b) nil)
+    (setf (ssa-block-fall-through-moves b) nil)
+    (setf (ssa-block-spill-moves b) nil)))
 
 ;;; FIXME, check this one
 (defun lambda-ssa-find-end-blocks (lambda-ssa header-block-index)
@@ -1007,18 +1024,6 @@
     (setf (phi-operands phi)
 	  newops)))
 
-;; (defun fill-blocks-predecessors (lambda-ssa)
-;;   (dolist (block (lambda-ssa-blocks lambda-ssa))
-;;     (let ((block-index (ssa-block-index block))
-;; 	  (succ (ssa-block-succ block))
-;; 	  (uncond-jump (ssa-block-uncond-jump block))
-;; 	  (cond-jump (ssa-block-cond-jump block)))
-;;       (when (and succ uncond-jump)
-;; 	(error "Can't have successor and unconditioned jump"))
-;;       (dolist (bindex (remove nil (list succ uncond-jump cond-jump)))
-;; 	(let ((sblock (ssa-find-block-by-index lambda-ssa bindex)))
-;; 	  (push block-index (ssa-block-predecessors sblock)))))))
-
 (defun ssa-write-variable (place block env)
   (declare (ignore env)
 	   (optimize debug))
@@ -1096,12 +1101,6 @@
   (or (get-block-def block (named-place-name place)) 
       (read-variable-recursive place block lambda-ssa)))
 
-;;; FIXME, recursive write/read issue
-;;; Looks like this is working, not sure how
-;; (test-ssa '(lambda (a)
-;; 		 (let ((b (block foo
-;; 			    (return-from foo (setf b 1)))))
-;; 		   b)))
 (defun transform-write (place block lambda-ssa)
   (declare (optimize debug))
   (typecase place
@@ -1199,16 +1198,15 @@
        end)
       res)))
 
-(defun lambda-ssa-find-and-replace-phis (lambda-ssa phi-places value)
-  ;; (dolist (sblock (lambda-ssa-blocks lambda-ssa))
-  ;;   (dolist (phi-place phi-places)
-  ;;     (when (ssa-block-maybe-replace-phi sblock phi-place value)
-  ;; 	(setf phi-places (remove phi-place phi-places))))
-  ;;   (when (null phi-places)
-  ;;     (return-from lambda-ssa-find-and-replace-phis)))
-  ;; (unless (null phi-places)
-  ;;   (error "Can't find all PHI's to replace"))
-  )
+#+nil(defun lambda-ssa-find-and-replace-phis (lambda-ssa phi-places value)
+  (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+    (dolist (phi-place phi-places)
+      (when (ssa-block-maybe-replace-phi sblock phi-place value)
+	(setf phi-places (remove phi-place phi-places))))
+    (when (null phi-places)
+      (return-from lambda-ssa-find-and-replace-phis)))
+  (unless (null phi-places)
+    (error "Can't find all PHI's to replace")))
 
 (defun replace-scc-by-value (phc scc-phis value lambda-ssa)
   #.*fun-optimize-level*
@@ -1217,6 +1215,7 @@
       (let ((phi-place (phc-get-place phc phi-node)))
 	(push phi-place phi-places)
 	(add-phi-value-replacement (phc-get-phi phc phi-place) value lambda-ssa)))
+    ;; FIXME, ??
     ;; (lambda-ssa-find-and-replace-phis lambda-ssa phi-places value)
     ))
 
@@ -1763,22 +1762,6 @@
 	(clcomp::make-reg-storage :register register)
 	(clcomp::make-stack-storage :offset stack))))
 
-;; FIXME, INTERVAL-END is wrong for this interval, why we have two ranges ?
-;; (INTERVAL
-;;     :NAME #:V-11
-;;     :NUMBER 12
-;;     :RANGES (#S(RANGE
-;;                 :START 4
-;;                 :END 46
-;;                 :USE-POSITIONS (#S(USE-WRITE-POS :INDEX 4 :NEED-REG NIL)
-;;                                 #S(USE-READ-POS :INDEX 8 :NEED-REG NIL)
-;;                                 #S(USE-READ-POS :INDEX 24 :NEED-REG NIL)
-;;                                 #S(USE-READ-POS :INDEX 36 :NEED-REG NIL)))
-;;              #S(RANGE :START 34 :END 36 :USE-POSITIONS NIL))
-;;     :REGISTER :R12
-;;     :STACK NIL
-;;     :CHILD NIL
-;;     :PARENT NIL)
 (defun interval-end (interval)
   (range-end (car (last (interval-ranges interval)))))
 
@@ -1861,6 +1844,16 @@
 		 (ssa-block-uncond-jump b)
 		 most-positive-fixnum))
       (return t))))
+
+(defun ssa-block-branching-p (ssa-block)
+  (let ((count 0))
+    (when (ssa-block-succ ssa-block)
+      (incf count))
+    (when (ssa-block-uncond-jump ssa-block)
+      (incf count))
+    (when (ssa-block-cond-jump ssa-block)
+      (incf count))
+    (> count 1)))
 
 (defun ssa-block-predecessors-types-and-indexes (ssa-block lambda-ssa)
   (let ((res nil)
@@ -1968,22 +1961,6 @@
 	  (setf (range-start range) start))
 	(debug-print "Missing range, probably single WRITE no READ" place))))
 
-#+nil(defun maybe-merge-ranges (ranges)
-  (let (merged-ranges)
-    (let* ((sorted (sort ranges #'< :key #'range-start))) 
-      (dolist (range sorted)
-	(let ((current-range (first merged-ranges)))
-	  (if (null current-range)
-	      (push range merged-ranges)
-	      (if (> (range-start range)
-		     (+ (range-end current-range) *instr-offset*))
-		  (push range merged-ranges)
-		  (when (> (range-end range)
-			   (range-end current-range))
-		    (setf (range-end current-range)
-			  (range-end range))))))))
-    (reverse merged-ranges)))
-
 (defun range-split (range position)
   (if (= position (range-start range))
       (values nil range)
@@ -2039,14 +2016,6 @@
 		      (make-interval :name interval-name
 				     :ranges (cons second-range (cdr rest-ranges)))))))
 	interval)))
-
-#+nil(defun try-intervals-merge (intervals)
-  (maphash (lambda (k interval)
-	     (declare (ignore k))
-	     (setf (interval-ranges interval)
-		   (maybe-merge-ranges (interval-ranges interval))))
-	   intervals)
-  intervals)
 
 (defun ranges-intersection (r1 r2)
   (block nil
@@ -2279,6 +2248,10 @@
 
 (defun alloc-add-inactive (alloc interval)
   (push interval (alloc-inactive alloc)))
+
+(defun alloc-delete-moves (alloc)
+  (setf (alloc-phi-moves alloc) nil)
+  (setf (alloc-split-moves alloc) nil))
 
 (defun collect-interval-childs (alloc interval)
   (let ((current-interval interval)
@@ -2558,19 +2531,19 @@
 	    (when (= (phi-block-index phi) (ssa-block-index blck))
 	      (dolist (pblock pblocks)
 		(let ((pblock-phi-operands (get-block-phi-operands-out pblock blck phi)))
-		  (when pblock-phi-operands
-		    (assert (= 1 (length pblock-phi-operands)))
-		    (dolist (operand pblock-phi-operands )
-		      (let* ((operand-root-interval (get-root-interval alloc operand))
-			     (_ (assert operand-root-interval))
-			     (operand-interval (get-interval-at-index alloc operand-root-interval (ssa-block-last-index pblock)))
-			     (phi-root-interval (get-root-interval alloc (phi-place phi)))
-			     (__ (assert phi-root-interval))
-			     (phi-interval (get-interval-at-index alloc phi-root-interval (ssa-block-first-index blck))))
-			(declare (ignore _ __))
-			(maybe-insert-phi-move alloc operand-interval (ssa-block-index pblock)
-					       phi-interval (ssa-block-index blck))
-			(assert (and operand-interval phi-interval)))))))))))))
+		  ;; we should only have 1 operand from each block
+		  (assert (= 1 (length pblock-phi-operands)))
+		  (dolist (operand pblock-phi-operands )
+		    (let* ((operand-root-interval (get-root-interval alloc operand))
+			   (_ (assert operand-root-interval))
+			   (operand-interval (get-interval-at-index alloc operand-root-interval (ssa-block-last-index pblock)))
+			   (phi-root-interval (get-root-interval alloc (phi-place phi)))
+			   (__ (assert phi-root-interval))
+			   (phi-interval (get-interval-at-index alloc phi-root-interval (ssa-block-first-index blck))))
+		      (declare (ignore _ __))
+		      (maybe-insert-phi-move alloc operand-interval (ssa-block-index pblock)
+					     phi-interval (ssa-block-index blck))
+		      (assert (and operand-interval phi-interval))))))))))))
   alloc)
 
 (defun add-move (move block succ-type)
@@ -2581,10 +2554,35 @@
 
 (defun resolve-interval-split-move-data (lambda-ssa alloc)
   (dolist (move (alloc-split-moves alloc))
-    (let* ((from-interval-number (first move))
-	   (from-interval (alloc-get-interval alloc from-interval-number))
-	   (to-interval-number (second move))
-	   (to-interval (alloc-get-interval alloc to-interval-number))))))
+    (let* ((type (first move))
+	   (mdata (second move))
+	   (from-interval (alloc-get-interval alloc (getf mdata :from-interval)))
+	   (to-interval (alloc-get-interval  alloc(getf mdata :to-interval))))
+      (assert (and from-interval to-interval))
+      (ecase type
+	(:edge (let* ((from-block (ssa-find-block-by-index lambda-ssa (getf mdata :from-block)))
+		      (to-block-index (getf mdata :to-block))
+		      (from-storage (make-interval-storage from-interval))
+		      (to-storage (make-interval-storage to-interval))
+		      (succ-block-branch-type (ssa-block-successor-type from-block to-block-index)))
+		 (assert (and from-block to-block-index from-storage to-storage))
+		 (add-move (make-ssa-load :to (make-storage-place :storage to-storage) :from (make-storage-place :storage from-storage))
+			   from-block
+			   succ-block-branch-type)))
+	(:split (let* ((split-index (getf mdata :split-index))
+		       (first-index-block (lambda-ssa-is-start-block-index lambda-ssa split-index)))
+		  ;; We can have move duplicate between :split and :edge move
+		  ;; If it's :split move at exact block boundary (last_block_index+2)
+		  ;; then we also emmited same :edge move
+		  ;; skipping duplicate move
+		  (if first-index-block
+		      (debug-print "Skipping :split move" move)
+		      (let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
+			    (move-instr (list split-index
+					      (make-ssa-load :to (make-storage-place :storage (make-interval-storage to-interval))
+							     :from (make-storage-place :storage (make-interval-storage from-interval))))))
+			(assert any-index-block)
+			(push move-instr(ssa-block-spill-moves any-index-block))))))))))
 
 (defun resolve-phi-move-data (lambda-ssa alloc)
   #.*fun-optimize-level*
@@ -2606,6 +2604,8 @@
   (resolve-phi-move-data lambda-ssa alloc))
 
 (defun resolve-data-flow (lambda-ssa alloc)
+  (lambda-ssa-clear-data-moves lambda-ssa)
+  ;; (alloc-delete-moves alloc) ;; this deletes moves from LINEAR-SCAN
   (insert-splitted-intervals-move lambda-ssa alloc)
   (insert-phi-moves lambda-ssa alloc)
   (resolve-move-data lambda-ssa alloc))
