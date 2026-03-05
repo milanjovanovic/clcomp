@@ -2582,7 +2582,7 @@
 					      (make-ssa-load :to (make-storage-place :storage (make-interval-storage to-interval))
 							     :from (make-storage-place :storage (make-interval-storage from-interval))))))
 			(assert any-index-block)
-			(push move-instr(ssa-block-spill-moves any-index-block))))))))))
+			(push move-instr (ssa-block-spill-moves any-index-block))))))))))
 
 (defun resolve-phi-move-data (lambda-ssa alloc)
   #.*fun-optimize-level*
@@ -2603,12 +2603,74 @@
   (resolve-interval-split-move-data lambda-ssa alloc)
   (resolve-phi-move-data lambda-ssa alloc))
 
+(defun parallel-move-helper (src dst i status tmp out)
+  (if (equalp (aref src i) (aref dst i))
+      (setf (aref status i) :MOVED)
+      (progn
+	(setf (aref status i) :BEING-MOVED)
+	(dotimes (j (length src))
+	  (block iter
+	    (when (not (equalp (aref src j)
+			       (aref dst i)))
+	      (return-from iter nil))
+	    (cond
+	      ((eq (aref status j) :TO-MOVE)
+	       (parallel-move-one src dst j status tmp out))
+
+	      ((eq (aref status j) :BEING-MOVED)
+	       (let ((move (make-ssa-load :to tmp
+					  :from (aref src j))))
+		 (rplacd out (cons move (cdr out)))
+		 (setf (aref src j) tmp))))))
+
+	(rplacd out (cons (make-ssa-load :to (aref dst i) :from (aref src i)) (cdr out)))
+	(setf (aref status i) :MOVED))))
+
+;; https://compiler.club/parallel-moves/
+(defun parallel-move (moves scratch-storage)
+  (let* ((src (mapcar (lambda (move) (ssa-load-from move)) moves))
+	 (dst (mapcar (lambda (move) (ssa-load-to move)) moves))
+	 (srca (make-array (length src) :initial-contents src))
+	 (dsta (make-array (length dst) :initial-contents dst))
+	 (status (make-array (length src) :initial-element :TO-MOVE))
+	 (out (cons 'MOVES nil)))
+    (dotimes (i (length srca))
+      (when (eq (aref status i) :TO-MOVE)
+	(parallel-move-helper srca dsta i status scratch-storage out)))
+    (reverse (cdr out))))
+
+(defun resolve-data-moves-order (moves scratch-storage)
+  #.*fun-optimize-level*
+  ;; Current invariant: stack destinations are unique, so *->stack can go first.
+  (let ((stack-moves nil)
+	(non-stack-moves nil))
+    (dolist (move moves)
+      (if (clcomp::stack-storage-p (storage-place-storage (ssa-load-to move)))
+	  (push move stack-moves)
+	  (push move non-stack-moves)))
+    (append stack-moves (parallel-move non-stack-moves scratch-storage))))
+
+(defun resolve-lambda-moves-order (lambda-ssa scratch-storage)
+  (dolist (b (lambda-ssa-blocks lambda-ssa))
+    (setf (ssa-block-true-moves b)
+	  (resolve-data-moves-order (ssa-block-true-moves b) scratch-storage))
+    (setf (ssa-block-false-moves b)
+	  (resolve-data-moves-order (ssa-block-false-moves b) scratch-storage))
+    (setf (ssa-block-fall-through-moves b)
+	  (resolve-data-moves-order (ssa-block-fall-through-moves b) scratch-storage))
+    ;; FIXME, spill-moves are cons of instruction index and LOAD
+    (setf (ssa-block-spill-moves b)
+	  (resolve-data-moves-order (ssa-block-spill-moves b) scratch-storage))))
+
 (defun resolve-data-flow (lambda-ssa alloc)
   (lambda-ssa-clear-data-moves lambda-ssa)
   ;; (alloc-delete-moves alloc) ;; this deletes moves from LINEAR-SCAN
   (insert-splitted-intervals-move lambda-ssa alloc)
   (insert-phi-moves lambda-ssa alloc)
-  (resolve-move-data lambda-ssa alloc))
+  (resolve-move-data lambda-ssa alloc)
+  (resolve-lambda-moves-order lambda-ssa (make-storage-place :storage (clcomp::make-reg-storage :register *tmp-reg*))))
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defparameter *generate-graph-fun* nil)
@@ -2956,6 +3018,9 @@
 ;;;;; TODOs
 ;;; - Don't duplicate PLACE's in PHI-OPERANDS
 ;;; - Search for this comment: FIXME, recursive write/read issue
+;;; Allocator:
+;;; - reuse stack slots, (currently we allocate stack slot per "place", simpler but dumb)
+;;; - use "all registers" in allocation, currently we don't use registers that are selected for arguments or return values
 
 (defun load-clcomp ()
   (push "/Users/milan/projects/cl-dot/" asdf:*central-registry*)
