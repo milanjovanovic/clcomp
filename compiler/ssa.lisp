@@ -2642,15 +2642,28 @@
 (defun resolve-data-moves-order (moves scratch-storage)
   #.*fun-optimize-level*
   ;; Current invariant: stack destinations are unique, so *->stack can go first.
-  (let ((stack-moves nil)
-	(non-stack-moves nil))
+  (if (< (length moves) 2)
+      moves
+      (let ((stack-moves nil)
+	    (non-stack-moves nil))
+	(dolist (move moves)
+	  (if (clcomp::stack-storage-p (storage-place-storage (ssa-load-to move)))
+	      (push move stack-moves)
+	      (push move non-stack-moves)))
+	(append stack-moves (parallel-move non-stack-moves scratch-storage)))))
+
+(defun resolve-indexed-data-moves-order (moves scratch-storage)
+  (let ((moves (sort moves #'< :key #'car))
+	(res nil))
     (dolist (move moves)
-      (if (clcomp::stack-storage-p (storage-place-storage (ssa-load-to move)))
-	  (push move stack-moves)
-	  (push move non-stack-moves)))
-    (append stack-moves (parallel-move non-stack-moves scratch-storage))))
+      (let* ((index (car move))
+	     (loads (cdr move))
+	     (ordered-moves (resolve-data-moves-order loads scratch-storage)))
+	(push (list index ordered-moves) res)))
+    res))
 
 (defun resolve-lambda-moves-order (lambda-ssa scratch-storage)
+  #.*fun-optimize-level*
   (dolist (b (lambda-ssa-blocks lambda-ssa))
     (setf (ssa-block-true-moves b)
 	  (resolve-data-moves-order (ssa-block-true-moves b) scratch-storage))
@@ -2658,9 +2671,8 @@
 	  (resolve-data-moves-order (ssa-block-false-moves b) scratch-storage))
     (setf (ssa-block-fall-through-moves b)
 	  (resolve-data-moves-order (ssa-block-fall-through-moves b) scratch-storage))
-    ;; FIXME, spill-moves are cons of instruction index and LOAD
     (setf (ssa-block-spill-moves b)
-	  (resolve-data-moves-order (ssa-block-spill-moves b) scratch-storage))))
+	  (resolve-indexed-data-moves-order (ssa-block-spill-moves b) scratch-storage))))
 
 (defun resolve-data-flow (lambda-ssa alloc)
   (lambda-ssa-clear-data-moves lambda-ssa)
@@ -2668,7 +2680,8 @@
   (insert-splitted-intervals-move lambda-ssa alloc)
   (insert-phi-moves lambda-ssa alloc)
   (resolve-move-data lambda-ssa alloc)
-  (resolve-lambda-moves-order lambda-ssa (make-storage-place :storage (clcomp::make-reg-storage :register *tmp-reg*))))
+  (resolve-lambda-moves-order lambda-ssa
+			      (make-storage-place :storage (clcomp::make-reg-storage :register *tmp-reg*))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2703,7 +2716,6 @@
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
     (declare (ignore _))
-    (generate-graph lambda-ssa graph-name)
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
 
@@ -2783,6 +2795,7 @@
 				(length *fun-arguments-regs*))))))))
 
 (defun get-fixed-place-storage (place)
+  #.*fun-optimize-level*
   (etypecase place
     (argument-count-place (make-reg-op *fun-number-of-arguments-reg*))
     (rcv-argument-place (make-recv-arg-place place))
@@ -2826,7 +2839,7 @@
     (fixed-place (get-fixed-place-storage place))
     (phi-place (let ((reduced (funcall (phi-place-reduced place))))
 		 (get-alloc-storage alloc (named-place-name (or reduced place)) index)))
-    (virtual-place (get-alloc-storage alloc (named-place-name place) index))
+    (virtual-place (get-alloc-storage alloc place index))
     (immediate-constant (immediate-constant-constant place))
     ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
     (fixup (get-rip-location-storage place))))
@@ -3001,14 +3014,11 @@
 (defparameter *last-intervals* nil)
 (defparameter *last-alloc* nil)
 
-(defun clcomp-compile (exp &optional (graph-name "default"))
-  (declare (optimize debug))
+(defun clcomp-compile (exp)
+  #.*fun-optimize-level*
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
-	 (_ (generate-graph lambda-ssa graph-name))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
-    (setf *last-intervals* intervals)
-    (setf *last-alloc* alloc)
     (resolve-data-flow lambda-ssa alloc)
     (translate-to-asm lambda-ssa alloc)
     lambda-ssa))
