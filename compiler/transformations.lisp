@@ -54,8 +54,8 @@
 (defstruct (lambda-node (:include rip-relative-node)) name arguments declarations body)
 (defstruct (immediate-constant-node (:include tnode)) value)
 (defstruct (load-time-value-node (:include rip-relative-node)) form node)
-(defstruct (lexical-var-node (:include tnode)) lambda-id name form rest source-lambda-id source-node)
-(defstruct (lexical-binding-node (:include tnode)) name bin-node lambda-id form shared)
+(defstruct (lexical-var-node (:include tnode)) lambda-id name)
+(defstruct (lexical-binding-node (:include tnode)) name bin-node lambda-id form rest shared)
 (defstruct (if-node (:include tnode)) test-form true-form false-form)
 (defstruct (let-node (:include tnode)) bindings form sequential)
 (defstruct (progn-node (:include tnode)) forms)
@@ -138,9 +138,16 @@
     (assert lambda-id)
     (dolist (argument arguments)
       (cond ((eq '&compiler-rest argument) (setf rest-node t))
-	    (rest-node (push (make-lexical-var-node :name argument :form nil :rest t :lambda-id lambda-id) nodes)
+	    (rest-node (push (make-lexical-binding-node :name argument
+							:rest t
+							:lambda-id lambda-id
+							:bin-node (make-lexical-var-node :name argument  :lambda-id lambda-id))
+			     nodes)
 		       (setf rest-node nil))
-	    (t (push (make-lexical-var-node :name argument :form nil :lambda-id lambda-id) nodes))))
+	    (t (push (make-lexical-binding-node :name argument
+						:lambda-id lambda-id
+						:bin-node (make-lexical-var-node :name argument :lambda-id lambda-id))
+		     nodes))))
     (reverse nodes)))
 
 ;;; FIXME, create struct object that is easy to query
@@ -190,9 +197,8 @@
 	(let ((node (create-lexical-or-dynamic-node bind lambda-id env)))
 	  (push node binstruct)
 	  (push node current-bin))))
-    ;; FIXME, look FIXME above, we should not reverse for second case to be right
-    ;; (reverse binstruct)
-    binstruct))
+    ;; we need to reverse because of order of evaluatin
+    (reverse binstruct)))
 
 ;;; FIXME, form in LET binding can consist of symbol that can be lexical or dynamic scoope
 ;;; see FIXME in CREATE-LEXICAL-OR-DYNAMIC-NODE
@@ -204,7 +210,7 @@
     (setf (let-node-bindings let-node) (create-let-binding-nodes (second form) this-lambda-id sequential environment))
     (setf (let-node-form let-node)
 	  (create-node (third form)
-		       (cons (make-cenv :bindings (let-node-bindings let-node))
+		       (cons (make-cenv :bindings (reverse (let-node-bindings let-node)))
 			     environment)))
     (setf (let-node-sequential let-node) sequential)
     let-node))
@@ -253,8 +259,10 @@
 	(create-node (list '%set-symbol-value (list 'quote var) (third form)) environment)
 	(if binding
 	    (make-setq-node :var (get-lexical-node binding) :form (create-node (third form) environment))
-	    ;; FIXME, make some formal way to establish new binding ? use LEXICAL-BINDING-NODE ??
-	    (make-setq-node :var (make-lexical-var-node :name (second form)) :form (create-node (third form) environment))))))
+	    ;; SETF/SETQ without DEFPARAMETER do sets SYMBOL-VALUE to the value
+	    ;; but variable is not proclaimed as SPECIAL so no special binding will be established
+	    ;; TODO, inspect how to implement DEFPARAMETER
+	    (error "To be implement")))))
 
 (defun create-go-node (form)
   (make-go-node :label-node (make-label-node :label (second form))))
@@ -289,7 +297,7 @@
 	   (body (create-node  (if declaration
 				   (fifth form)
 				   (fourth form))
-			       new-environment))	   )
+			       new-environment)))
       (make-m-v-b-node :bindings (reverse bindings)
 		       :form form-node
 		       :declaration declaration
@@ -366,7 +374,6 @@
   (make-fun-rip-relative-node :form (second form)))
 
 (defun create-node (form &optional environment)
-  (print (list 'environment environment))
   (if (atom form)
       (cond ((constantp form)
 	     (create-constant-node form))
