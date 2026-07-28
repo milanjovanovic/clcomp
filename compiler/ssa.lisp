@@ -57,6 +57,7 @@
 (defstruct (ssa-form-rw (:include ssa-form)))
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
+(defstruct (ssa-box-and-load (:include ssa-load)))
 
 (defstruct (ssa-jump (:include ssa-form)) label)
 (defstruct (ssa-go (:include ssa-jump)))
@@ -459,7 +460,7 @@
   (if (or (and (ssa-block-uncond-jump block)
 	       (ssa-go-p (first (ssa-block-ir block))))
 	  (ssa-block-exit block))
-      (print-debug "Skipping dead code " ssa)
+      (debug-print "Skipping dead code " ssa)
       (progn
 	(if (ssa-form-p ssa)
 	    (progn
@@ -601,7 +602,7 @@
      block)
     (clcomp::lexical-var-node
      (emit-ir (make-ssa-load :to place
-    			     :from (make-var-place :name (clcomp::lexical-var-node-name node))) block)
+    			     :from (make-var-place :name (clcomp::get-lexical-variable-name node))) block)
      (when leaf
        (emit-single-return-sequence place block))
      block)
@@ -613,7 +614,7 @@
 (defun make-direct-place-or-nil (node)
   (etypecase node
     (clcomp::immediate-constant-node (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
-    (clcomp::lexical-var-node (make-var-place :name (clcomp::lexical-var-node-name node)))
+    (clcomp::lexical-var-node (make-var-place :name (clcomp::get-lexical-variable-name node)))
     (t nil)))
 
 ;;; FIXME, fun can be CLOSURE or LAMBDA
@@ -693,7 +694,7 @@
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
   (declare (ignore leaf))
-  (let ((lvar (clcomp::lexical-binding-node-name node))
+  (let ((lvar (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node node)))
 	(form (clcomp::lexical-binding-node-form node)))
     (maybe-emit-direct-load form lambda-ssa nil (make-var-place :name lvar) block)))
 
@@ -720,11 +721,11 @@
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
   (declare (ignore lambda-ssa))
   (if place
-      (emit-ir (make-ssa-load :to place :from (make-var-place :name (clcomp::lexical-var-node-name node))) block )
+      (emit-ir (make-ssa-load :to place :from (make-var-place :name (clcomp::get-lexical-variable-name node))) block )
       (if leaf
-	  (emit-single-return-sequence (make-var-place :name (clcomp::lexical-var-node-name node))  block)
+	  (emit-single-return-sequence (make-var-place :name (clcomp::get-lexical-variable-name node))  block)
 	  (emit-ir (make-ssa-value :value
-				   (make-var-place :name (clcomp::lexical-var-node-name node))) block)))
+				   (make-var-place :name (clcomp::get-lexical-variable-name node))) block)))
   block)
 
 (defun emit-progn-node-ssa (node lambda-ssa leaf place block)
@@ -794,7 +795,7 @@
   (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
 					   lambda-ssa leaf
 					   (make-var-place
-					    :name (clcomp::lexical-var-node-name
+					    :name (clcomp::get-lexical-variable-name
 						   (clcomp::setq-node-var node)))
 					   block)))
     (if place
@@ -804,13 +805,13 @@
 (defun get-minimum-number-of-args (args)
   (let ((i 0))
     (dolist (arg args)
-      (unless (clcomp::lexical-var-node-rest arg)
+      (unless (clcomp::lexical-binding-node-rest arg)
 	(incf i)))
     i))
 
 (defun contains-rest-arg (args)
   (dolist (arg args)
-    (when (clcomp::lexical-var-node-rest arg)
+    (when (clcomp::lexical-binding-node-rest arg)
       (return-from contains-rest-arg (get-minimum-number-of-args args)))))
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
@@ -823,9 +824,13 @@
   (let ((index 0))
     (dolist (argument arguments)
       (etypecase argument
-	(clcomp::lexical-var-node
-	 (emit-ir (make-ssa-load :to (make-var-place :name (clcomp::lexical-var-node-name argument))
-				 :from (make-rcv-argument-place :index index))
+	(clcomp::lexical-binding-node
+	 (emit-ir (if (clcomp::lexical-binding-node-closed-over argument)
+		      (error "not implemented yet")
+		      ;; (make-ssa-box-and-load :to (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node argument)))
+		      ;; 		     :from (make-rcv-argument-place :index index))
+		      (make-ssa-load :to (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node argument)))
+				     :from (make-rcv-argument-place :index index)))
 		  block)))
       (incf index))))
 
@@ -839,6 +844,11 @@
       (clcomp::compile-time-constant-node (make-compile-time-constant-fixup :name fixup-sym
 								    :form (clcomp::compile-time-constant-node-form node))))))
 
+(defun emit-closure-sequence-ssa (node lambda-ssa place block)
+  (declare (ignorable node lambda-ssa place block))
+  (when (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
+      (error "not implemented")))
+
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
   (let ((fixup (rip-relative-node-to-fixup node)))
     (typecase node
@@ -849,6 +859,7 @@
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa node (lambda-ssa-env lambda-ssa)) fixup)))
     (lambda-add-fixup fixup lambda-ssa)
+    (emit-closure-sequence-ssa node lambda-ssa place block)
     (if place
 	(emit-ir (make-ssa-load :to place :from fixup) block)
 	(if leaf
@@ -860,7 +871,7 @@
 (defun emit-m-v-b-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize (debug 3) (speed 0)))
   (let ((mvb-place (make-mvb-place :var-places (mapcar (lambda (b)
-							 (make-var-place :name (clcomp::m-v-b-binding-node-name b)))
+							 (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::m-v-b-binding-node-bin-node b))))
 						       (clcomp::m-v-b-node-bindings node)))))
     (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
@@ -957,7 +968,7 @@
     (setf (ssa-if-true-block last-instr) (ssa-block-index to-block))
     (let ((label (ssa-block-label to-block)))
       (unless label
-	(print-debug  "FIX-COND-JUMP-INDEX: Creating new label for block " (ssa-block-index to-block))
+	(debug-print  "FIX-COND-JUMP-INDEX: Creating new label for block " (ssa-block-index to-block))
 	(setf label (generate-label-for-string "IF-FBLOCK") )
 	(label-ssa-block to-block label))
       (setf (ssa-if-true-block-label last-instr) label))))
@@ -1609,8 +1620,9 @@
 	 (entry-block (make-new-ssa-block lambda-ssa)))
     (ssa-add-block lambda-ssa entry-block)
     (emit-ir (make-lambda-entry) entry-block)
-    (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node ) lambda-ssa entry-block)
+    (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) lambda-ssa entry-block)
     (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
+    (print lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (when *optimize-redundant-blocks*
@@ -2695,13 +2707,13 @@
 (defun make-lssa (exp &optional file (optimize-blocks t) (optimize-phis t))
   (let ((*optimize-redundant-blocks* optimize-blocks)
 	(*optimize-redundant-phis* optimize-phis))
-    (let ((lssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp)))))
+    (let ((lssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp)))))
       (when file
 	(generate-graph lssa file))
       lssa)))
 
 (defun make-lssa-intervals (exp)
-  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa)))
     intervals))
 
@@ -2711,7 +2723,7 @@
 
 (defun test-ssa (exp &optional (graph-name "default"))
   #.*fun-optimize-level*
-  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
 	 (_ (generate-graph lambda-ssa graph-name))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
@@ -3016,7 +3028,7 @@
 
 (defun clcomp-compile (exp)
   #.*fun-optimize-level*
-  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::create-node (clcomp::clcomp-macroexpand exp))))
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
     (resolve-data-flow lambda-ssa alloc)
@@ -3038,3 +3050,4 @@
   (ql:quickload "cl-dot")
   (ql:quickload "clcomp")
   (load "/Users/milan/projects/clcomp.github/compiler/cldot.lisp"))
+

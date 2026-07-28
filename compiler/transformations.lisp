@@ -51,11 +51,11 @@
 (defstruct (rip-relative-node (:include tnode)))
 (defstruct (fun-rip-relative-node (:include rip-relative-node)) form)
 (defstruct (compile-time-constant-node (:include rip-relative-node)) form)
-(defstruct (lambda-node (:include rip-relative-node)) name arguments declarations body)
+(defstruct (lambda-node (:include rip-relative-node)) name arguments declarations body closed-over-vars)
 (defstruct (immediate-constant-node (:include tnode)) value)
 (defstruct (load-time-value-node (:include rip-relative-node)) form node)
-(defstruct (lexical-var-node (:include tnode)) lambda-id name)
-(defstruct (lexical-binding-node (:include tnode)) name bin-node lambda-id form rest shared)
+(defstruct (lexical-var-node (:include tnode)) lambda-id name symbol)
+(defstruct (lexical-binding-node (:include tnode)) name symbol bin-node lambda-id form rest closed-over)
 (defstruct (if-node (:include tnode)) test-form true-form false-form)
 (defstruct (let-node (:include tnode)) bindings form sequential)
 (defstruct (progn-node (:include tnode)) forms)
@@ -68,7 +68,7 @@
 (defstruct (label-node (:include tnode)) label)
 (defstruct (setq-node (:include tnode)) var form)
 (defstruct (values-node (:include tnode)) forms)
-(defstruct (m-v-b-binding-node (:include tnode)) name lambda-id value-index bin-node)
+(defstruct (m-v-b-binding-node (:include tnode)) name symbol lambda-id value-index closed-over bin-node)
 (defstruct (m-v-b-node (:include tnode)) bindings form declaration body)
 
 ;; (defstruct irnode)
@@ -76,7 +76,7 @@
 ;; (defstruct (cmp-node (:include irnode)) arg1 arg2 )
 ;; (defstruct (jmp-node (:include irnode)) target zf cf)
 
-(defstruct cenv lambda-id lambda-declarations bindings declaration)
+(defstruct cenv lambda-declarations bindings declaration current-lambda)
 
 (defun make-constant-nil-node ()
   (make-immediate-constant-node :value *nil*))
@@ -92,6 +92,16 @@
     (lexical-binding-node (lexical-binding-node-name node))
     (m-v-b-binding-node (m-v-b-binding-node-name node))))
 
+(defun binding-lambda-id (node)
+  (etypecase node
+    (lexical-binding-node (lexical-binding-node-lambda-id node))
+    (m-v-b-binding-node (m-v-b-binding-node-lambda-id node))))
+
+(defun set-binding-to-closed-over (node)
+  (etypecase node
+    (lexical-binding-node (setf (lexical-binding-node-closed-over node) t))
+    (m-v-b-binding-node (setf (m-v-b-binding-node-closed-over node) t))))
+
 (defun get-lexical-node (node)
   (etypecase node
     (lexical-var-node node)
@@ -104,10 +114,14 @@
       (when bin
 	(return-from lexical-binding-exist bin)))))
 
-(defun get-current-lambda-id (environment)
+(defun get-lexical-variable-name (node)
+  (etypecase node
+    (lexical-var-node (lexical-var-node-symbol node))))
+
+(defun get-current-lambda-node (environment)
   (dolist (cenv environment)
-    (when (cenv-lambda-id cenv)
-      (return (cenv-lambda-id cenv)))))
+    (when (cenv-current-lambda cenv)
+      (return (cenv-current-lambda cenv)))))
 
 ;; FIXME - slow
 (defun fun-inlined-p (environment fun)
@@ -138,16 +152,24 @@
     (assert lambda-id)
     (dolist (argument arguments)
       (cond ((eq '&compiler-rest argument) (setf rest-node t))
-	    (rest-node (push (make-lexical-binding-node :name argument
-							:rest t
-							:lambda-id lambda-id
-							:bin-node (make-lexical-var-node :name argument  :lambda-id lambda-id))
-			     nodes)
+	    (rest-node (let* ((var-node (make-lexical-var-node :name argument :lambda-id lambda-id))
+			      (binding-node (make-lexical-binding-node :name argument
+								       :rest t
+								       :lambda-id lambda-id
+								       :bin-node var-node))
+			      (name (make-symbol (concatenate 'string (symbol-name argument) "-" (write-to-string (lexical-var-node-id var-node))))))
+			 (setf (lexical-var-node-symbol var-node) name)
+			 (setf (lexical-binding-node-symbol binding-node) name)
+			 (push binding-node nodes))
 		       (setf rest-node nil))
-	    (t (push (make-lexical-binding-node :name argument
-						:lambda-id lambda-id
-						:bin-node (make-lexical-var-node :name argument :lambda-id lambda-id))
-		     nodes))))
+	    (t (let* ((var-node (make-lexical-var-node :name argument :lambda-id lambda-id))
+		      (binding-node (make-lexical-binding-node :name argument :lambda-id lambda-id
+							       :bin-node var-node))
+		      (name (make-symbol (concatenate 'string (symbol-name argument) "-" (write-to-string (lexical-var-node-id var-node))))))
+		 (setf (lexical-var-node-symbol var-node) name)
+		 (setf (lexical-binding-node-symbol binding-node) name)
+		 (push binding-node
+		       nodes)))))
     (reverse nodes)))
 
 ;;; FIXME, create struct object that is easy to query
@@ -157,14 +179,15 @@
 (defun get-lambda-new-bindings (lambda-list)
   (filter lambda-list '&compiler-rest))
 
+
 (defun create-lambda-node (form environment)
   (let* ((declarations (parse-declarations (third form)))
 	 (lambda-node (make-lambda-node)))
     (setf (lambda-node-declarations lambda-node) declarations)
     (let* ((argument-nodes (create-lambda-arguments-nodes (second form) (tnode-id lambda-node)))
-	   (environment (cons (make-cenv :lambda-id (tnode-id lambda-node)
-					 :bindings argument-nodes
-					 :declaration declarations)
+	   (environment (cons (make-cenv :bindings argument-nodes
+					 :declaration declarations
+					 :current-lambda lambda-node)
 			      environment)))
       (setf (lambda-node-arguments lambda-node) argument-nodes)
       (setf (lambda-node-body lambda-node)  (create-node (fourth form) environment))
@@ -176,15 +199,17 @@
 		:false-form (create-node (fourth form) environment)))
 
 (defun create-lexical-or-dynamic-node (form lambda-id environment)
-  (let ((binding-info (lexical-binding-exist environment (first form))))
-    (if binding-info
-	(make-lexical-binding-node :name (first form) :form (create-node (second form) environment) :lambda-id lambda-id
-				   :bin-node (make-lexical-var-node :name (first form) :lambda-id lambda-id))
-	(make-lexical-binding-node :name (first form) :form (create-node (second form) environment) :lambda-id lambda-id
-				   :bin-node (make-lexical-var-node :name (first form) :lambda-id lambda-id))
-	;; FIXME, need dynamic environment here to know if variable already has dynamic binding
-	;; (make-dynamic-var-node :name (first form) :form (create-node (second form)))
-	)))
+  (let* ((binding-info (lexical-binding-exist environment (first form)))
+	 (var-node (make-lexical-var-node :name (first form) :lambda-id lambda-id))
+	 (binding-node (make-lexical-binding-node :name (first form) :form (create-node (second form) environment) :lambda-id lambda-id
+						  :bin-node var-node))
+	 (uniq-name-symbol (make-symbol (concatenate 'string (symbol-name (first form)) "-" (write-to-string (lexical-var-node-id var-node))))))
+    (declare (ignore binding-info))
+    (setf (lexical-var-node-symbol var-node) uniq-name-symbol)
+    (setf (lexical-binding-node-symbol binding-node) uniq-name-symbol)
+    ;; FIXME, need dynamic environment here to know if variable already has dynamic binding
+    ;; (make-dynamic-var-node :name (first form) :form (create-node (second form)))
+    binding-node))
 
 ;; FIXME (let ((a 1) (a 2))) should throw error, (let* ((a 1) (a 2))) should 
 (defun create-let-binding-nodes (bindings lambda-id sequential environment)
@@ -203,8 +228,9 @@
 ;;; FIXME, form in LET binding can consist of symbol that can be lexical or dynamic scoope
 ;;; see FIXME in CREATE-LEXICAL-OR-DYNAMIC-NODE
 (defun create-let-node (form environment)
-  (let ((sequential (eq (first form) 'let*))
-	(this-lambda-id (get-current-lambda-id environment))
+  (let* ((sequential (eq (first form) 'let*))
+	(current-lambda (get-current-lambda-node environment))
+	(this-lambda-id (lambda-node-id current-lambda))
 	(let-node (make-let-node)))
     (assert this-lambda-id)
     (setf (let-node-bindings let-node) (create-let-binding-nodes (second form) this-lambda-id sequential environment))
@@ -280,7 +306,8 @@
 				   (cdr form))))
 
 (defun create-m-v-b-node (form environment)
-  (let* ((current-lambda-id (get-current-lambda-id environment))
+  (let* ((current-lambda (get-current-lambda-node environment))
+	 (current-lambda-id (lambda-node-id current-lambda))
 	 (bindings nil)
 	 (index 0)
 	 (form-node (create-node (third form) environment))
@@ -288,10 +315,14 @@
 			(parse-declaration-form (fourth form)))))
     (assert current-lambda-id)
     (dolist (s (second form))
-      (push (make-m-v-b-binding-node :name s :value-index index :lambda-id current-lambda-id
-				     :bin-node (make-lexical-var-node :name s :lambda-id current-lambda-id ))
-	    bindings)
-      (incf index))
+      (let* ((var-node (make-lexical-var-node :name s :lambda-id current-lambda-id ))
+	     (binding-node (make-m-v-b-binding-node :name s :value-index index :lambda-id current-lambda-id
+						    :bin-node var-node) )
+	     (uniq-name-symbol (make-symbol (concatenate 'string (symbol-name s) "-" (write-to-string (lexical-var-node-id var-node))))))
+	(setf (lexical-var-node-symbol var-node) uniq-name-symbol)
+	(setf (m-v-b-binding-node-symbol binding-node) uniq-name-symbol)
+	(push binding-node bindings)
+	(incf index)))
     (let* ((new-environment (cons (make-cenv :bindings bindings)
 				  environment))
 	   (body (create-node  (if declaration
@@ -329,17 +360,15 @@
 
 (defun create-lexical-or-symbol-value-node (form environment)
   (declare (optimize debug))
-  (let ((binding (lexical-binding-exist environment form))
-	(current-lambda-id (get-current-lambda-id environment)))
+  (let* ((binding (lexical-binding-exist environment form))
+	 (current-lambda (get-current-lambda-node environment))
+	 (current-lambda-id (lambda-node-id current-lambda)))
     (assert current-lambda-id)
     (if binding
 	(progn
-	  ;; FIXME, uncomment this, if we want to set :shared field to true
-	  ;; (when (/= current-lambda-id (getf binding-info :lambda-id))
-	  ;;   (let ((binding-node (get-binding-node (getf binding-info :node-id))))
-	  ;;     (assert binding-node)
-	  ;;     (setf (lexical-binding-node-shared binding-node) t)))
-	  ;; (make-lexical-var-node :name form :form nil :source-lambda-id (getf binding-info :lambda-id) :source-node (getf binding-info :node-id))
+	  (when (/= current-lambda-id (binding-lambda-id binding))
+	    (set-binding-to-closed-over binding)
+	    (pushnew (get-lexical-node binding) (lambda-node-closed-over-vars current-lambda)))
 	  (get-lexical-node binding))
 	(if (find form *dynamic-variables*)
 	    (make-call-node :function 'symbol-value
@@ -416,7 +445,6 @@
 	      ((eq first 'return-from)
 	       (create-return-from form environment))
 	      (t (create-call-node form environment))))))
-
 
 (defun map-to-nodes (form)
   (let ((*node-id* 0))
