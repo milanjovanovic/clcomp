@@ -1622,7 +1622,6 @@
     (emit-ir (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) lambda-ssa entry-block)
     (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
-    (print lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (when *optimize-redundant-blocks*
@@ -1829,6 +1828,7 @@
     (t nil)))
 
 (defun collect-block-virtuals (block lambda-ssa)
+  (declare (ignorable lambda-ssa))
   (error-if-touch-ssa)
   (let ((reads nil)
 	(writes nil))
@@ -1971,7 +1971,9 @@
     (if interval
 	(let ((range (first (interval-ranges interval))))
 	  (setf (range-start range) start))
-	(debug-print "Missing range, probably single WRITE no READ" place))))
+	(progn
+	  (debug-print "Missing range, probably single WRITE no READ" place)
+	  nil))))
 
 (defun range-split (range position)
   (if (= position (range-start range))
@@ -2026,6 +2028,13 @@
 		      interval)
 		    (when second-range
 		      (make-interval :name interval-name
+				     :number (if (interval-ranges interval)
+						 (incf *interval-counter*)
+						 (interval-number interval))
+				     :parent (unless (interval-ranges interval)
+					       (interval-parent interval))
+				     :child (unless (interval-ranges interval)
+					      (interval-child interval))
 				     :ranges (cons second-range (cdr rest-ranges)))))))
 	interval)))
 
@@ -2205,7 +2214,7 @@
 		 (live-in (union (set-difference (ssa-block-live-out block)
 						 (ssa-block-live-kill block))
 				 (ssa-block-live-gen block)
-				 :test #'eq)))
+				 :test #'eql)))
 	     (when (or (set-difference live-in old-live-in)
 		       (set-difference old-live-in live-in))
 	       (setf changed t))
@@ -2627,7 +2636,7 @@
 	      (return-from iter nil))
 	    (cond
 	      ((eq (aref status j) :TO-MOVE)
-	       (parallel-move-one src dst j status tmp out))
+	       (parallel-move-helper src dst j status tmp out))
 
 	      ((eq (aref status j) :BEING-MOVED)
 	       (let ((move (make-ssa-load :to tmp
@@ -2830,6 +2839,7 @@
 ;;; FIXME, we need proper format for this :reg for register storagak
 ;;; or (:reg ....) for memory or stack storage
 (defun get-alloc-storage (alloc name index)
+  #.*fun-optimize-level*
   (let ((intervals (gethash name (alloc-per-name-handled alloc))))
     (unless intervals
       (error "Unknown name"))
@@ -3051,3 +3061,9 @@
   (ql:quickload "clcomp")
   (load "/Users/milan/projects/clcomp.github/compiler/cldot.lisp"))
 
+
+;;; bug
+(clcomp-compile  '(lambda (a)
+		   (let* ((c a)
+			  (d (+ c a)))
+		     (list c a))))
