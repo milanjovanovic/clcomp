@@ -2681,7 +2681,7 @@
 	     (loads (cdr move))
 	     (ordered-moves (resolve-data-moves-order loads scratch-storage)))
 	(push (list index ordered-moves) res)))
-    res))
+    (reverse res)))
 
 (defun resolve-lambda-moves-order (lambda-ssa scratch-storage)
   #.*fun-optimize-level*
