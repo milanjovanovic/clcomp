@@ -1,13 +1,19 @@
-	.globl _init_lisp		
+#ifdef __APPLE__
+#define CNAME(x) _##x
+#else
+#define CNAME(x) x
+#endif
+
+	.globl CNAME(init_lisp)
 	.align   8, 0x90
-_init_lisp:
-	movq %rdi, _lisp_stack(%rip)
-	movq %rsi, _lisp_heap(%rip)
+CNAME(init_lisp):
+	movq %rdi, CNAME(lisp_stack)(%rip)
+	movq %rsi, CNAME(lisp_heap)(%rip)
 	ret
 
-	.globl _run_lisp_test
+	.globl CNAME(run_lisp_test)
 	.align 8, 0x90
-_run_lisp_test:
+CNAME(run_lisp_test):
 	push %rbp
 	movq %rsp, %rbp
 	push %rbx
@@ -16,8 +22,8 @@ _run_lisp_test:
 	push %r14
 	push %r15
 	movq %rsp, _cs(%rip)
-	movq _lisp_stack(%rip), %rsp
-	movq _lisp_heap(%rip), %r15
+	movq CNAME(lisp_stack)(%rip), %rsp
+	movq CNAME(lisp_heap)(%rip), %r15
 	movq %rdx, %rax
 	movq $0, %rcx
 	callq *%rax
@@ -31,9 +37,9 @@ _run_lisp_test:
 	pop %rbp
 	ret
 
-	.globl _eval_lisp_fixup
+	.globl CNAME(eval_lisp_fixup)
 	.align 8, 0x90
-_eval_lisp_fixup:
+CNAME(eval_lisp_fixup):
 	push %rbp
 	movq %rsp, %rbp
 	push %rbx
@@ -42,8 +48,8 @@ _eval_lisp_fixup:
 	push %r14
 	push %r15
 	movq %rsp, _cs(%rip)
-	movq _lisp_stack(%rip), %rsp
-	movq _lisp_heap(%rip), %r15
+	movq CNAME(lisp_stack)(%rip), %rsp
+	movq CNAME(lisp_heap)(%rip), %r15
 	movq %rdi, %rax
 	movq $0, %rcx
 	callq *%rax
@@ -57,13 +63,13 @@ _eval_lisp_fixup:
 	pop %rbp
 	ret
 
-	.section __DATA,__data
+	.section .data
 	.globl   _cs
-	.globl   _lisp_heap
-	.globl   _lisp_stack
+	.globl   CNAME(lisp_heap)
+	.globl   CNAME(lisp_stack)
 _cs:
 	.quad 0
-_lisp_heap:
+CNAME(lisp_heap):
 	.quad 0
-_lisp_stack:
+CNAME(lisp_stack):
 	.quad 0

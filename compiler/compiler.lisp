@@ -23,6 +23,8 @@
 
 
 (defparameter *symbols* (make-hash-table))
+(defparameter *static-space-start* #x20000000)
+
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly

@@ -16,7 +16,7 @@
 #include <sys/ucontext.h>
 #include <dlfcn.h>
 
-#define STATIC_SPACE_START 0x20000000
+#define STATIC_SPACE_START 0x20000000 // we have hard coded this address on Lisp VOP's side
 #define STATIC_SPACE_SIZE (30 * 1024 * 1024)
 
 #define LISP_HEAP_START 0x200000000
@@ -345,6 +345,12 @@ void init_runtime() {
   // save stack memory pointer
   static_start = (void *) lp;
 
+  // for Lisp calling C functions
+  // be aware that we have referenced this in Lisp VOP's in respect to STATIC_SPACE_START
+  // this has already bitten me once
+  lispobj *foreign_funs = ++lp;
+  foreign_funs[0] = (lispobj) get_symbol_address;
+
   heap_header = (lispobj *) current_heap;
 
   // increase heap for header size
@@ -469,10 +475,11 @@ lispobj run_test(char *test_file) {
 }
 
 
-/* void print_contenxt(ucontext_t *uap) { */
-/*   mcontext_t mcontext = uap->uc_mcontext; */
-/*   uint64_t reg_rbp = mcontqext->__ss.__rbp; */
-/* } */
+/*
+void print_contenxt(ucontext_t *uap) {
+  mcontext_t mcontext = uap->uc_mcontext;
+  uint64_t reg_rbp = mcontqext->__ss.__rbp;
+}
 
 void sigill_handler(int signal , siginfo_t *info, ucontext_t *uap) {
   printf("SIGILL_HANDLER: %d\n", signal);
@@ -487,6 +494,7 @@ void sigill_handler(int signal , siginfo_t *info, ucontext_t *uap) {
   printf("ret: %llx\n", ret);
   sigaction(SIGILL, &osa, NULL);
 }
+*/
 
 void install_handler() {
   struct sigaction sa;
@@ -494,7 +502,7 @@ void install_handler() {
 
   sa.sa_flags = SA_SIGINFO | SA_RESTART;
   sigemptyset(&sa.sa_mask);
-  sa.sa_sigaction = (void (*)(int, siginfo_t*, void*)) sigill_handler;
+  /* sa.sa_sigaction = (void (*)(int, siginfo_t*, void*)) sigill_handler; */
  
   sigaction(SIGILL, &sa, &osa);
 
@@ -502,6 +510,7 @@ void install_handler() {
 
 int main(int argc, char *argv[]) {
 
+  /* setbuf(stdout, NULL); */
   symbols_map = create_nm_hashmap("runtime.nm");
 
   init_runtime();

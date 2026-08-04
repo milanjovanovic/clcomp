@@ -19,7 +19,13 @@ char *get_part(char *str, char delim, int index) {
       start = current;
     }
   }
-  return NULL;
+
+  // missing 4 column
+  if (i == index) {
+    return strdup(start);
+  } else {
+    return NULL;
+  }
 }
 
 void fill_map(char *file, struct hashmap *map) {
@@ -27,8 +33,10 @@ void fill_map(char *file, struct hashmap *map) {
   char *line = malloc(255);
   while (fgets(line, 255, nm) != NULL)  {
     char *name = get_part(line, ' ', 0);
-    // skip one _
+#ifdef __APPLE__
+    // OSX: skip the leading underscore
     name++;
+#endif
     char *address = get_part(line, ' ', 2);
     uintptr_t value = strtoull(address, NULL, 10);
     map_set(map, name, value);
