@@ -240,6 +240,11 @@
 			      (get-compilation-unit-code-size entry-compilation-unit))
 			   (compile-component-start (compilation-unit-compile-component entry-compilation-unit)))))
 
+(defparameter *core-output-dir* "/home/ubuntu/lisp/clcomp/runtime/")
+
+(defun make-output-bin-file (file)
+  (format nil "~A~A" *core-output-dir* file))
+
 (defun rt-reset ()
   (setf *current-compilation* (make-compilation :units nil))
   (setf *compilation-start-address* *runtime-heap-start*)
@@ -266,8 +271,8 @@
     (maphash (lambda (k v)
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
-    (rt-dump-binary "/Users/milan/projects/clcomp.github/runtime/core")
-    (rt-dump-fixups "/Users/milan/projects/clcomp.github/runtime/fixups.core")))
+    (rt-dump-binary (make-output-bin-file "core"))
+    (rt-dump-fixups (make-output-bin-file "fixups.core"))))
 
 (defun compile-and-dump (form)
   (declare (optimize (debug 3)))
@@ -299,7 +304,7 @@
 	   (code-buffers-list (make-compilation-binary-data))
 	   (fixups-buffers-list (make-fixups-code-buffers-list))
 	   (fixups-size (* *word-size* (length fixups-buffers-list))))
-      (with-open-file (f "/Users/milan/projects/clcomp.github/runtime/core" :direction :output
+      (with-open-file (f (make-output-bin-file "core") :direction :output
 									    :if-exists :supersede
 									    :element-type '(unsigned-byte 8))
 

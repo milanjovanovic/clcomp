@@ -8,14 +8,14 @@
 (defparameter *fun-address-reg* :RAX)
 (defparameter *return-value-reg* :RBX)
 (defparameter *fun-number-of-arguments-reg* :RCX)
-(defparameter *closure-env-reg* :RSI)
+;; (defparameter *closure-env-reg* :RSI)
 (defparameter *heap-header-reg* :R15)
 (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
 (defparameter *scratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
-(defparameter *preserved-regs* '(:R12 :R13 :R14))
-;; FIXME
 (defparameter *mvb-base-pointer-reg* :R11) 
+(defparameter *tmp-reg-2* :RSI)
+(defparameter *preserved-regs* '(:R12 :R13 :R14))
 
 
 (defparameter *debug* nil)
@@ -26,6 +26,8 @@
 
 
 (defparameter *symbols* (make-hash-table))
+(defparameter *static-space-start* #x20000000)
+
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;; ir to assembly
