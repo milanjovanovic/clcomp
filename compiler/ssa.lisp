@@ -16,7 +16,7 @@
 (defstruct (arg-place (:include fixed-place)) index)
 
 (defstruct (rcv-argument-place (:include arg-place)))
-(defstruct (argument-place (:include arg-place)))
+(defstruct (argument-place (:include arg-place)) count)
 (defstruct (return-value-place (:include arg-place)))
 (defstruct (argument-count-place (:include fixed-place)))
 (defstruct (function-value-place (:include fixed-place)))
@@ -54,6 +54,9 @@
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
 (defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
+(defstruct (allocate-stack (:include ssa-form)) count)
+(defstruct (deallocate-stack (:include ssa-form)) count)
+
 (defstruct (ssa-form-rw (:include ssa-form)))
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
@@ -624,6 +627,7 @@
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
 	 (arguments-count (length arguments))
+	 (stack-arguments (- arguments-count (length *fun-arguments-regs*)))
 	 (args-places nil))
     (dolist (arg arguments)
       (let ((direct-place (make-direct-place-or-nil arg)))
@@ -633,10 +637,12 @@
 		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
 	      (setf block new-block)
 	      (push place args-places)))))
+    (when (> stack-arguments 0)
+      (emit-ir (make-allocate-stack :count stack-arguments) block))
     (let ((arg-index 0))
       (dolist (p (reverse args-places))
 	;; FIXME, maybe p is already virtual place, no need for additional move
-	(emit-ir (make-ssa-load :to (make-argument-place :index arg-index) :from p) block)
+	(emit-ir (make-ssa-load :to (make-argument-place :index arg-index :count arguments-count) :from p) block)
 	(incf arg-index)))
     (emit-ir (make-ssa-load :to (make-argument-count-place)
 			    :from (make-immediate-constant :constant (clcomp::fixnumize arguments-count))) block)
@@ -648,11 +654,15 @@
 	(progn
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun)
 		   block)
+	  (when (> stack-arguments 0)
+	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
 	  (when leaf
 	    (emit-ir (make-ssa-unknown-return) block))
 	  block)
 	(progn
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
+	  (when (> stack-arguments 0)
+	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
 	  (typecase place
 	    (mvb-place
 	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block))
@@ -844,12 +854,19 @@
       (clcomp::compile-time-constant-node (make-compile-time-constant-fixup :name fixup-sym
 								    :form (clcomp::compile-time-constant-node-form node))))))
 
+(defun get-rip-node-lambda (rip-node)
+  (etypecase rip-node
+    (clcomp::load-time-value-node (clcomp::load-time-value-node-form rip-node))
+    (clcomp::lambda-node rip-node)))
+
 (defun emit-closure-sequence-ssa (node lambda-ssa place block)
   (declare (ignorable node lambda-ssa place block))
-  (when (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
-      (error "not implemented")))
+  (if (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
+      (error "Closure detected !")
+      (lambda-construct-ssa (get-rip-node-lambda node))))
 
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
+  (declare (optimize debug))
   (let ((fixup (rip-relative-node-to-fixup node)))
     (typecase node
       (clcomp::load-time-value-node
@@ -2754,17 +2771,20 @@
 (defparameter *stack-pointer-reg* :RSP)
 (defparameter *instruction-pointer-reg* :RIP)
 (defparameter *fun-address-reg* :RAX)
-(defparameter *fun-values-stack-reg* :RBX)
+(defparameter *fun-values-stack-reg* :RBX) ;; why use this ?
 (defparameter *fun-number-of-arguments-reg* :RCX)
 (defparameter *fun-number-of-ret-values-reg* :RCX)
 ;; (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
-(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI))
+(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI)) ;; we should add :R11 here too
 ;; (defparameter *closure-env-reg* :RSI)
-(defparameter *scratch-regs* '(:R10 :R11))
+(defparameter *scratch-regs* '(:R9 :R10))
 (defparameter *tmp-reg* :R10)
+(defparameter *tmp-reg-2* :R9)
 (defparameter *preserved-regs* '(:R12 :R13 :R14))
 (defparameter *heap-header-reg* :R15)
-;; FIXME
+;;; FIXME
+;;; This should be the same register as *fun-values-stack-reg*
+;;; also we should not use register for this, use :RBP
 (defparameter *mvb-base-pointer-reg* :R11)
 
 ;;; Left REGS for using: R8 R9
@@ -2820,7 +2840,7 @@
   (etypecase place
     (argument-count-place (make-reg-op *fun-number-of-arguments-reg*))
     (rcv-argument-place (make-recv-arg-place place))
-    (argument-place (get-fun-argument-storage place "FIXME"))
+    (argument-place (get-fun-argument-storage place (argument-place-count place)))
     (return-value-place (make-return-value-storage place))
     (function-value-place (make-reg-op *fun-address-reg*))))
 
@@ -2836,7 +2856,7 @@
 (defun calculate-local-var-stack (stack)
   (- (* clcomp::*word-size* (+ stack (length *preserved-regs*) 1))))
 
-;;; FIXME, we need proper format for this :reg for register storagak
+;;; FIXME, we need proper format for this :reg for register storage
 ;;; or (:reg ....) for memory or stack storage
 (defun get-alloc-storage (alloc name index)
   #.*fun-optimize-level*
@@ -2917,7 +2937,17 @@
     (emit-ir-assembly translator alloc
 		      (make-inst :cmp (make-reg-op *fun-number-of-arguments-reg*) (clcomp::fixnumize (or arg-count min-arg-count)))
 		      ;; FIXME, use unique :wrong-arg-count-label symbol
-		      (make-inst :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label)))) 
+		      (make-inst :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label))))
+
+(defun translate-allocate-stack (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  (emit-ir-assembly translator alloc
+		    (make-inst :sub *stack-pointer-reg* (* clcomp::*word-size* (allocate-stack-count ir)))))
+
+(defun translate-deallocate-stack (ir translator alloc sblock lambda-ssa)
+  (declare (ignore sblock lambda-ssa))
+  (emit-ir-assembly translator alloc
+		    (make-inst :add *stack-pointer-reg* (* clcomp::*word-size* (deallocate-stack-count ir)))))
 
 (defun translate-fun-call (ir translator alloc sblock lambda-ssa)
   (declare (ignore ir sblock lambda-ssa))
@@ -3000,6 +3030,10 @@
        (translate-lambda-entry ir translator alloc sblock lambda-ssa))
       (arg-check
        (translate-arg-check ir translator alloc sblock lambda-ssa))
+      (allocate-stack
+       (translate-allocate-stack ir translator alloc sblock lambda-ssa))
+      (deallocate-stack
+       (translate-deallocate-stack ir translator alloc sblock lambda-ssa))
       (ssa-rest-listify (apply #'emit-ir-assembly translator alloc
 			       (clcomp::listify-code-generator (ssa-rest-listify-count ir))))
       (ssa-load
@@ -3036,8 +3070,9 @@
 (defparameter *last-intervals* nil)
 (defparameter *last-alloc* nil)
 
-(defun clcomp-compile (exp)
+(defun clcomp-compile (name exp)
   #.*fun-optimize-level*
+  (declare (ignorable name))
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa))
 	 (alloc (linear-scan intervals)))
@@ -3063,7 +3098,10 @@
 
 
 ;;; bug
-(clcomp-compile  '(lambda (a)
+(clcomp-compile nil  '(lambda (a)
 		   (let* ((c a)
 			  (d (+ c a)))
 		     (list c a))))
+
+
+
