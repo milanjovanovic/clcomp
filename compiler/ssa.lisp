@@ -722,9 +722,8 @@
 	(emit-ir (make-ssa-load :to place
 				:from constant)
 		 block)
-	(if leaf
-	    (emit-single-return-sequence constant block)
-	    (emit-ir (make-ssa-value :value constant) block))))
+	(when leaf
+	  (emit-single-return-sequence constant block))))
   block)
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
@@ -895,7 +894,8 @@
 
 
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
-  (declare (optimize (debug 3) (speed 0)))
+  #.*fun-optimize-level*
+  (assert (not (and leaf place)))
   (let ((ret-index 0))
     (dolist (form (clcomp::values-node-forms node))
       (if leaf
@@ -913,11 +913,19 @@
 			       (emit-ssa form lambda-ssa nil nil block))))
 	      (emit-ssa form lambda-ssa nil nil block)))
       (incf ret-index)))
+  ;; if there are more M-V-B variables than VALUES we need to set extra ones  to NIL
+  (when (and (mvb-place-p place)
+	     (< (length (clcomp::values-node-forms node))
+		(length (mvb-place-var-places place))))
+    (dolist (p (nthcdr (length (clcomp::values-node-forms node)) (mvb-place-var-places place)))
+      (emit-ir (make-ssa-load :to p :from (make-immediate-constant :constant clcomp::*nil*)) block)))
   (when leaf
     (unless (clcomp::values-node-forms node)
       (emit-ir (make-ssa-load :to (make-return-value-place :index 0)
-			      :from (make-immediate-constant :constant clcomp::*nil*)) block))
-    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node))) block))
+			      :from (make-immediate-constant :constant clcomp::*nil*))
+	       block))
+    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
+	     block))
   block)
 
 (defun emit-block-node-ssa (node lambda-ssa leaf place block)
@@ -2766,26 +2774,29 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; https://wiki.cdot.senecacollege.ca/wiki/X86_64_Register_and_Instruction_Quick_Start
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *stack-pointer-reg* :RSP)
 (defparameter *instruction-pointer-reg* :RIP)
 (defparameter *fun-address-reg* :RAX)
-(defparameter *fun-values-stack-reg* :RBX) ;; why use this ?
 (defparameter *fun-number-of-arguments-reg* :RCX)
 (defparameter *fun-number-of-ret-values-reg* :RCX)
-;; (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
-(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI)) ;; we should add :R11 here too
-;; (defparameter *closure-env-reg* :RSI)
+(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI :R8))
 (defparameter *scratch-regs* '(:R9 :R10))
 (defparameter *tmp-reg* :R10)
 (defparameter *tmp-reg-2* :R9)
-(defparameter *preserved-regs* '(:R12 :R13 :R14))
+(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14 :RBX))
 (defparameter *heap-header-reg* :R15)
+
+
+;; (defparameter *fun-values-stack-reg* :RBX) ;; why use this ?
+
+;; (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
+;; (defparameter *closure-env-reg* :RSI)
+
 ;;; FIXME
 ;;; This should be the same register as *fun-values-stack-reg*
 ;;; also we should not use register for this, use :RBP
-(defparameter *mvb-base-pointer-reg* :R11)
+;; (defparameter *mvb-base-pointer-reg* :R11)
 
 ;;; Left REGS for using: R8 R9
 
@@ -2813,7 +2824,7 @@
     (if (> place-index arg-reg-count)
 	;; FIXME, stack op displacement is wrong
 	(make-stack-op (* clcomp::*word-size*
-			  (- arguments-count place-index))
+			  (- (+ arguments-count 1) place-index))
 		       *stack-pointer-reg*)
 	(make-reg-op (nth (- place-index 1) *fun-arguments-regs*)))))
 
@@ -2824,7 +2835,7 @@
 	(make-reg-op (nth index *fun-arguments-regs*))
 	(make-stack-op  (- (* clcomp::*word-size*
 			      (- index (length *fun-arguments-regs*))))
-			*fun-values-stack-reg*))))
+			*stack-pointer-reg*))))
 
 (defun make-recv-arg-place (place)
   (let ((index (rcv-argument-place-index place)))
@@ -2877,10 +2888,13 @@
     (error "Can't find storage for name")))
 
 (defun get-storage (alloc place index)
+  #.*fun-optimize-level*
   (etypecase place
     (fixed-place (get-fixed-place-storage place))
     (phi-place (let ((reduced (funcall (phi-place-reduced place))))
-		 (get-alloc-storage alloc (named-place-name (or reduced place)) index)))
+		 ;; (get-alloc-storage alloc (named-place-name (or reduced place)) index)
+		 ;; NOTE, is place symbol or struct ?
+		 (get-alloc-storage alloc  (or reduced place) index)))
     (virtual-place (get-alloc-storage alloc place index))
     (immediate-constant (immediate-constant-constant place))
     ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
@@ -3024,6 +3038,7 @@
     ))
 
 (defun translate-block (sblock lambda-ssa alloc translator)
+  #.*fun-optimize-level*
   (dolist (ir (ssa-block-ssa sblock))
     (etypecase ir
       (lambda-entry
@@ -3095,13 +3110,3 @@
   (ql:quickload "cl-dot")
   (ql:quickload "clcomp")
   (load "/Users/milan/projects/clcomp.github/compiler/cldot.lisp"))
-
-
-;;; bug
-(clcomp-compile nil  '(lambda (a)
-		   (let* ((c a)
-			  (d (+ c a)))
-		     (list c a))))
-
-
-
