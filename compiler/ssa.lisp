@@ -20,6 +20,7 @@
 (defstruct (return-value-place (:include arg-place)))
 (defstruct (argument-count-place (:include fixed-place)))
 (defstruct (function-value-place (:include fixed-place)))
+(defstruct (operand-place (:include fixed-place)) operand)
 
 (defstruct (virtual-place (:include named-place)))
 (defstruct (phi-place
@@ -56,6 +57,10 @@
 (defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
 (defstruct (allocate-stack (:include ssa-form)) count)
 (defstruct (deallocate-stack (:include ssa-form)) count)
+(defstruct (callee-save-regs (:include ssa-form)))
+(defstruct (callee-restore-regs (:include ssa-form)))
+(defstruct (instr-push (:include ssa-form)) operand)
+(defstruct (instr-pop (:include ssa-form)) operand)
 
 (defstruct (ssa-form-rw (:include ssa-form)))
 
@@ -893,39 +898,94 @@
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
 
 
+;;; FIXME, for emiting values we should break after this evaluation here
+;;; all other instructions should be skipped, (we should only have RETURN-UNKNOWN after this in any way)
+;;; so, we do all the pushing  and poping here
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
+  ;; can this happen ?
   (assert (not (and leaf place)))
-  (let ((ret-index 0))
-    (dolist (form (clcomp::values-node-forms node))
-      (if leaf
-	  ;; what if PLACE is existing ?? or we don't care ?
-	  (maybe-emit-direct-load form lambda-ssa nil (make-return-value-place :index ret-index) block)
-	  (if place
-	      (typecase place
-		(mvb-place
-		 (let ((var-place (nth ret-index (mvb-place-var-places place))))
-		   (if var-place
-		       (maybe-emit-direct-load form lambda-ssa nil var-place block)
-		       (emit-ssa form lambda-ssa nil nil block))))
-		(otherwise (if (zerop ret-index)
-			       (maybe-emit-direct-load form lambda-ssa nil place block)
-			       (emit-ssa form lambda-ssa nil nil block))))
-	      (emit-ssa form lambda-ssa nil nil block)))
-      (incf ret-index)))
-  ;; if there are more M-V-B variables than VALUES we need to set extra ones  to NIL
-  (when (and (mvb-place-p place)
-	     (< (length (clcomp::values-node-forms node))
-		(length (mvb-place-var-places place))))
-    (dolist (p (nthcdr (length (clcomp::values-node-forms node)) (mvb-place-var-places place)))
-      (emit-ir (make-ssa-load :to p :from (make-immediate-constant :constant clcomp::*nil*)) block)))
-  (when leaf
-    (unless (clcomp::values-node-forms node)
-      (emit-ir (make-ssa-load :to (make-return-value-place :index 0)
-			      :from (make-immediate-constant :constant clcomp::*nil*))
-	       block))
-    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
-	     block))
+  (if leaf
+      (if (zerop (length (clcomp::values-node-forms node)))
+	  ;; empty (VALUES) form, just load NIL to first return value register
+	  (progn
+	    (unless (clcomp::values-node-forms node)
+	      (emit-ir (make-ssa-load :to (make-return-value-place :index 0)
+				      :from (make-immediate-constant :constant clcomp::*nil*))
+		       block))
+	    (emit-ir (make-ssa-multiple-return :count 0)
+		     block))
+	  ;; we have VALUES
+	  (progn
+	    (assert (not (mvb-place-p place)))
+	    ;; handle values that goes to registers
+	    (dotimes (index (length *fun-arguments-regs*))
+	      (let ((form (nth index (clcomp::values-node-forms node))))
+		(if form
+		    (maybe-emit-direct-load form lambda-ssa nil (make-return-value-place :index index) block)
+		    (return))))
+	    ;; return early if we don't have more values than registers
+	    (unless (> (length (clcomp::values-node-forms node))
+		       (length *fun-arguments-regs*))
+	      (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
+		       block)
+	      (return-from emit-values-node-ssa))
+
+	    ;; NOTE, MULTIPLE VALUES STACK LAYOUT
+	    ;; Idea is to manipulate caller stack
+	    ;; we are going to extend caller stack by count of our values + 1 if alignment is needed
+	    ;; so we are going to POP all callee save registers, pop RBP and RIP into tmp registers
+	    ;; then we write our stack values, first value is on first stack position, last value is closest to caller frame
+	    ;; then restore RPB and push RIP to stack and return
+	    (let* ((vals-count (length (clcomp::values-node-forms node)))
+		   (stack-vals (- vals-count (length *fun-arguments-regs*))))
+	      (when (> stack-vals 0)
+		;; calculate alignment, this part need to be align, when we push RIP back on stack it should not be
+		;; FIXME, this calculation is not right, we should include callee-saved registers into calculation
+		(let ((stack-alloc-count (if (zerop (mod (* stack-vals clcomp::*word-size*) *alignment*))
+					     stack-vals
+					     (1+ stack-vals))))
+		  (emit-ir (make-callee-restore-regs) block)
+		  (emit-ir (make-instr-pop :operand *tmp-reg*) block) ;; RBP
+		  (emit-ir (make-instr-pop :operand *tmp-reg-2*) block) ;; RIP
+		  (emit-ir (make-allocate-stack :count stack-alloc-count) block)
+		  (let ((index 0))
+		    (dolist (form (nthcdr (length *fun-arguments-regs*)
+					  (clcomp::values-node-forms node)))
+		      (maybe-emit-direct-load form  lambda-ssa nil
+					      (make-operand-place :operand
+								  (make-stack-op (- (* index clcomp::*word-size*)) *stack-pointer-reg*))
+					      block)))
+		  (emit-ir (make-ssa-load  :from (make-operand-place :operand *tmp-reg*)
+					   :to (make-operand-place :operand *base-pointer-reg*))
+			   block)
+		  (emit-ir (make-instr-push :operand *tmp-reg-2*)
+			   block)
+		  (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
+			   block))))))
+      ;; not a leaf form
+      (progn
+	(let ((ret-index 0))
+	  (dolist (form (clcomp::values-node-forms node))
+	    (if place
+		(typecase place
+		  (mvb-place
+		   (let ((var-place (nth ret-index (mvb-place-var-places place))))
+		     (if var-place
+			 (maybe-emit-direct-load form lambda-ssa nil var-place block)
+			 (emit-ssa form lambda-ssa nil nil block))))
+		  ;; evaluate every form of course but just load first one
+		  (otherwise (if (zerop ret-index)
+				 (maybe-emit-direct-load form lambda-ssa nil place block)
+				 (emit-ssa form lambda-ssa nil nil block))))
+		(emit-ssa form lambda-ssa nil nil block))
+	    (incf ret-index)))
+	;; if there are more M-V-B variables than VALUES we need to set extra ones to NIL
+	(when (and (mvb-place-p place)
+		   (< (length (clcomp::values-node-forms node))
+		      (length (mvb-place-var-places place))))
+	  (dolist (p (nthcdr (length (clcomp::values-node-forms node)) (mvb-place-var-places place)))
+	    (emit-ir (make-ssa-load :to p :from (make-immediate-constant :constant clcomp::*nil*)) block)))))
   block)
 
 (defun emit-block-node-ssa (node lambda-ssa leaf place block)
@@ -967,6 +1027,7 @@
       (make-new-ssa-block lambda-ssa))))
 
 (defun emit-ssa (node lambda-ssa leaf place block)
+  #.*fun-optimize-level*
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
     (clcomp::call-node (emit-call-node-ssa node lambda-ssa leaf place block))
@@ -2787,6 +2848,8 @@
 (defparameter *preserved-regs* '(:R11 :R12 :R13 :R14 :RBX))
 (defparameter *heap-header-reg* :R15)
 
+
+(defparameter *alignment* 16)
 
 ;; (defparameter *fun-values-stack-reg* :RBX) ;; why use this ?
 
