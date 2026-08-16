@@ -247,9 +247,44 @@
       (inst :label exit))
     (reverse *segment-instructions*)))
 
+;;; NOTE
+;;; This is executed after every call and it does have branch
+;;; but in 99.9% of cases onethe same branch is taken so predictor will always be right
+(defun maybe-mv-adjust-stack-generator ()
+  (let ((*segment-instructions* nil)
+	(skip (make-vop-label "skip-stack-adjust-")))
+    (inst :cmp *fun-number-of-arguments-reg* (length *fun-arguments-regs*))
+    (inst :jle skip)
+    (inst :mov *tmp-reg* *fun-number-of-arguments-reg*)
+    (inst :and *tmp-reg* 1)
+    (inst :add *tmp-reg* *fun-number-of-arguments-reg*)
+    (inst :lea *tmp-reg* (@ *tmp-reg* 8))
+    (inst :add *stack-pointer-reg* *tmp-reg*)
+    (inst :label skip)
+    (reverse *segment-instructions*)))
+
+(defun maybe-mv-copy-stack-generator ()
+  (let ((*segment-instructions* nil)
+	(skip (make-vop-label "stack-copy-loop-"))
+	(copy-loop (make-vop-label "stack-copy-loop-")))
+    (inst :sub *fun-number-of-arguments-reg* (length *fun-arguments-regs*))
+    (inst :label copy-loop)
+    (inst :cmp *fun-number-of-arguments-reg* 0)
+    (inst :jle skip)
+    ;; we need to calculate parent stack ?
+    
+    (inst :sub *fun-number-of-arguments-reg* (length *fun-arguments-regs*))
+    (inst :cmp *fun-number-of-arguments-reg* 0)
+    
+
+    (inst :label skip)
+    (reverse *segment-instructions*)))
+
 ;;; FIXME, calculate exact offset
+;;; FIXME, define 5 somwhere, this can bite latter
+;;;; FIXME, 4 is number of registers for arguments
 (defun mvb-value-stack-offset (index)
-  (- index))
+  (- (+ (* *word-size* (- (1+ index) 4)) (* *word-size* 5))))
 
 (defun multiple-value-bind-generator (places)
   (let ((*segment-instructions* nil))

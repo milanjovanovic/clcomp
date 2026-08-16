@@ -9,7 +9,7 @@
 (defstruct immediate-constant constant)
 
 (defstruct place)
-(defstruct (named-place (:include place)) name)
+(defstruct (named-place (:include place)) name allocation)
 (defstruct (storage-place (:include place)) storage)
 
 (defstruct (fixed-place (:include place)))
@@ -45,7 +45,7 @@
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
-  (redundant-phis (make-hash-table :test #'equalp)))
+  (redundant-phis (make-hash-table :test #'equalp)) (nodes-id-var-cache (make-hash-table :test #'eql)))
 
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump
   predecessors is-loop-end is-header (branch-to-count 0) sealed processed label
@@ -55,12 +55,14 @@
 (defstruct ssa-form index)
 (defstruct (lambda-entry (:include ssa-form)))
 (defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
+;; not sure that we need this two
 (defstruct (allocate-stack (:include ssa-form)) count)
 (defstruct (deallocate-stack (:include ssa-form)) count)
-(defstruct (callee-save-regs (:include ssa-form)))
-(defstruct (callee-restore-regs (:include ssa-form)))
-(defstruct (instr-push (:include ssa-form)) operand)
-(defstruct (instr-pop (:include ssa-form)) operand)
+
+(defstruct (maybe-mv-adjust-stack (:include ssa-form)))
+(defstruct (maybe-mv-copy-to-caller (:include ssa-form)))
+(defstruct (ssa-embedded-instr (:include ssa-form)) instruction)
+
 
 (defstruct (ssa-form-rw (:include ssa-form)))
 
@@ -113,6 +115,17 @@
 	    last))
       last))
 
+(defun create-or-get-cached-var-place (node lambda-ssa &optional error-if-not-cached)
+  (let* ((id (clcomp::tnode-id node))
+	 (cached-place (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa))))
+    (if cached-place
+	cached-place
+	(if error-if-not-cached
+	    (error "Can't find cached var place")
+	    (let ((place (make-var-place :name (clcomp::get-lexical-variable-name node))))
+	      (setf (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa)) place)
+	      place)))))
+
 ;;; because of REDUCED in PHI-PLACE we need custom NAMED-PLACE-NAME function
 (defun get-place-name (place)
   (named-place-name (get-phi-place-reduced-value place place)))
@@ -157,7 +170,6 @@
        (when *print-debug*
 	   (print ,ev))
        (car (last ,ev)))))
-
 
 (defparameter *gen-symbol-counter* 0)
 
@@ -610,7 +622,8 @@
      block)
     (clcomp::lexical-var-node
      (emit-ir (make-ssa-load :to place
-    			     :from (make-var-place :name (clcomp::get-lexical-variable-name node))) block)
+    			     :from (create-or-get-cached-var-place node lambda-ssa t))
+	      block)
      (when leaf
        (emit-single-return-sequence place block))
      block)
@@ -619,23 +632,48 @@
     (t (emit-ssa node lambda-ssa leaf place block))))
 
 ;;; FIXME, there is more here
-(defun make-direct-place-or-nil (node)
+(defun make-direct-place-or-nil (node lambda-ssa)
   (etypecase node
     (clcomp::immediate-constant-node (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
-    (clcomp::lexical-var-node (make-var-place :name (clcomp::get-lexical-variable-name node)))
+    (clcomp::lexical-var-node (create-or-get-cached-var-place node lambda-ssa t))
     (t nil)))
+
+;;; If forms is not direct place create new and emit all forms
+(defun emit-evaluate-forms-to-stack (lambda-ssa block forms)
+  #.*fun-optimize-level*
+  (let ((result-places nil)
+	(stack-allocation (> (length forms)
+			     (length *fun-arguments-regs*))))
+    (dolist (form forms)
+      (let ((direct-place (make-direct-place-or-nil form lambda-ssa)))
+	(if direct-place
+	    (progn
+	      (when (and stack-allocation (var-place-p direct-place))
+		(setf (named-place-allocation direct-place) :stack))
+	      (push direct-place result-places))
+	    (let* ((place (generate-virtual-place))
+		   (new-block (maybe-emit-direct-load form lambda-ssa nil place block)))
+	      (when stack-allocation
+		(setf (named-place-allocation place) :stack))
+	      (setf block new-block)
+	      (push place result-places)))))
+    (cons (reverse result-places) block)))
 
 ;;; FIXME, fun can be CLOSURE or LAMBDA
 ;;; FIXME, we don't need to fill all return places, if we need only one supply NIL for rest of VOP return values
 (defun emit-call-node-ssa (node lambda-ssa leaf place block)
-  (declare (optimize (debug 3) (speed 0)))
+  #.*fun-optimize-level*
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
 	 (arguments-count (length arguments))
-	 (stack-arguments (- arguments-count (length *fun-arguments-regs*)))
+	 ;; alignment
+	 (arg-diff (- arguments-count (length *fun-arguments-regs*)))
+	 (stack-arguments (if (evenp arg-diff)
+			      arg-diff
+			      (1+ arg-diff)))
 	 (args-places nil))
     (dolist (arg arguments)
-      (let ((direct-place (make-direct-place-or-nil arg)))
+      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
 	(if direct-place
 	    (push direct-place args-places)
 	    (let* ((place (generate-virtual-place))
@@ -659,20 +697,25 @@
 	(progn
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun)
 		   block)
+	  (when leaf
+	    (emit-ir (make-maybe-mv-copy-to-caller) block))
+	  (emit-ir (make-maybe-mv-adjust-stack) block)
 	  (when (> stack-arguments 0)
 	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
 	  (when leaf
 	    (emit-ir (make-ssa-unknown-return) block))
 	  block)
 	(progn
+	  ;; FIXME, where to insert deallocate stack ???
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
-	  (when (> stack-arguments 0)
-	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
 	  (typecase place
 	    (mvb-place
 	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block))
 	    (otherwise
 	     (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)))
+	  (emit-ir (make-maybe-mv-adjust-stack) block)
+	  (when (> stack-arguments 0)
+	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
 	  block))))
 
 (defun emit-vop-node-ssa (node lambda-ssa leaf place block)
@@ -680,7 +723,7 @@
 	(arguments (clcomp::vop-node-arguments node))
 	(args-places nil))
     (dolist (arg arguments)
-      (let ((direct-place (make-direct-place-or-nil arg)))
+      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
 	(if direct-place
 	    (push direct-place args-places)
 	    (let* ((place (generate-virtual-place))
@@ -709,9 +752,10 @@
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
   (declare (ignore leaf))
-  (let ((lvar (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node node)))
-	(form (clcomp::lexical-binding-node-form node)))
-    (maybe-emit-direct-load form lambda-ssa nil (make-var-place :name lvar) block)))
+  (let ((form (clcomp::lexical-binding-node-form node)))
+    (maybe-emit-direct-load form lambda-ssa nil
+			    (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node node) lambda-ssa)
+			    block)))
 
 (defun emit-let-node-ssa (node lambda-ssa leaf place block)
   (dolist (n (clcomp::let-node-bindings node))
@@ -733,13 +777,13 @@
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
-  (declare (ignore lambda-ssa))
-  (if place
-      (emit-ir (make-ssa-load :to place :from (make-var-place :name (clcomp::get-lexical-variable-name node))) block )
-      (if leaf
-	  (emit-single-return-sequence (make-var-place :name (clcomp::get-lexical-variable-name node))  block)
-	  (emit-ir (make-ssa-value :value
-				   (make-var-place :name (clcomp::get-lexical-variable-name node))) block)))
+  (let ((var (create-or-get-cached-var-place node lambda-ssa t) ))
+    (if place
+	(emit-ir (make-ssa-load :to place :from var)
+		 block)
+	(if leaf
+	    (emit-single-return-sequence  var block)
+	    (emit-ir (make-ssa-value :value var) block))))
   block)
 
 (defun emit-progn-node-ssa (node lambda-ssa leaf place block)
@@ -808,9 +852,7 @@
   (declare (optimize debug))
   (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
 					   lambda-ssa leaf
-					   (make-var-place
-					    :name (clcomp::get-lexical-variable-name
-						   (clcomp::setq-node-var node)))
+					   (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa t)
 					   block)))
     (if place
 	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
@@ -829,7 +871,6 @@
       (return-from contains-rest-arg (get-minimum-number-of-args args)))))
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
-  (declare (ignore lambda-ssa))
   (if (contains-rest-arg arguments)
       (let ((min-args-count (get-minimum-number-of-args arguments)))
 	(emit-ir (make-arg-check :min-arg-count min-args-count) block)
@@ -843,7 +884,8 @@
 		      (error "not implemented yet")
 		      ;; (make-ssa-box-and-load :to (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node argument)))
 		      ;; 		     :from (make-rcv-argument-place :index index))
-		      (make-ssa-load :to (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node argument)))
+		      (make-ssa-load :to (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node argument)
+									 lambda-ssa)
 				     :from (make-rcv-argument-place :index index)))
 		  block)))
       (incf index))))
@@ -890,17 +932,34 @@
     block))
 
 (defun emit-m-v-b-node-ssa (node lambda-ssa leaf place block)
-  (declare (optimize (debug 3) (speed 0)))
-  (let ((mvb-place (make-mvb-place :var-places (mapcar (lambda (b)
-							 (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::m-v-b-binding-node-bin-node b))))
-						       (clcomp::m-v-b-node-bindings node)))))
+  #.*fun-optimize-level*
+  (let ((mvb-place (make-mvb-place
+		    :var-places (mapcar (lambda (b)
+					  (create-or-get-cached-var-place (clcomp::m-v-b-binding-node-bin-node b) lambda-ssa))
+					(clcomp::m-v-b-node-bindings node)))))
     (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
 
-
-;;; FIXME, for emiting values we should break after this evaluation here
-;;; all other instructions should be skipped, (we should only have RETURN-UNKNOWN after this in any way)
-;;; so, we do all the pushing  and poping here
+;;;MULTIPLE VALUE CALLING CONVENTION
+;;;If we have more values than registers extra values are put in the extended caller stack frame
+;;;we are extending caller stack frame just bellow caller original stack pointer
+;;;compiler first evaluate every VALUES form and puts result in the variables that are marked to be allocated on the stack
+;;;stack allocation of forms result is important because before we start copying it to caller stack frame we need
+;;;to restore calle-saved-register because copy process will overwrite those slots
+;;;so we first need to restore those registers and that means that result of VALUES forms evaluation can't be saved in those registers
+;;;second important thing that this stack-allocated variables need to be allocated in the order of copying to caller stack
+;;;if they are not there is danger of overwrite during copy process
+;;; original   stack frame           stack just before return
+;;; RBP+8          RIP                      EMPTY (alignmen slot)
+;;; RBP            RBP                     VALUE-5
+;;; RBP-8     calle-saved-reg-1            VALUE-6
+;;; RBP-16    calle-saved-reg-2            VALUE-7
+;;; RBP-24    calle-saved-reg-3              RIP  (RSP points here before return)
+;;; RBP-32    calle-saved-reg-4
+;;; RBP-40      calle stack
+;;;
+;;; For caller it's required in *regular function call* to adjust it's own stack
+;;; after copying stack-allocated-values to it's own stack frame
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
   ;; can this happen ?
@@ -918,51 +977,79 @@
 	  ;; we have VALUES
 	  (progn
 	    (assert (not (mvb-place-p place)))
-	    ;; handle values that goes to registers
-	    (dotimes (index (length *fun-arguments-regs*))
-	      (let ((form (nth index (clcomp::values-node-forms node))))
-		(if form
-		    (maybe-emit-direct-load form lambda-ssa nil (make-return-value-place :index index) block)
-		    (return))))
-	    ;; return early if we don't have more values than registers
-	    (unless (> (length (clcomp::values-node-forms node))
-		       (length *fun-arguments-regs*))
-	      (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
-		       block)
-	      (return-from emit-values-node-ssa))
+	    (let* ((result (emit-evaluate-forms-to-stack lambda-ssa block (clcomp::values-node-forms node)))
+		   (values-places (car result))
+		   (new-block (cdr result)))
+	      (setf block new-block)
+	      ;; handle values that goes to registers
+	      (dotimes (index (length *fun-arguments-regs*))
+		(let ((value-place (nth index values-places)))
+		  (if value-place
+		      (emit-ir (make-ssa-load :to (make-return-value-place :index index)
+    					      :from value-place)
+			       block)
+		      (return))))
+	      ;; return early if we don't have more values than registers
+	      (unless (> (length values-places)
+			 (length *fun-arguments-regs*))
+		(emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
+			 block)
+		(return-from emit-values-node-ssa))
 
-	    ;; NOTE, MULTIPLE VALUES STACK LAYOUT
-	    ;; Idea is to manipulate caller stack
-	    ;; we are going to extend caller stack by count of our values + 1 if alignment is needed
-	    ;; so we are going to POP all callee save registers, pop RBP and RIP into tmp registers
-	    ;; then we write our stack values, first value is on first stack position, last value is closest to caller frame
-	    ;; then restore RPB and push RIP to stack and return
-	    (let* ((vals-count (length (clcomp::values-node-forms node)))
-		   (stack-vals (- vals-count (length *fun-arguments-regs*))))
-	      (when (> stack-vals 0)
-		;; calculate alignment, this part need to be align, when we push RIP back on stack it should not be
-		;; FIXME, this calculation is not right, we should include callee-saved registers into calculation
-		(let ((stack-alloc-count (if (zerop (mod (* stack-vals clcomp::*word-size*) *alignment*))
-					     stack-vals
-					     (1+ stack-vals))))
-		  (emit-ir (make-callee-restore-regs) block)
-		  (emit-ir (make-instr-pop :operand *tmp-reg*) block) ;; RBP
-		  (emit-ir (make-instr-pop :operand *tmp-reg-2*) block) ;; RIP
-		  (emit-ir (make-allocate-stack :count stack-alloc-count) block)
-		  (let ((index 0))
-		    (dolist (form (nthcdr (length *fun-arguments-regs*)
-					  (clcomp::values-node-forms node)))
-		      (maybe-emit-direct-load form  lambda-ssa nil
-					      (make-operand-place :operand
-								  (make-stack-op (- (* index clcomp::*word-size*)) *stack-pointer-reg*))
-					      block)))
-		  (emit-ir (make-ssa-load  :from (make-operand-place :operand *tmp-reg*)
-					   :to (make-operand-place :operand *base-pointer-reg*))
-			   block)
-		  (emit-ir (make-instr-push :operand *tmp-reg-2*)
-			   block)
-		  (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
-			   block))))))
+	      ;; stack values
+	      (let* ((vals-count (length values-places))
+		     (stack-vals (- vals-count (length *fun-arguments-regs*))))
+		(when (> stack-vals 0)
+		  ;; calculate alignment, this part need to be align, when we push RIP back on stack it should not be
+		  (let* ((align-slot-needed (not (evenp (+ stack-vals (length *preserved-regs*)))))
+			 (stack-alloc-count (if align-slot-needed
+						(1+ stack-vals)
+						stack-vals)))
+		    ;; restore caller registers
+		    (let ((index 1))
+		      (dolist (reg (reverse *preserved-regs*))
+			(emit-ir (make-ssa-embedded-instr
+				  :instruction (list :mov reg (@ *base-pointer-reg* nil nil (- (* index clcomp::*word-size*)))))
+				 block)
+			(incf index)))
+
+		    ;; save caller RBP
+		    (emit-ir (make-ssa-embedded-instr :instruction (list :mov *tmp-reg* (@ *base-pointer-reg*))) block)
+		    ;; save RIP to RCX, we don't need RCX at this point
+		    (emit-ir (make-ssa-embedded-instr
+			      :instruction (list :mov *fun-number-of-arguments-reg* (@ *base-pointer-reg*
+										       nil
+										       nil
+										       clcomp::*word-size*)))
+			     block)
+		    ;; FIXME, if we need alignment we should skip one slot and not leaving empty slot at the end
+		    ;; FIXME, don't use *temp-reg-2* if is not needed
+		    ;; also, assembly generation will use temporary reg if it's move between two memory locations
+		    ;; in this case we don't actually want this, because we are using temp regs in this asm sequence
+		    ;; possible solution, leave it like this and peephole optimizer will remove unnecessary moves to temp reg
+		    (let ((index -1))
+		      (dolist (place (nthcdr (length *fun-arguments-regs*) values-places))
+			(emit-ir (make-ssa-load :to (make-operand-place :operand *tmp-reg-2*)
+						:from place)
+				 block)
+			(emit-ir (make-ssa-load :to (make-operand-place :operand (@ *base-pointer-reg* (* clcomp::*word-size* index)))
+						:from (make-operand-place :operand *tmp-reg-2*))
+				 block)
+			(incf index)))
+		    (emit-ir (make-ssa-load :to (make-operand-place :operand *base-pointer-reg*)
+					    :from (make-operand-place :operand *tmp-reg*))
+			     block)
+		    ;; resize stack
+		    (emit-ir
+		     (make-ssa-embedded-instr
+		      :instruction (list :lea :rsp (@ *base-pointer-reg* (* clcomp::*word-size* (- stack-alloc-count 2)))))
+		     block)
+		    (emit-ir
+		     (make-ssa-embedded-instr
+		      :instruction (list :push *fun-number-of-arguments-reg*))
+		     block)
+		    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
+			     block)))))))
       ;; not a leaf form
       (progn
 	(let ((ret-index 0))
@@ -1125,6 +1212,7 @@
   (declare (ignore env)
 	   (optimize debug))
   (let ((vplace (generate-virtual-place "V-")))
+    (setf (virtual-place-allocation vplace) (named-place-allocation place))
     (set-block-def block (named-place-name place) vplace)))
 
 ;;; we need to use reduced value here
@@ -1194,25 +1282,26 @@
 		phi-place))))))
 
 (defun ssa-read-variable (place block lambda-ssa)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  #.*fun-optimize-level*
   (or (get-block-def block (named-place-name place)) 
       (read-variable-recursive place block lambda-ssa)))
 
 (defun transform-write (place block lambda-ssa)
-  (declare (optimize debug))
+  #.*fun-optimize-level*
   (typecase place
     (named-place
      (ssa-write-variable place block lambda-ssa))
     (t place)))
 
 (defun transform-read (place block lambda-ssa)
-  (declare (optimize (debug 3) (safety 3) (speed 0)))
+  #.*fun-optimize-level*
   (typecase  place
     (fixup place)
     (named-place (ssa-read-variable place block lambda-ssa))
     (t place)))
 
 (defun ssa-transform-block-ir (b lambda-ssa)
+  #.*fun-optimize-level*
   (let ((ssa-ir nil))
     (dolist (ir (ssa-block-ir b))
       (let ((irssa (etypecase ir
@@ -1708,6 +1797,7 @@
     (emit-ir (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) lambda-ssa entry-block)
     (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
+    (print lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (when *optimize-redundant-blocks*
@@ -2845,7 +2935,7 @@
 (defparameter *scratch-regs* '(:R9 :R10))
 (defparameter *tmp-reg* :R10)
 (defparameter *tmp-reg-2* :R9)
-(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14 :RBX))
+(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14))
 (defparameter *heap-header-reg* :R15)
 
 
@@ -3130,7 +3220,11 @@
       (ssa-unknown-return
        (translate-return ir translator alloc sblock lambda-ssa))
       (ssa-multiple-return
-       (translate-return ir translator alloc sblock lambda-ssa t)))))
+       (translate-return ir translator alloc sblock lambda-ssa t))
+      (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc
+				    (clcomp::maybe-mv-adjust-stack-generator)))
+      (maybe-mv-copy-to-caller (apply #'emit-ir-assembly translator alloc
+				      (clcomp::maybe-mv-copy-stack-generator))))))
 
 (defun translate-to-asm (lambda-ssa alloc)
   (let ((translator (make-ir2asm-translator)))
