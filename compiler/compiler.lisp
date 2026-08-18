@@ -3,21 +3,6 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
  (declaim (optimize (speed 0) (debug 3))))
 
-;; (defparameter *base-pointer-reg* :RBP)
-;; (defparameter *stack-pointer-reg* :RSP)
-;; (defparameter *fun-address-reg* :RAX)
-;; (defparameter *return-value-reg* :RBX)
-;; (defparameter *fun-number-of-arguments-reg* :RCX)
-;; ;; (defparameter *closure-env-reg* :RSI)
-;; (defparameter *heap-header-reg* :R15)
-;; (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
-;; (defparameter *scratch-regs* '(:R10 :R11))
-;; (defparameter *tmp-reg* :R10)
-;; (defparameter *mvb-base-pointer-reg* :R11) 
-;; (defparameter *tmp-reg-2* :RSI)
-;; ;; (defparameter *preserved-regs* '(:R12 :R13 :R14))
-;; (defparameter *preserved-regs* '(:R11 :R12 :R13 :R14)) ;; add RBX here
-
 (defparameter *base-pointer-reg* :RBP)
 (defparameter *stack-pointer-reg* :RSP)
 (defparameter *instruction-pointer-reg* :RIP)
@@ -28,7 +13,7 @@
 (defparameter *scratch-regs* '(:R9 :R10))
 (defparameter *tmp-reg* :R10)
 (defparameter *tmp-reg-2* :R9)
-(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14)) ;; add RBX here
+(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14 :RBX))
 (defparameter *heap-header-reg* :R15)
 
 

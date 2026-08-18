@@ -4,18 +4,20 @@
   ;; FIXME
   )
 
-(defun generate-save-registers ()
-  (let (assembly)
-    (dolist (reg *preserved-regs*)
-      (push (make-inst :push reg) assembly))
-    assembly))
-
-(defun generate-restore-registers ()
-  (let (assembly)
+(defun generate-function-prologue ()
+  (let ((*segment-instructions* nil))
+    (inst :push *base-pointer-reg*)
+    (inst :mov *base-pointer-reg* *stack-pointer-reg*)
     (dolist (reg (reverse *preserved-regs*))
-      (push (make-inst :pop reg) assembly))
-    assembly))
+      (inst :push reg))
+    (reverse *segment-instructions*)))
 
+(defun generate-function-epilogue ()
+  (let ((*segment-instructions* nil))
+    (dolist (reg *preserved-regs*)
+      (inst :pop reg))
+    (inst :pop *base-pointer-reg*)
+    (reverse *segment-instructions*)))
 
 ;;; FIXME, APPLY will not work with MULTIPLE VALUES
 (define-vop %apply (res :register :stack)
@@ -382,8 +384,7 @@
     (when (> function-frame-size 0 )
       (inst :add *stack-pointer-reg* (* function-frame-size *word-size*)))
     
-    (add-instructions (generate-restore-registers))
-    (inst :pop *base-pointer-reg*)
+    (add-instructions (generate-callee-restore-registers))
     
     (inst :label end)
 
@@ -428,8 +429,3 @@
 	(inst :mov (car places) *nil*))
       (inst :label end-label))
     (reverse *segment-instructions*)))
-
-
-
-
-
