@@ -56,6 +56,8 @@
 (defstruct (lambda-entry (:include ssa-form)))
 (defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
 ;; not sure that we need this two
+(defstruct (allocate-function-frame (:include ssa-form)) count)
+(defstruct (deallocate-function-frame (:include ssa-form)) count)
 (defstruct (allocate-stack (:include ssa-form)) count)
 (defstruct (deallocate-stack (:include ssa-form)) count)
 
@@ -77,9 +79,11 @@
 ;;; Do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
 
+(defstruct (ssa-restore-caller-registers (:include ssa-form-rw)))
 (defstruct (ssa-return (:include ssa-form)))
 (defstruct (ssa-unknown-return (:include ssa-return)))
 (defstruct (ssa-multiple-return (:include ssa-return)) count)
+
 
 ;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
 (defstruct (ssa-vop (:include ssa-form-rw)) name return-values args )
@@ -697,9 +701,8 @@
 	(progn
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun)
 		   block)
-	  (when leaf
-	    (emit-ir (make-maybe-mv-copy-to-caller) block))
-	  (emit-ir (make-maybe-mv-adjust-stack) block)
+	  (unless leaf
+	    (emit-ir (make-maybe-mv-adjust-stack) block))
 	  (when (> stack-arguments 0)
 	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
 	  (when leaf
@@ -976,6 +979,7 @@
 		     block))
 	  ;; we have VALUES
 	  (progn
+	    ;;; FIXME - POSSIBLE BUG, are we sure that allocation will not use temp registers inside of this sequence
 	    (assert (not (mvb-place-p place)))
 	    (let* ((result (emit-evaluate-forms-to-stack lambda-ssa block (clcomp::values-node-forms node)))
 		   (values-places (car result))
@@ -1022,20 +1026,26 @@
 										       nil
 										       clcomp::*word-size*)))
 			     block)
-		    ;; FIXME, if we need alignment we should skip one slot and not leaving empty slot at the end
-		    ;; FIXME, don't use *temp-reg-2* if is not needed
-		    ;; also, assembly generation will use temporary reg if it's move between two memory locations
+		    ;; Next sequence will use temporary reg if it's move between two memory locations
 		    ;; in this case we don't actually want this, because we are using temp regs in this asm sequence
 		    ;; possible solution, leave it like this and peephole optimizer will remove unnecessary moves to temp reg
-		    (let ((index -1))
+		    ;; this means that we can't leave this allocation to allocation process
+		    ;; if we have alignment first slot is empty, values starts from [RBP]
+		    
+		    ;; FIXME - BUG, here we already restored caller RBP but we are using it in next sequence
+		    (let ((displacement (if align-slot-needed
+					    0
+					    clcomp::*word-size*)))
 		      (dolist (place (nthcdr (length *fun-arguments-regs*) values-places))
 			(emit-ir (make-ssa-load :to (make-operand-place :operand *tmp-reg-2*)
 						:from place)
 				 block)
-			(emit-ir (make-ssa-load :to (make-operand-place :operand (@ *base-pointer-reg* (* clcomp::*word-size* index)))
+			(emit-ir (make-ssa-load :to (make-operand-place :operand (@ *base-pointer-reg* displacement))
 						:from (make-operand-place :operand *tmp-reg-2*))
 				 block)
-			(incf index)))
+			(decf displacement clcomp::*word-size*)))
+
+		    ;; restore RBP
 		    (emit-ir (make-ssa-load :to (make-operand-place :operand *base-pointer-reg*)
 					    :from (make-operand-place :operand *tmp-reg*))
 			     block)
@@ -1044,6 +1054,7 @@
 		     (make-ssa-embedded-instr
 		      :instruction (list :lea :rsp (@ *base-pointer-reg* (* clcomp::*word-size* (- stack-alloc-count 2)))))
 		     block)
+		    ;; push RIP
 		    (emit-ir
 		     (make-ssa-embedded-instr
 		      :instruction (list :push *fun-number-of-arguments-reg*))
@@ -1797,7 +1808,6 @@
     (emit-ir (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) lambda-ssa entry-block)
     (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
-    (print lambda-ssa)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
     (when *optimize-redundant-blocks*
@@ -2631,6 +2641,7 @@
     (tagbody
      START
        (let ((current-interval (pop (alloc-unhandled alloc))))
+	 (print current-interval)
 	 (when current-interval
 	   (progn
 
@@ -2935,7 +2946,7 @@
 (defparameter *scratch-regs* '(:R9 :R10))
 (defparameter *tmp-reg* :R10)
 (defparameter *tmp-reg-2* :R9)
-(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14))
+(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14)) ;; add RBX here
 (defparameter *heap-header-reg* :R15)
 
 
@@ -2969,7 +2980,7 @@
 (defun make-memory-op ())
 
 (defun make-inst (&rest inst)
-  (apply #'list inst))
+  inst)
 
 (defun get-fun-argument-storage (argument-place arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*))
@@ -3006,7 +3017,8 @@
     (rcv-argument-place (make-recv-arg-place place))
     (argument-place (get-fun-argument-storage place (argument-place-count place)))
     (return-value-place (make-return-value-storage place))
-    (function-value-place (make-reg-op *fun-address-reg*))))
+    (function-value-place (make-reg-op *fun-address-reg*))
+    (operand-place (operand-place-operand place))))
 
 (defun get-rip-location-storage (place)
   (etypecase place
@@ -3058,22 +3070,23 @@
   (setf (ir2asm-translator-code translator)
 	(nconc (ir2asm-translator-code translator) (remove nil instructions))))
 
-(defun generate-save-registers-asm ()
-  (let (assembly)
-    (dolist (reg *preserved-regs*)
-      (push (make-inst :push (make-reg-op reg)) assembly))
-    assembly))
+;; moved to call.lisp
+;; (defun generate-save-registers-asm ()
+;;   (let (assembly)
+;;     (dolist (reg *preserved-regs*)
+;;       (push (make-inst :push (make-reg-op reg)) assembly))
+;;     assembly))
 
-(defun generate-restore-registers-asm ()
-  (let (assembly)
-    (dolist (reg (reverse *preserved-regs*))
-      (push (make-inst :pop reg) assembly))
-    assembly))
+;; (defun generate-restore-registers-asm ()
+;;   (let (assembly)
+;;     (dolist (reg (reverse *preserved-regs*))
+;;       (push (make-inst :pop reg) assembly))
+;;     assembly))
 
 (defun emit-adjust-stack-size (translator alloc method)
   (unless (member method '(:sub :add))
     (error "Unknown method"))
-  (let* ((stack-places (- (alloc-stack-index alloc) -1) )
+  (let* ((stack-places (- (alloc-stack-index alloc) -1))
 	 (stack (1+ (length *preserved-regs*)))
 	 (stack-size (+ stack-places stack)))
     (when (> stack-places 0)
@@ -3092,10 +3105,9 @@
   (emit-ir-assembly translator alloc
 		    (make-inst :push (make-reg-op *base-pointer-reg*))
 		    (make-inst :mov (make-reg-op *base-pointer-reg*)
-			  (make-reg-op *stack-pointer-reg*)))
+			       (make-reg-op *stack-pointer-reg*)))
   (apply #'emit-ir-assembly translator alloc
-	 (generate-save-registers-asm))
-  (emit-adjust-stack-size translator alloc :sub))
+	 (generate-save-registers-asm)))
 
 (defun translate-arg-check (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
@@ -3127,11 +3139,11 @@
   ;; (emit-ir-assembly translator alloc (make-inst :clc))
   (when known
     (emit-ir-assembly translator alloc
-		      (make-inst :mov *fun-number-of-arguments-reg* (clcomp::fixnumize (ssa-multiple-return-count ir)))))
+		      (make-inst :mov *fun-number-of-arguments-reg* (ssa-multiple-return-count ir))))
   ;; FIXME, adjusting stack before pop-ing register ??
-  (emit-adjust-stack-size translator alloc :add)
-  (apply #'emit-ir-assembly translator alloc
-	 (generate-restore-registers-asm))
+  ;; (emit-adjust-stack-size translator alloc :add)
+  ;; (apply #'emit-ir-assembly translator alloc
+  ;; 	 (generate-restore-registers-asm))
   (emit-ir-assembly translator alloc
 		    (make-inst :pop *base-pointer-reg*)
 		    (make-inst :ret)
@@ -3196,6 +3208,8 @@
     (etypecase ir
       (lambda-entry
        (translate-lambda-entry ir translator alloc sblock lambda-ssa))
+      (allocate-function-frame (emit-adjust-stack-size translator alloc :sub))
+      (deallocate-function-frame (emit-adjust-stack-size translator alloc :add) )
       (arg-check
        (translate-arg-check ir translator alloc sblock lambda-ssa))
       (allocate-stack
@@ -3218,13 +3232,17 @@
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
       (ssa-unknown-return
-       (translate-return ir translator alloc sblock lambda-ssa))
+       (apply #'emit-ir-assembly translator alloc
+				      (clcomp::maybe-copy-mv-stack-frame-and-return-generator (- (alloc-stack-index alloc) -1))))
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa t))
       (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc
 				    (clcomp::maybe-mv-adjust-stack-generator)))
       (maybe-mv-copy-to-caller (apply #'emit-ir-assembly translator alloc
-				      (clcomp::maybe-mv-copy-stack-generator))))))
+				      (clcomp::maybe-mv-copy-stack-generator)))
+      (ssa-embedded-instr (emit-ir-assembly translator alloc  (ssa-embedded-instr-instruction ir)))
+      (ssa-restore-caller-registers (apply #'emit-ir-assembly translator alloc
+					   (generate-restore-registers-asm))))))
 
 (defun translate-to-asm (lambda-ssa alloc)
   (let ((translator (make-ir2asm-translator)))

@@ -129,6 +129,7 @@
 
 
 
+;;; CMOV
 (define-inst-template :cmovs (:reg64 (:reg64 :addr64)) ()
 		      nil #x0f #x48 nil)
 
@@ -141,7 +142,6 @@
 ;;; LEA
 (define-inst-template :lea (:reg64 :addr) ()
 		      nil nil #x8D nil)
-
 
 ;;; CMP
 
@@ -245,8 +245,10 @@
 (define-inst-template :jnle (:imm32) ()
 		      #x0f nil #x8f nil)
 
-;; JE
+;;; JZ == JE
 (define-inst-template :je (:imm32) ()
+		      #x0f nil #x84 nil)
+(define-inst-template :jz (:imm32) ()
 		      #x0f nil #x84 nil)
 
 ;; JNE

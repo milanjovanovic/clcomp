@@ -9,6 +9,10 @@
 (defun inst (&rest rest)
   (push rest *segment-instructions*))
 
+(defun add-instructions (instructions)
+  (setf *segment-instructions* (append (reverse instructions)
+				       *segment-instructions*)))
+
 (defparameter *known-vops* (make-hash-table))
 
 (defparameter *c-call-save-registers* '(:rax :rbx :rcx :rdx :rsi :rdi :r8
