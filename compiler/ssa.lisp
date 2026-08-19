@@ -15,7 +15,7 @@
 (defstruct (fixed-place (:include place)))
 (defstruct (arg-place (:include fixed-place)) index)
 
-(defstruct (rcv-argument-place (:include arg-place)))
+(defstruct (rcv-argument-place (:include arg-place)) min-count)
 (defstruct (argument-place (:include arg-place)) count)
 (defstruct (return-value-place (:include arg-place)))
 (defstruct (argument-count-place (:include fixed-place)))
@@ -41,7 +41,7 @@
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa blocks (delayed-blocks (make-hash-table))
+(defstruct lambda-ssa blocks (delayed-blocks (make-hash-table)) intervals alloc
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
@@ -875,12 +875,14 @@
       (return-from contains-rest-arg (get-minimum-number-of-args args)))))
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
+  #.*fun-optimize-level*
   (if (contains-rest-arg arguments)
       (let ((min-args-count (get-minimum-number-of-args arguments)))
 	(emit-ir (make-arg-check :min-arg-count min-args-count) block)
 	(emit-ir (make-ssa-rest-listify :count min-args-count) block))
       (emit-ir (make-arg-check :arg-count (length arguments)) block))
-  (let ((index 0))
+  (let ((min-args-count (get-minimum-number-of-args arguments))
+	(index 0))
     (dolist (argument arguments)
       (etypecase argument
 	(clcomp::lexical-binding-node
@@ -890,7 +892,7 @@
 		      ;; 		     :from (make-rcv-argument-place :index index))
 		      (make-ssa-load :to (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node argument)
 									 lambda-ssa)
-				     :from (make-rcv-argument-place :index index)))
+				     :from (make-rcv-argument-place :index index :min-count min-args-count)))
 		  block)))
       (incf index))))
 
@@ -906,19 +908,19 @@
 
 (defun get-rip-node-lambda (rip-node)
   (etypecase rip-node
-    (clcomp::load-time-value-node (clcomp::load-time-value-node-form rip-node))
+    (clcomp::load-time-value-node (clcomp::load-time-value-node-node rip-node))
     (clcomp::lambda-node rip-node)))
 
 (defun emit-closure-sequence-ssa (node lambda-ssa place block)
   (declare (ignorable node lambda-ssa place block))
-  (if (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
+  (if (and (clcomp::lambda-node-p node) (> (length (clcomp::lambda-node-closed-over-vars node)) 0))
       (error "Closure detected !")
       (lambda-construct-ssa (get-rip-node-lambda node))))
 
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize debug))
   (let ((fixup (rip-relative-node-to-fixup node)))
-    (typecase node
+    (etypecase node
       (clcomp::load-time-value-node
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
@@ -1015,6 +1017,8 @@
 			 (stack-alloc-count (if align-slot-needed
 						(1+ stack-vals)
 						stack-vals)))
+
+		    (assert (> stack-alloc-count 1))
 		    ;; restore caller registers
 		    (let ((index 1))
 		      (dolist (reg (reverse *preserved-regs*))
@@ -1053,10 +1057,11 @@
 			(decf displacement clcomp::*word-size*)))
 
 		    ;; resize stack
+		    ;; NOTE, double check this
 		    (emit-ir
 		     (make-ssa-embedded-instr
 		      :instruction (list :lea *stack-pointer-reg*
-					 (@ *base-pointer-reg* nil nil (* clcomp::*word-size* (- stack-alloc-count 2)))))
+					 (@ *base-pointer-reg* nil nil (* clcomp::*word-size* (- 2 stack-alloc-count)))))
 		     block)
 		    ;; restore RBP
 		    (emit-ir
@@ -1117,7 +1122,7 @@
       exit-block)))
 
 (defun emit-return-from-node-ssa (node lambda-ssa leaf place block)
-  (declare (optimize debug))
+  (declare (optimize debug) (ignore leaf place))
   (let* ((return-from-label (clcomp::return-from-node-name node))
 	 (scope (ssa-get-lexenv-for-block-label lambda-ssa return-from-label))
 	 (exit-block (ssa-find-delayed-block-by-index lambda-ssa (getf scope :block-index)))
@@ -2332,6 +2337,11 @@
     (let ((ints (add-intervals-use-positions intervals use-positions)))
       (sort ints #'< :key #'interval-start))))
 
+(defun lambda-build-intervals (lambda-ssa)
+  (setf (lambda-ssa-intervals lambda-ssa) (build-intervals lambda-ssa))
+  (dolist (ls (lambda-ssa-sub-lambdas lambda-ssa))
+    (lambda-build-intervals (cdr ls))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Alternative Intervals building/Linear Scan from "Linear scan register allocation for Java HotSpot Client Compiler"
 ;;; we are not using original Wimmer & Franz algorithm because of irreducible loops
@@ -2423,8 +2433,12 @@
 (defstruct alloc unhandled active inactive handled (per-name-handled (make-hash-table))
 	   intervals-index split-moves phi-moves stack-index)
 
+
 (defun get-stack-index (alloc)
   (incf (alloc-stack-index alloc)))
+
+(defun alloc-get-number-of-stack-slots (alloc)
+  (- (alloc-stack-index alloc) -1))
 
 (defun alloc-add-unhandled (alloc interval)
   (push interval (alloc-unhandled alloc))
@@ -2687,6 +2701,11 @@
       (alloc-add-handled alloc int))
     (make-interval-index alloc)))
 
+(defun lambda-linear-scan (lambda-ssa)
+  (setf (lambda-ssa-alloc lambda-ssa) (linear-scan (lambda-ssa-intervals lambda-ssa)))
+  (dolist (ls (lambda-ssa-sub-lambdas lambda-ssa))
+    (lambda-linear-scan (cdr ls))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; SPILL MOVES AND PHI MOVES
 
@@ -2902,6 +2921,11 @@
   (resolve-lambda-moves-order lambda-ssa
 			      (make-storage-place :storage (clcomp::make-reg-storage :register *tmp-reg*))))
 
+(defun lambda-resolve-data-flow (lambda-ssa)
+  (resolve-data-flow lambda-ssa (lambda-ssa-alloc lambda-ssa))
+  (dolist (l (lambda-ssa-sub-lambdas lambda-ssa))
+    (lambda-resolve-data-flow (cdr l))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -2922,7 +2946,7 @@
 (defun make-lssa-intervals (exp)
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
 	 (intervals (build-intervals lambda-ssa)))
-    intervals))
+    (values lambda-ssa intervals)))
 
 (defun make-ssa-write-graph (exp &optional (optimize-blocks t) (optimize-phis t) (graph-name "default"))
   (let ((lambda-ssa (make-lssa exp optimize-blocks optimize-phis)))
@@ -2946,20 +2970,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; (defparameter *base-pointer-reg* :RBP)
-;; (defparameter *stack-pointer-reg* :RSP)
-;; (defparameter *instruction-pointer-reg* :RIP)
-;; (defparameter *fun-address-reg* :RAX)
-;; (defparameter *fun-number-of-arguments-reg* :RCX)
-;; (defparameter *fun-number-of-ret-values-reg* :RCX)
-;; (defparameter *fun-arguments-regs* '(:RDX :RDI :RSI :R8))
-;; (defparameter *scratch-regs* '(:R9 :R10))
-;; (defparameter *tmp-reg* :R10)
-;; (defparameter *tmp-reg-2* :R9)
-;; (defparameter *preserved-regs* '(:R11 :R12 :R13 :R14)) ;; add RBX here
-;; (defparameter *heap-header-reg* :R15)
-
 
 (defparameter *alignment* 16)
 
@@ -2996,10 +3006,10 @@
 (defun get-fun-argument-storage (argument-place arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*))
 	(place-index (+ 1 (argument-place-index argument-place))))
+    (assert (<= place-index arguments-count))
     (if (> place-index arg-reg-count)
-	;; FIXME, stack op displacement is wrong
 	(make-stack-op (* clcomp::*word-size*
-			  (- (+ arguments-count 1) place-index))
+			  (- arguments-count place-index))
 		       *stack-pointer-reg*)
 	(make-reg-op (nth (- place-index 1) *fun-arguments-regs*)))))
 
@@ -3013,13 +3023,13 @@
 			*stack-pointer-reg*))))
 
 (defun make-recv-arg-place (place)
-  (let ((index (rcv-argument-place-index place)))
-    (if (<= (1+ index) (length *fun-arguments-regs*))
-	(make-reg-op (nth index *fun-arguments-regs*))
+  (let ((arg-reg-count (length *fun-arguments-regs*))
+	(index (+ 1 (rcv-argument-place-index place))))
+    (if (> index arg-reg-count)
 	(make-stack-op (+ 16
 			  (* clcomp::*word-size*
-			     (- (rcv-argument-place-index place)
-				(length *fun-arguments-regs*))))))))
+			     (- (rcv-argument-place-min-count place) index))))
+	(make-reg-op (nth (- index 1) *fun-arguments-regs*)))))
 
 (defun get-fixed-place-storage (place)
   #.*fun-optimize-level*
@@ -3081,17 +3091,18 @@
   (setf (ir2asm-translator-code translator)
 	(nconc (ir2asm-translator-code translator) (remove nil instructions))))
 
-(defun emit-adjust-stack-size (translator alloc method)
+(defun emit-adjust-function-stack-frame (translator alloc method)
   (unless (member method '(:sub :add))
     (error "Unknown method"))
-  (let* ((stack-slots (- (alloc-stack-index alloc) -1)))
+  (let* ((stack-slots (alloc-get-number-of-stack-slots alloc))
+	 (align (oddp (+ stack-slots (length *preserved-regs*)))))
     (when (> stack-slots 0)
       (emit-ir-assembly translator alloc
 			(make-inst method (make-reg-op *stack-pointer-reg*)
 				   (* clcomp::*word-size* 
 				      ;; FIXME reverse stack arguments
 				      ;; 16 byte aligment
-				      (if (oddp stack-slots)
+				      (if align
 					  (+ 1 stack-slots)
 					  stack-slots)))))))
 
@@ -3099,7 +3110,7 @@
   (declare (ignore sblock lambda-ssa ir))
   (apply #'emit-ir-assembly translator alloc
 	 (clcomp::generate-function-prologue))
-  (emit-adjust-stack-size translator alloc :sub))
+  (emit-adjust-function-stack-frame translator alloc :sub))
 
 (defun translate-arg-check (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
@@ -3151,7 +3162,7 @@
     (apply #'emit-ir-assembly translator alloc (clcomp::multiple-value-bind-generator storages))))
 
 
-(defun translate-vop (ir translator alloc sblock lambda-ssa)q
+(defun translate-vop (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
   (let* ((ir-index (ssa-form-index ir))
 	 (name (ssa-vop-name ir))
@@ -3193,7 +3204,7 @@
       (lambda-entry
        (translate-lambda-entry ir translator alloc sblock lambda-ssa))
       (deallocate-function-frame
-       (emit-adjust-stack-size translator alloc :add))
+       (emit-adjust-function-stack-frame translator alloc :add))
       (ssa-function-epilogue (apply #'emit-ir-assembly translator alloc
 				    (clcomp::generate-function-epilogue)))
       (arg-check
@@ -3219,8 +3230,7 @@
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
       (ssa-unknown-return (apply #'emit-ir-assembly translator alloc
-				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator "FIXME" ;; (- (alloc-stack-index alloc) -1)
-											 )))
+				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (alloc-get-number-of-stack-slots alloc))))
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa))
       (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc
@@ -3232,25 +3242,21 @@
     (dolist (sblock (lambda-ssa-blocks lambda-ssa))
       (translate-block sblock lambda-ssa alloc translator))
     (setf (lambda-ssa-asm lambda-ssa)
-	  (ir2asm-translator-code translator)))
-  (dolist (sub-lambda (lambda-ssa-sub-lambdas lambda-ssa))
-    (translate-to-asm (cdr sub-lambda) alloc)))
+	  (ir2asm-translator-code translator))))
 
-
-;;; FIXME, do we do register allocation for SUB-LAMBDAS ?
-;;; FIXME, we do not translate SUB-LAMBDA's to ASM
-
-(defparameter *last-intervals* nil)
-(defparameter *last-alloc* nil)
+(defun lambda-translate-to-asm (lambda-ssa)
+  (translate-to-asm lambda-ssa (lambda-ssa-alloc lambda-ssa))
+  (dolist (l (lambda-ssa-sub-lambdas lambda-ssa))
+    (lambda-translate-to-asm (cdr l))))
 
 (defun clcomp-compile (name exp)
   #.*fun-optimize-level*
   (declare (ignorable name))
-  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
-	 (intervals (build-intervals lambda-ssa))
-	 (alloc (linear-scan intervals)))
-    (resolve-data-flow lambda-ssa alloc)
-    (translate-to-asm lambda-ssa alloc)
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp)))))
+    (lambda-build-intervals lambda-ssa)
+    (lambda-linear-scan lambda-ssa)
+    (lambda-resolve-data-flow lambda-ssa)
+    (lambda-translate-to-asm lambda-ssa)
     lambda-ssa))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

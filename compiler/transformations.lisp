@@ -214,8 +214,13 @@
 ;; FIXME (let ((a 1) (a 2))) should throw error, (let* ((a 1) (a 2))) should 
 (defun create-let-binding-nodes (bindings lambda-id sequential environment)
   (let ((binstruct nil)
-	(current-bin nil))
+	(current-bin nil)
+	(vars nil))
     (dolist (bind bindings)
+      (unless sequential
+	(when (find (first bind) vars)
+	  (error "Duplicate binding in let form")))
+      (push (first bind) vars)
       (let ((env (if sequential
 		     (cons (make-cenv :bindings current-bin) environment)
 		     environment)))
