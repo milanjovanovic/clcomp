@@ -273,3 +273,11 @@ void lisp_error(lispobj message) {
   printf("LISP ERROR: %s\n", msg);
   exit(1);
 }
+
+uint64_t read_rcx(void) {
+  uint64_t rcx_val;
+
+  __asm__ volatile("mov %%rcx, %0" : "=r"(rcx_val));
+
+  return rcx_val;
+}

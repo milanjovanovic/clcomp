@@ -690,8 +690,9 @@
 	;; FIXME, maybe p is already virtual place, no need for additional move
 	(emit-ir (make-ssa-load :to (make-argument-place :index arg-index :count arguments-count) :from p) block)
 	(incf arg-index)))
+    ;; FIXME, maybe emit this at the end ??
     (emit-ir (make-ssa-load :to (make-argument-count-place)
-			    :from (make-immediate-constant :constant (clcomp::fixnumize arguments-count))) block)
+			    :from (make-immediate-constant :constant arguments-count)) block)
     (let ((fixup (make-compile-function-fixup :name (generate-fixup-symbol)
 					      :function fun)))
       (emit-ir (make-ssa-load :to (make-function-value-place) :from fixup) block)
@@ -734,6 +735,8 @@
 	      (push place args-places)))))
     (setf args-places (reverse args-places))
     (cond (leaf
+	   ;; FIXME, this will not work if we have more return places than registers
+	   (assert (<=  ret-vals (length clcomp::*fun-arguments-regs*)))
 	   (emit-ir (make-ssa-vop
 		     :name (clcomp::vop-node-vop node)
 		     :return-values (generate-return-places ret-vals)
@@ -747,11 +750,15 @@
 	     (mvb-place
 	      (emit-ir (make-ssa-vop :return-values (mvb-place-var-places place) :args args-places) block))
 	     (t
+	      (error "Not implented")
 	      ;; FIXME, here we use PLACE as first ret value and we generate missing values, fix VOP so it can receive NIL as return reg
-	      (emit-ir (make-ssa-vop :return-values (cons place (generate-return-places (- ret-vals 1))) :args args-places) block))))
+	      ;; (emit-ir (make-ssa-vop :return-values (cons place (generate-return-places (- ret-vals 1))) :args args-places) block)
+	      )))
 	  (t
 	   ;; FIXME, fix VOP to maybe not use any return registers, do we have side effects only VOPS ?
-	   (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)))
+	   (error "What ?")
+	   ;; (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)
+	   ))
     block))
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
@@ -1075,6 +1082,7 @@
 		     block)
 		    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
 			     block)))))))
+      
       ;; not a leaf form
       (progn
 	(let ((ret-index 0))
@@ -3117,7 +3125,7 @@
   (let ((arg-count (arg-check-arg-count ir))
 	(min-arg-count (arg-check-min-arg-count ir)))
     (emit-ir-assembly translator alloc
-		      (make-inst :cmp (make-reg-op *fun-number-of-arguments-reg*) (clcomp::fixnumize (or arg-count min-arg-count)))
+		      (make-inst :cmp (make-reg-op *fun-number-of-arguments-reg*) (or arg-count min-arg-count))
 		      ;; FIXME, use unique :wrong-arg-count-label symbol
 		      (make-inst :jump-fixup (if arg-count :jne :jl) :wrong-arg-count-label))))
 
@@ -3164,6 +3172,7 @@
 
 (defun translate-vop (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
+  #.*fun-optimize-level*
   (let* ((ir-index (ssa-form-index ir))
 	 (name (ssa-vop-name ir))
 	 (args-storage (mapcar #'(lambda (p)
@@ -3175,10 +3184,9 @@
 				   (ssa-vop-return-values ir)))
 	 (ret-vals-types (mapcar #'get-storage-type ret-vals-storage))
 	 (vop (clcomp::find-vop name ret-vals-types args-types)))
-
     (if vop
 	(apply #'emit-ir-assembly translator alloc
-	       (clcomp::get-vop-code vop (append args-storage ret-vals-storage 
+	       (clcomp::get-vop-code vop (append ret-vals-storage args-storage
 						 (list (make-stack-op (calculate-local-var-stack (alloc-stack-index alloc))))) ))
 	(error "FIXME, spill something for this to work"))))
 
@@ -3274,3 +3282,7 @@
   (ql:quickload "cl-dot")
   (ql:quickload "clcomp")
   (load "/Users/milan/projects/clcomp.github/compiler/cldot.lisp"))
+
+
+(defun do-nodes (form)
+  (clcomp::map-to-nodes (clcomp::clcomp-macroexpand form)))

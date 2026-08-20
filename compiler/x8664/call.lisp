@@ -98,8 +98,10 @@
     
     ;; save RCX
     (inst :mov $stack-top-operand$ *fun-number-of-arguments-reg*)
+
+    ;; no longer using fixnum in RCX
+    ;; (inst :shl *fun-number-of-arguments-reg* *tag-size*)
     
-    (inst :shl *fun-number-of-arguments-reg* *tag-size*)
     (inst :mov *fun-address-reg* (if fun-is-reg
 				     fun-stack-ptr
 				     fun))
@@ -141,7 +143,8 @@
 	  (set-cons-result (make-vop-label "set-cons-result-"))
 	  (exit (make-vop-label "exit-")))
 
-      (inst :shr *fun-number-of-arguments-reg* *tag-size*)
+      ;; we are no longer storing fixnum in RCX
+      ;; (inst :shr *fun-number-of-arguments-reg* *tag-size*)
 
       (inst :mov *tmp-reg* *fun-number-of-arguments-reg*)
 
@@ -284,19 +287,27 @@
 
 ;;; looks bloated
 ;;; anyway, we can optimize  most of leaf function calls to tail calls
+;;; FIXME, extract this to assembly stub, emiting this at every tail call is stupid, it will increase binary
 (defun maybe-copy-mv-stack-frame-and-return-generator (function-frame-size)
   (let ((*segment-instructions* nil)
-	(normal-epilogue-label (make-vop-label "normal-epilogue-label-"))
-	(end (make-vop-label "end-"))
 	(copy-loop (make-vop-label "stack-copy-loop-"))
 	(skip-copy-loop (make-vop-label "skip-copy-loop-"))
-	(skip-alignment (make-vop-label "skip-alignment-") ))
+	(skip-alignment (make-vop-label "skip-alignment-") )
+	(copy-to-caller-frame (make-vop-label "copy-to-caller-frame")))
 
     ;; check if we have extra values on stack
     (inst :mov *tmp-reg* *fun-number-of-arguments-reg*)
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
-    (inst :jle normal-epilogue-label)
+    (inst :jg copy-to-caller-frame)
 
+    (when (> function-frame-size 0 )
+      (inst :add *stack-pointer-reg* (* function-frame-size *word-size*)))
+
+    (add-instructions (generate-function-epilogue))
+
+    (inst :ret)
+
+    (inst :label copy-to-caller-frame)
 
     ;; this is almost the same sequence as in EMIT-VALUES-NODE-SSA
     ;; first restore caller registers because we will overwrite it with value copying
@@ -376,18 +387,6 @@
 
     ;; put back RIP at the end of stack pointer
     (inst :push *tmp-reg-2*)
-    (inst :jmp end)
-
-
-    (inst :label normal-epilogue-label)
-    ;; just normal return sequence
-    (when (> function-frame-size 0 )
-      (inst :add *stack-pointer-reg* (* function-frame-size *word-size*)))
-    
-    (add-instructions (generate-callee-restore-registers))
-    
-    (inst :label end)
-
     (inst :ret)
 
     (reverse *segment-instructions*)))
