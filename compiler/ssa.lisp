@@ -39,6 +39,7 @@
 (defstruct (compile-function-fixup (:include fixup)) function)
 (defstruct (load-time-eval-fixup (:include fixup)))
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
+(defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
 (defstruct lambda-ssa blocks (delayed-blocks (make-hash-table)) intervals alloc
@@ -909,33 +910,35 @@
       (clcomp::lambda-node (make-local-component-fixup :name fixup-sym))
       (clcomp::load-time-value-node (make-load-time-eval-fixup :name fixup-sym))
       (clcomp::fun-rip-relative-node (make-compile-function-fixup :name fixup-sym
-							  :function (clcomp::fun-rip-relative-node-form node)))
-      (clcomp::compile-time-constant-node (make-compile-time-constant-fixup :name fixup-sym
-								    :form (clcomp::compile-time-constant-node-form node))))))
+								  :function (clcomp::fun-rip-relative-node-form node)))
+      (clcomp::compile-time-bootstrap-constant-node
+       (make-compile-time-bootstrap-constant-fixup :name fixup-sym
+						   :form (clcomp::compile-time-bootstrap-constant-node-form node)))
+      (clcomp::compile-time-constant-node
+       (make-compile-time-constant-fixup :name fixup-sym
+					 :form (clcomp::compile-time-constant-node-form node))))))
 
 (defun get-rip-node-lambda (rip-node)
   (etypecase rip-node
     (clcomp::load-time-value-node (clcomp::load-time-value-node-node rip-node))
     (clcomp::lambda-node rip-node)))
 
-(defun emit-closure-sequence-ssa (node lambda-ssa place block)
-  (declare (ignorable node lambda-ssa place block))
-  (if (and (clcomp::lambda-node-p node) (> (length (clcomp::lambda-node-closed-over-vars node)) 0))
-      (error "Closure detected !")
-      (lambda-construct-ssa (get-rip-node-lambda node))))
-
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
-  (declare (optimize debug))
+  #.*fun-optimize-level*
   (let ((fixup (rip-relative-node-to-fixup node)))
     (etypecase node
       (clcomp::load-time-value-node
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
       (clcomp::lambda-node
+       (break)
+       (when (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
+	 (error "Closure detected, still not implemented "))
        (add-sub-lambda lambda-ssa
-		       (lambda-construct-ssa node (lambda-ssa-env lambda-ssa)) fixup)))
+		       (lambda-construct-ssa node (lambda-ssa-env lambda-ssa)) fixup))
+      ((or clcomp::compile-time-bootstrap-constant-node
+	   clcomp::fun-rip-relative-node) nil))
     (lambda-add-fixup fixup lambda-ssa)
-    (emit-closure-sequence-ssa node lambda-ssa place block)
     (if place
 	(emit-ir (make-ssa-load :to place :from fixup) block)
 	(if leaf
@@ -3055,6 +3058,9 @@
      (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (compile-function-fixup-function place)))
 		    *instruction-pointer-reg*))
     ((or load-time-eval-fixup local-component-fixup )
+     (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (named-place-name place)))
+		    *instruction-pointer-reg*))
+    (compile-time-bootstrap-constant-fixup
      (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (named-place-name place)))
 		    *instruction-pointer-reg*))))
 

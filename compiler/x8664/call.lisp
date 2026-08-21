@@ -273,10 +273,10 @@
 	(skip-align (make-vop-label "skip-align"))
 	(skip (make-vop-label "skip-stack-adjust-")))
     (inst :cmp *fun-number-of-arguments-reg* (length *fun-arguments-regs*))
-    (inst :jle skip)
+    (inst :jump-fixup :jle skip)
     (inst :lea *tmp-reg* (@ *fun-number-of-arguments-reg* nil nil (- (length *fun-arguments-regs*))))
     (inst :test *tmp-reg* 1)
-    (inst :jz skip-align )
+    (inst :jump-fixup :jz skip-align )
     (inst :inc *tmp-reg*)
     (inst :label skip-align)
     (inst :shl *tmp-reg* 3)
@@ -298,7 +298,7 @@
     ;; check if we have extra values on stack
     (inst :mov *tmp-reg* *fun-number-of-arguments-reg*)
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
-    (inst :jg copy-to-caller-frame)
+    (inst :jump-fixup :jg copy-to-caller-frame)
 
     (when (> function-frame-size 0 )
       (inst :add *stack-pointer-reg* (* function-frame-size *word-size*)))
@@ -339,7 +339,7 @@
     ;; need to include alignment into calculation of first value offset, align slot is always at the top
     (inst :mov *tmp-reg-2* clcomp::*word-size*)
     (inst :test *tmp-reg* 1)
-    (inst :jz skip-alignment)
+    (inst :jump-fixup :jz skip-alignment)
     (inst :mov *tmp-reg-2* 0) ;; alignment slot is at [RBP+8] so our start is [RBP],
     (inst :mov (@ *base-pointer-reg* nil nil clcomp::*word-size*) *nil*) ;; set alignment slot to NIL (GC friendly)
 
@@ -355,11 +355,11 @@
     (inst :mov :R11 (@ *stack-pointer-reg* *fun-number-of-arguments-reg*))
     (inst :mov (@ *base-pointer-reg* *tmp-reg-2*) :R11)
     (inst :dec *tmp-reg*)
-    (inst :jz skip-copy-loop)
+    (inst :jump-fixup :jz skip-copy-loop)
     ;; both source and destination slot goes upward the stack
     (inst :add *tmp-reg-2* clcomp::*word-size*)
     (inst :add *fun-number-of-arguments-reg* clcomp::*word-size*)
-    (inst :jmp copy-loop)
+    (inst :jump-fixup :jmp copy-loop)
     
     (inst :label skip-copy-loop)
 
@@ -388,6 +388,10 @@
     ;; put back RIP at the end of stack pointer
     (inst :push *tmp-reg-2*)
     (inst :ret)
+
+    ;; FIXME, insert this on some other place
+    (inst :label :WRONG-ARG-COUNT-LABEL)
+    (inst :ud2)
 
     (reverse *segment-instructions*)))
 

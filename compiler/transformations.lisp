@@ -50,6 +50,7 @@
 (defstruct (declaration-node (:include tnode)) safety optimize debug type)
 (defstruct (rip-relative-node (:include tnode)))
 (defstruct (fun-rip-relative-node (:include rip-relative-node)) form)
+(defstruct (compile-time-bootstrap-constant-node (:include rip-relative-node)) form)
 (defstruct (compile-time-constant-node (:include rip-relative-node)) form)
 (defstruct (lambda-node (:include rip-relative-node)) name arguments declarations body closed-over-vars)
 (defstruct (immediate-constant-node (:include tnode)) value)
@@ -360,7 +361,7 @@
 	  (error "Block name in RETURN-FROM form need to be a symbol"))
 	(make-return-from-node :name block-name :form (create-node return-form environment)))))
 
-(defun create-compile-time-constant-node (form)
+(defun create-compile-time-bootstrap-constant-node (form)
   (make-compile-time-constant-node :form (second form)))
 
 (defun create-lexical-or-symbol-value-node (form environment)
@@ -378,7 +379,7 @@
 	(if (find form *dynamic-variables*)
 	    (make-call-node :function 'symbol-value
 			    :arguments (if (bootstraped-object-p form)
-					   (list (make-compile-time-constant-node :form form))
+					   (list (make-compile-time-bootstrap-constant-node :form form))
 					   (list (make-load-time-value-node
 						  :form form
 						  :node (create-node (clcomp-macroexpand (list 'lambda nil
@@ -392,7 +393,7 @@
       (if (constantp (second form))
 	  (create-node (second form))
 	  (if (bootstraped-object-p (second form))
-	      (make-compile-time-constant-node :form (second form))
+	      (make-compile-time-bootstrap-constant-node :form (second form))
 	      (create-ref-constant-node form)))
       (error "Should't happen !")))
 
@@ -424,7 +425,7 @@
 	      ((eq first 'load-time-value)
 	       (create-load-time-value-node form))
 	      ((eq first '%compile-time-constant) ; this is used for VMM allocated objects
-	       (create-compile-time-constant-node form))
+	       (create-compile-time-bootstrap-constant-node form))
 	      ((eq first '%function) ; using this to set SYMBOL-VALUE at load time when defining function
 	       (create-fun-rip-relative-node form))
 	      ((eq first 'if)

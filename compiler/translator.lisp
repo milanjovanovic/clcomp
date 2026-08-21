@@ -11,7 +11,10 @@
     (clcomp.ssa::local-component-fixup (clcomp::make-component-rip-relative
 					:name (clcomp.ssa::local-component-fixup-name fixup)))
     (clcomp.ssa::load-time-eval-fixup (clcomp::make-fixup-rip-relative
-				       :name (clcomp.ssa::load-time-eval-fixup-name fixup)))))
+				       :name (clcomp.ssa::load-time-eval-fixup-name fixup)))
+    (clcomp.ssa::compile-time-bootstrap-constant-fixup (clcomp::make-fixup-rip-relative-constant
+							:name (clcomp.ssa::compile-time-bootstrap-constant-fixup-name fixup)
+							:form (clcomp.ssa::compile-time-bootstrap-constant-fixup-form fixup)))))
 
 (defun translate-subcomp (subcomp)
   (cons (clcomp::make-rip-relative-location :location (clcomp.ssa::named-place-name (car subcomp)))
