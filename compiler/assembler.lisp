@@ -541,27 +541,29 @@
 	       (list rex modrm sib displacement))))
 	
 	;; we have displacement, displacement is signed
-	(t (let ((displacement-type (signed-number-type displacement)))
-	     (cond ((eq displacement-type 'byte)
-		    ;; one byte displacement
-		    (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
-		    (setf (ldb *modrm.mod.byte* modrm) #b01))
-		   ((or (eq displacement-type 'word)
-			(eq displacement-type 'dword))
-		    ;; dword (4 bytes) displacement
-		    (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
-		    (setf (ldb *modrm.mod.byte* modrm) #b10))
-		   (t (error "Bad displacement")))
-	     (if (or scale index (rsp-or-r12 base))
-		 (progn
-		   (setf (ldb *modrm.rm.byte* modrm) #b100)
-		   (destructuring-bind (rex sib) (encode-sib rex 0 addr-operand)
-		     (list rex modrm sib displacement)))
-		 (progn
-		   (setf (ldb *modrm.rm.byte* modrm) (get-register-bits base))
-		   (when (extended-register? base)
-		     (setf (ldb (rex-ext-byte *modrm.rm.position*) rex) #b1))	       
-		   (list rex modrm sib displacement)))))))))
+	(t let ((displacement-type (signed-number-type displacement)))
+	   (cond ((eq displacement-type 'byte)
+		  ;; one byte displacement
+		  (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
+		  (setf (ldb *modrm.mod.byte* modrm) #b01))
+		 ((or (eq displacement-type 'word)
+		      (eq displacement-type 'dword))
+		  ;; dword (4 bytes) displacement
+		  (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
+		  (setf (ldb *modrm.mod.byte* modrm) #b10))
+		 (t (error "Bad displacement")))
+	   (if (or scale index (rsp-or-r12 base))
+	       (progn
+		 (setf (ldb *modrm.rm.byte* modrm) #b100)
+		 (destructuring-bind (rex sib) (encode-sib rex 0 addr-operand)
+		   (list rex modrm sib displacement)))
+	       (progn
+		 ;; HERE is the bug, we are failing on extender registers
+		 (setf (ldb *modrm.rm.byte* modrm) (get-register-bits base))
+		 (when (extended-register? base)
+		   (setf rex (or rex *rex*))
+		   (setf (ldb (rex-ext-byte *modrm.rm.position*) rex) #b1))
+		 (list rex modrm sib displacement))))))))
 
 (defun encode-operands (rex modrm dest-operand source-operand template-dest-operand template-source-operand opcode flags
 			matching-template-dest-operand matching-template-source-operand)
