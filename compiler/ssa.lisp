@@ -368,6 +368,7 @@
   (setf (gethash (ssa-block-index block) (lambda-ssa-delayed-blocks lambda-ssa)) block))
 
 (defun ssa-connect-blocks (b1 b2)
+  #.*fun-optimize-level*
   (if (ssa-block-succ b1)
       (error "Block already have successor !")
       (progn
@@ -723,6 +724,7 @@
 	  block))))
 
 (defun emit-vop-node-ssa (node lambda-ssa leaf place block)
+  #.*fun-optimize-level*
   (let ((ret-vals (length (clcomp::vop-res (clcomp::get-vop (clcomp::vop-node-vop node)))))
 	(arguments (clcomp::vop-node-arguments node))
 	(args-places nil))
@@ -747,19 +749,19 @@
 	   (emit-ir (make-ssa-function-epilogue) block)
 	   (emit-ir (make-ssa-multiple-return :count ret-vals) block))
 	  (place
-	   (typecase place
+	   (etypecase place
 	     (mvb-place
-	      (emit-ir (make-ssa-vop :return-values (mvb-place-var-places place) :args args-places) block))
-	     (t
-	      (error "Not implented")
-	      ;; FIXME, here we use PLACE as first ret value and we generate missing values, fix VOP so it can receive NIL as return reg
-	      ;; (emit-ir (make-ssa-vop :return-values (cons place (generate-return-places (- ret-vals 1))) :args args-places) block)
-	      )))
+	      (error "Not implented"))
+	     ((or fixed-place named-place)
+	      (emit-ir (make-ssa-vop :name (clcomp::vop-node-vop node) :return-values (list place) :args args-places) block))))
 	  (t
-	   ;; FIXME, fix VOP to maybe not use any return registers, do we have side effects only VOPS ?
-	   (error "What ?")
-	   ;; (emit-ir (make-ssa-vop :return-values (generate-return-places ret-vals) :args args-places) block)
-	   ))
+	   ;; FIXME, this is issue when caller of the VOP don't expect that VOP returns anything
+	   ;; we should have option when VOP doesn't require any return places, so side-effect only VOP
+	   (assert (= 1 ret-vals))
+	   (emit-ir (make-ssa-vop :name (clcomp::vop-node-vop node)
+				  :return-values (generate-return-places ret-vals)
+				  :args args-places)
+		    block)))
     block))
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
@@ -809,7 +811,7 @@
 ;;; how this handle multiple TAGBODY inside each other with the same LABEL ?
 ;;; TODO, we need environment that will transfer LABELS/BLOCKS
 ;;; The same issue we will have with BLOCK/RETURN-FROM
-;;; also wrong in a context of dynamic extent, check CLHS for TAGBODOY
+;;; also wrong in a context of dynamic extent, check CLHS for TAGBODOY (non local exit)
 (defun emit-tagbody-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize (debug 3) (safety 3) (speed 0)))
   (push-lexenv lambda-ssa)
@@ -831,7 +833,9 @@
 	    (ssa-add-block lambda-ssa lblock)
 	    ;; when current block doesn't have GO just connect blocks
 	    (when (null (ssa-block-uncond-jump current-block))
-	      (ssa-connect-blocks current-block lblock))
+	      (insert-block-unconditional-jump current-block lblock)
+	      ;; (ssa-connect-blocks current-block lblock)
+	      )
 	    ;; we are inserting SSA-LABEL with SSA-ADD-BLOCK-LABEL
 	    ;; (emit-ir (make-ssa-label :label (label-node-label form-node)) ;; don't use MAKE-SSA-LABEL directly
 	    ;; 	  lblock)
@@ -931,13 +935,12 @@
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
       (clcomp::lambda-node
-       (break)
        (when (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
 	 (error "Closure detected, still not implemented "))
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa node (lambda-ssa-env lambda-ssa)) fixup))
       ((or clcomp::compile-time-bootstrap-constant-node
-	   clcomp::fun-rip-relative-node) nil))
+	   clcomp::fun-rip-relative-node)))
     (lambda-add-fixup fixup lambda-ssa)
     (if place
 	(emit-ir (make-ssa-load :to place :from fixup) block)
@@ -1746,7 +1749,7 @@
 	(if (gethash (ssa-block-index block) visited)
 	    (push block new-blocks)
 	    (progn
-	      (print-debug "Removing NOT-ACCESSIBLE BLOCK " (ssa-block-index block))
+	      (print-debug "REMOVE-NOT-ACCESSIBLE-BLOCKS: Removing NOT-ACCESSIBLE BLOCK " (ssa-block-index block))
 	      (dolist (sblock (ssa-block-successors block lambda-ssa))
 		(when sblock
 		  (when (gethash (ssa-block-index sblock) visited)
@@ -1762,12 +1765,12 @@
 	    (when sblock
 	      (setf (ssa-block-predecessors sblock)
 		    (remove (ssa-block-index block) (ssa-block-predecessors sblock))))))
-	(print-debug "Removing BLOCK " (ssa-block-index block))
+	(print-debug "REMOVE-NOT-ACCESSIBLE-BLOCKS: Removing BLOCK " (ssa-block-index block))
 	(destroy-ssa-block block lambda-ssa)))))
 
 ;;; FIXME, check this, remove GO when we change UNCOND-JUMP to SUCCESSOR
 (defun maybe-fix-uncond-jumps-to-succ (lambda-ssa)
-  (declare (optimize (debug 3)))
+  #.*fun-optimize-level*
   (flet ((change-uncond-jump-to-succ (ssa-block)
 	   ;; if last instruction is GO remove it
 	   ;; if last instruction is IF set FALSE-BLOCK-LABEL to NIL
@@ -1776,8 +1779,7 @@
 	       (ssa-go (remove-last-ir-instruction ssa-block))
 	       (ssa-if (setf (ssa-if-false-block-label last-instruction) nil))
 	       (t ;; (print-debug "CHANGE-UNCOND-JUMP-TO-SUCC, unknown last instruction")
-		(error "Unknown last instruction")
-		)))))
+		(error "Unknown last instruction"))))))
     (let ((blocks (lambda-ssa-blocks lambda-ssa)))
       (do* ((bs blocks (cdr bs))
 	    (b1 (first bs) (first bs))
@@ -2368,8 +2370,8 @@
     (dolist (phi (ssa-block-phis block))
       (when (phi-p phi)
 	(let ((reduced-place (get-phi-place-reduced-value (phi-place phi))))
-	  ;; We should not have reduce-place to be PHI-PLACE (or maybe it can ?)
-	  (assert (not (phi-place-p reduced-place)))
+	  ;; NOTE, this can't happen tough, GET-PHI-PLACE-REDUCED-VALUE is recursive
+	  (assert (null (get-phi-place-reduced-value reduced-place)))
 	  (if reduced-place
 	      (pushnew reduced-place (ssa-block-live-gen block))
 	      (pushnew (phi-place phi) (ssa-block-live-kill block))))))
@@ -3001,7 +3003,8 @@
 (defun get-storage-type (storage)
   (etypecase storage
     (keyword :register)
-    (list :stack)))
+    (list :memory)
+    (number :immediate)))
 
 (defun make-stack-op (displacement &optional (base *base-pointer-reg*))
   (@ base nil nil displacement))
@@ -3067,6 +3070,7 @@
 (defun calculate-local-var-stack (stack)
   (- (* clcomp::*word-size* (+ stack (length *preserved-regs*) 1))))
 
+
 ;;; FIXME, we need proper format for this :reg for register storage
 ;;; or (:reg ....) for memory or stack storage
 (defun get-alloc-storage (alloc name index)
@@ -3074,6 +3078,7 @@
   (let ((intervals (gethash name (alloc-per-name-handled alloc))))
     (unless intervals
       (error "Unknown name"))
+    ;;; FIXME, RECHECK this
     (dolist (interval intervals)
       ;; FIXME, is this ok ?
       ;; check how RANGE works
@@ -3091,10 +3096,8 @@
   #.*fun-optimize-level*
   (etypecase place
     (fixed-place (get-fixed-place-storage place))
-    (phi-place (let ((reduced (funcall (phi-place-reduced place))))
-		 ;; (get-alloc-storage alloc (named-place-name (or reduced place)) index)
-		 ;; NOTE, is place symbol or struct ?
-		 (get-alloc-storage alloc  (or reduced place) index)))
+    (phi-place (let ((reduced (get-phi-place-reduced-value place)))
+                 (get-alloc-storage alloc (or reduced place) index)))
     (virtual-place (get-alloc-storage alloc place index))
     (immediate-constant (immediate-constant-constant place))
     ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
@@ -3161,10 +3164,22 @@
 
 (defun translate-load (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
-  ;; TODO
-  (emit-ir-assembly translator alloc
-		    (make-inst :mov (get-storage alloc (ssa-load-to ir) (ssa-form-index ir))
-			  (get-storage alloc (ssa-load-from ir) (ssa-form-index ir)))))
+  (let* ((to-storage (get-storage alloc (ssa-load-to ir) (ssa-form-index ir)))
+	 (to-type (get-storage-type to-storage))
+	 (from-storage (get-storage alloc (ssa-load-from ir) (ssa-form-index ir)) )
+	 (from-type (get-storage-type from-storage)))
+    (if (and (eq to-type :memory)
+	     (eq from-type :memory))
+	(progn
+	  (emit-ir-assembly translator alloc
+			    (make-inst :mov *tmp-reg*
+				       from-storage))
+	  (emit-ir-assembly translator alloc
+			    (make-inst :mov to-storage
+				       *tmp-reg*)))
+	
+	(emit-ir-assembly translator alloc
+			  (make-inst :mov to-storage from-storage)))))
 
 (defun translate-mvb-bind (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))
@@ -3184,6 +3199,7 @@
 	 (args-storage (mapcar #'(lambda (p)
 				   (get-storage alloc p ir-index))
 			       (ssa-vop-args ir)))
+	 ;; FIXME, immediate as VOP arguments ?
 	 (args-types (mapcar #'get-storage-type args-storage))
 	 (ret-vals-storage (mapcar #'(lambda (p)
 				       (get-storage alloc p ir-index))
@@ -3194,7 +3210,7 @@
 	(apply #'emit-ir-assembly translator alloc
 	       (clcomp::get-vop-code vop (append ret-vals-storage args-storage
 						 (list (make-stack-op (calculate-local-var-stack (alloc-stack-index alloc))))) ))
-	(error "FIXME, spill something for this to work"))))
+	(error "Unknown VOP"))))
 
 (defun translate-if (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa)

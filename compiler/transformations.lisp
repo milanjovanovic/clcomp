@@ -362,7 +362,7 @@
 	(make-return-from-node :name block-name :form (create-node return-form environment)))))
 
 (defun create-compile-time-bootstrap-constant-node (form)
-  (make-compile-time-constant-node :form (second form)))
+  (make-compile-time-bootstrap-constant-node :form (second form)))
 
 (defun create-lexical-or-symbol-value-node (form environment)
   (declare (optimize debug))
