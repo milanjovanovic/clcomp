@@ -541,17 +541,17 @@
 	       (list rex modrm sib displacement))))
 	
 	;; we have displacement, displacement is signed
-	(t let ((displacement-type (signed-number-type displacement)))
-	   (cond ((eq displacement-type 'byte)
-		  ;; one byte displacement
-		  (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
-		  (setf (ldb *modrm.mod.byte* modrm) #b01))
-		 ((or (eq displacement-type 'word)
-		      (eq displacement-type 'dword))
-		  ;; dword (4 bytes) displacement
-		  (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
-		  (setf (ldb *modrm.mod.byte* modrm) #b10))
-		 (t (error "Bad displacement")))
+	(t (let ((displacement-type (signed-number-type displacement)))
+	     (cond ((eq displacement-type 'byte)
+		    ;; one byte displacement
+		    (setf displacement (byte-as-byte-list (make-signed-byte displacement)))
+		    (setf (ldb *modrm.mod.byte* modrm) #b01))
+		   ((or (eq displacement-type 'word)
+			(eq displacement-type 'dword))
+		    ;; dword (4 bytes) displacement
+		    (setf displacement (dword-as-byte-list (make-signed-dword displacement)))
+		    (setf (ldb *modrm.mod.byte* modrm) #b10))
+		   (t (error "Bad displacement"))))
 	   (if (or scale index (rsp-or-r12 base))
 	       (progn
 		 (setf (ldb *modrm.rm.byte* modrm) #b100)
