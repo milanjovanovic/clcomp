@@ -3,18 +3,6 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
  (declaim (optimize (speed 0) (debug 3))))
 
-(defparameter *base-pointer-reg* :RBP)
-(defparameter *stack-pointer-reg* :RSP)
-(defparameter *instruction-pointer-reg* :RIP)
-(defparameter *fun-address-reg* :RAX)
-(defparameter *fun-number-of-arguments-reg* :RCX)
-(defparameter *fun-number-of-ret-values-reg* :RCX)
-(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI :R8))
-(defparameter *scratch-regs* '(:R9 :R10))
-(defparameter *tmp-reg* :R10)
-(defparameter *tmp-reg-2* :R9)
-(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14 :RBX))
-(defparameter *heap-header-reg* :R15)
 
 
 (defparameter *debug* nil)
@@ -26,6 +14,10 @@
 
 (defparameter *symbols* (make-hash-table))
 (defparameter *static-space-start* #x20000000)
+
+
+;;; FIXME, remove this later, we need it until we delete old compiler code
+(defparameter *return-value-reg* :RDX)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1004,19 +996,29 @@
 (defun %compiler-defun (f)
   (declare (ignore f)))
 
-(defun clcomp-compile (name exp &key (eval-at-load nil))
-  (let* ((expanded (clcomp-macroexpand exp))
-	 (nodes (create-node expanded))
-	 (ir (make-ir nodes))
-	 (ir-blocks (component-blocks-phase ir))
-	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
-	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
-    (when (and eval-at-load
-	       (not name))
-      (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
-    (rt-add-to-compilation assembled-compile-unit)
-    (maybe-rt-%defun name assembled-compile-unit)
-    assembled-compile-unit))
+;; (defun clcomp-compile (name exp &key (eval-at-load nil))
+;;   (let* ((expanded (clcomp-macroexpand exp))
+;; 	 (nodes (create-node expanded))
+;; 	 (ir (make-ir nodes))
+;; 	 (ir-blocks (component-blocks-phase ir))
+;; 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
+;; 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
+;;     (when (and eval-at-load
+;; 	       (not name))
+;;       (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
+;;     (rt-add-to-compilation assembled-compile-unit)
+;;     (maybe-rt-%defun name assembled-compile-unit)
+;;     assembled-compile-unit))
+
+;; (defun clcomp-compile (name exp &key (eval-at-load nil))
+;;   (let* ((compilation-unit (clcomp.translator::translate-to-compilation-unit (clcomp.ssa::clcomp-compile name exp)))
+;; 	 (assembled-compile-unit (assemble-and-link-compilation-unit compilation-unit 0)))
+;;     (when (and eval-at-load
+;; 	       (not name))
+;;       (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
+;;     (rt-add-to-compilation assembled-compile-unit)
+;;     (maybe-rt-%defun name assembled-compile-unit)
+;;     assembled-compile-unit))
 
 
 ;; (defun ssa-clcomp-compile (name exp &key (eval-at-load nil))
