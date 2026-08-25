@@ -28,4 +28,5 @@
 
 (defun translate-to-compilation-unit (lambda-ssa)
   (clcomp::make-compilation-unit :compile-component
-				 (translate-to-compile-component lambda-ssa)))
+				 (translate-to-compile-component lambda-ssa)
+				 :name (clcomp.ssa::lambda-ssa-name lambda-ssa)))

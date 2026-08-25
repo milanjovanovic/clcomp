@@ -125,10 +125,11 @@
     (inst :label exit-label)
     
     (inst :add *stack-pointer-reg* *tmp-reg*)
-    (inst :mov res *return-value-reg*))
+    (inst :mov res (first *fun-arguments-regs*)))
     
   (reverse *segment-instructions*))
 
+;; check *tmp-reg* since we are using fixed registers in this VOP
 (defun listify-code-generator (fixed-arguments-count)
   (let ((*segment-instructions* nil))
     (let ((start (make-vop-label "start-"))
@@ -327,7 +328,7 @@
 
     ;; pfff, we need another two registers
     (inst :push *fun-number-of-arguments-reg*)
-    (inst :push :R11)
+    (inst :push :R13)
 
     ;; *tmp-reg* -> remaining number of stack values
     ;; *tmp-reg-2* -> copy destination offset
@@ -352,8 +353,8 @@
 
     (inst :mov *fun-number-of-arguments-reg* 32) ;; start source slot (we did 4 pushes)
     (inst :label copy-loop)
-    (inst :mov :R11 (@ *stack-pointer-reg* *fun-number-of-arguments-reg*))
-    (inst :mov (@ *base-pointer-reg* *tmp-reg-2*) :R11)
+    (inst :mov :R13 (@ *stack-pointer-reg* *fun-number-of-arguments-reg*))
+    (inst :mov (@ *base-pointer-reg* *tmp-reg-2*) :R13)
     (inst :dec *tmp-reg*)
     (inst :jump-fixup :jz skip-copy-loop)
     ;; both source and destination slot goes upward the stack
@@ -365,7 +366,7 @@
 
     ;; restore caller RBP and RIP
     ;; rewind stack and return
-    (inst :pop :R11)
+    (inst :pop :R13)
     (inst :pop *fun-number-of-arguments-reg*)
 
     ;; calculate where is new RSP

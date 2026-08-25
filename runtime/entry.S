@@ -27,7 +27,7 @@ CNAME(run_lisp_test):
 	movq %rdx, %rax
 	movq $0, %rcx
 	callq *%rax
-	movq %rbx, %rax
+	movq %rdx, %rax
 	movq _cs(%rip), %rsp
 	pop %r15
 	pop %r14
@@ -53,7 +53,7 @@ CNAME(eval_lisp_fixup):
 	movq %rdi, %rax
 	movq $0, %rcx
 	callq *%rax
-	movq %rbx, %rax
+	movq %rdx, %rax
 	movq _cs(%rip), %rsp
 	pop %r15
 	pop %r14

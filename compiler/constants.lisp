@@ -6,11 +6,12 @@
 (defparameter *fun-address-reg* :RAX)
 (defparameter *fun-number-of-arguments-reg* :RCX)
 (defparameter *fun-number-of-ret-values-reg* :RCX)
-(defparameter *fun-arguments-regs* '(:RDX :RDI :RSI :R8))
-(defparameter *scratch-regs* '(:R9 :R10))
+(defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
+
+(defparameter *scratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
-(defparameter *tmp-reg-2* :R9)
-(defparameter *preserved-regs* '(:R11 :R12 :R13 :R14 :RBX))
+(defparameter *tmp-reg-2* :R11)
+(defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI))
 (defparameter *heap-header-reg* :R15)
 
 

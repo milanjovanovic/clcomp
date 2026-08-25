@@ -42,7 +42,7 @@
 (defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa blocks (delayed-blocks (make-hash-table)) intervals alloc
+(defstruct lambda-ssa name blocks (delayed-blocks (make-hash-table)) intervals alloc
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
@@ -2986,18 +2986,6 @@
 
 (defparameter *alignment* 16)
 
-;; (defparameter *fun-values-stack-reg* :RBX) ;; why use this ?
-
-;; (defparameter *fun-arguments-regs* '(:RDX :RDI :R8 :R9))
-;; (defparameter *closure-env-reg* :RSI)
-
-;;; FIXME
-;;; This should be the same register as *fun-values-stack-reg*
-;;; also we should not use register for this, use :RBP
-;; (defparameter *mvb-base-pointer-reg* :R11)
-
-;;; Left REGS for using: R8 R9
-
 (defstruct ir2asm-translator registers locations code)
 
 (defun get-storage-type (storage)
@@ -3281,12 +3269,12 @@
 
 (defun clcomp-compile (name exp)
   #.*fun-optimize-level*
-  (declare (ignorable name))
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp)))))
     (lambda-build-intervals lambda-ssa)
     (lambda-linear-scan lambda-ssa)
     (lambda-resolve-data-flow lambda-ssa)
     (lambda-translate-to-asm lambda-ssa)
+    (setf (lambda-ssa-name lambda-ssa) name)
     lambda-ssa))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

@@ -785,7 +785,7 @@
 
 (defstruct rip-location rip byte-offset)
 (defstruct compile-component id code prefix-code start code-size subcomps rips rip-offsets byte-code)
-(defstruct compilation-unit compile-component start fixups code main-offset eval-at-load)
+(defstruct compilation-unit name compile-component start fixups code main-offset eval-at-load)
 
 (defun get-compilation-unit-code-size (compilation-unit)
   (reduce (lambda (s c)
@@ -1010,15 +1010,16 @@
 ;;     (maybe-rt-%defun name assembled-compile-unit)
 ;;     assembled-compile-unit))
 
-;; (defun clcomp-compile (name exp &key (eval-at-load nil))
-;;   (let* ((compilation-unit (clcomp.translator::translate-to-compilation-unit (clcomp.ssa::clcomp-compile name exp)))
-;; 	 (assembled-compile-unit (assemble-and-link-compilation-unit compilation-unit 0)))
-;;     (when (and eval-at-load
-;; 	       (not name))
-;;       (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
-;;     (rt-add-to-compilation assembled-compile-unit)
-;;     (maybe-rt-%defun name assembled-compile-unit)
-;;     assembled-compile-unit))
+(defun clcomp-compile (name exp &key (eval-at-load nil))
+  (declare (optimize debug))
+  (let* ((compilation-unit (clcomp.translator::translate-to-compilation-unit (clcomp.ssa::clcomp-compile name exp)))
+	 (assembled-compile-unit (assemble-and-link-compilation-unit compilation-unit 0)))
+    (when (and eval-at-load
+	       (not name))
+      (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
+    (rt-add-to-compilation assembled-compile-unit)
+    (maybe-rt-%defun name assembled-compile-unit)
+    assembled-compile-unit))
 
 
 ;; (defun ssa-clcomp-compile (name exp &key (eval-at-load nil))
