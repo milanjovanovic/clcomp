@@ -20,6 +20,7 @@
 		   (rplacd a1 (car a2))
 		   (%apply function (cons arg arguments))))))))
 
+;;; FIXME, we should not implement FUNCALL with APPLY
 (defun funcall (fun &rest args)
   (if (symbolp fun)
       (apply (symbol-function fun) args)
