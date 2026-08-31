@@ -1844,8 +1844,10 @@
 	  (assert (null (ssa-if-false-block-label last-instr)))
 	  (setf (ssa-if-false-block-label last-instr) (ssa-block-label succ-block)))
 	(progn
-	  (assert (not (typep last-instr 'ssa-go)))
-	  (emit-ir (make-ssa-go :label (ssa-block-label succ-block)) block)))))
+	  (error "This should now happen !")
+	  ;; (assert (not (typep last-instr 'ssa-go)))
+	  ;; (emit-ir (make-ssa-go :label (ssa-block-label succ-block)) block)
+	  ))))
 
 (defun maybe-fix-uncond-jumps-to-succ (lambda-ssa)
   #.*fun-optimize-level*
@@ -1880,10 +1882,9 @@
 		      (/= b1-succ (ssa-block-index b2)))
 		 (error (format nil "Wrong SUCC index for BLOCK ~A" (ssa-block-index b1))))))))))
 
-;;; Insert new block in between two blocks
-;;; We are only doing this for COND connections
+;;; Insert new block in between two blocks that have COND JUMP as connection
 ;;; new block will be inserted right after FROM-BLOCK
-;;; if FROM-BLOCK have SUCC it will be changed to UNCOND-JUMP so new block can be inserted
+;;; if FROM-BLOCK have SUCC it will be changed to UNCOND-JUMP
 (defun lambda-ssa-insert-block-in-between-cond-jump (lambda-ssa from-block to-block)
   #.*fun-optimize-level*
   ;; We are onlu doing this for COND connections so this is only with IF instruction
@@ -1891,18 +1892,19 @@
 	     (ssa-block-index to-block)))
   (let ((new-block (make-new-ssa-block lambda-ssa))
 	(if-instr (ssa-block-last-instruction from-block))
-	(new-block-label (generate-label-for-string "PHI-COND-BLOCK-"))
+	(new-block-label (generate-label-for-string "PHI-COND-BLOCK-MOVES-"))
 	(cond-jump-index (ssa-block-cond-jump from-block)))
     (assert (= cond-jump-index (ssa-block-index to-block)))
     (assert (typep if-instr 'ssa-if))
-    ;; set new block fields to right values
+    ;; initialize new block
     (label-ssa-block new-block new-block-label)
     (setf (ssa-block-cond-jump new-block) cond-jump-index)
     (setf (ssa-block-predecessors new-block) (list (ssa-block-index from-block)))
+    (emit-ir (make-ssa-go :label (ssa-if-true-block-label if-instr)) new-block)
     ;; fix SSA-IF label and COND-JUMP index for FROM-BLOCK
     (setf (ssa-if-true-block-label if-instr) new-block-label)
     (setf (ssa-block-cond-jump from-block) (ssa-block-index new-block))
-    ;; fix FROM-BLOCK
+    ;; fix predecessors from TO-BLOCK
     (setf (ssa-block-predecessors to-block)
 	  (substitute (ssa-block-index new-block)
 		      (ssa-block-index from-block)
@@ -1911,8 +1913,47 @@
     ;; new block will be in between of this block and successor block (if exist)
     ;; so we maybe need to change SUCC to UNCOND-JUMP
     (when (ssa-block-succ from-block)
-      (ssa-block-change-succ-to-uncond-jump lambda-ssa from-block)
-      (lambda-ssa-add-block-after-block lambda-ssa (ssa-block-index from-block) new-block))
+      (ssa-block-change-succ-to-uncond-jump lambda-ssa from-block))
+    (lambda-ssa-add-block-after-block lambda-ssa (ssa-block-index from-block) new-block)
+    new-block))
+
+(defun lambda-ssa-insert-block-in-between-uncond-or-succ (lambda-ssa from-block)
+  #.*fun-optimize-level*
+  (assert (not (and (ssa-block-succ from-block)
+		    (ssa-block-uncond-jump from-block))))
+  (let ((new-block (make-new-ssa-block lambda-ssa)))
+    (if (ssa-block-succ from-block)
+	;; if it is still successor only we know that we didn't inserted block for COND-MOVES
+	(let* ((succ-index (ssa-block-succ from-block))
+	       (succ-block (ssa-find-block-by-index lambda-ssa succ-index)))
+	  (assert succ-block)
+	  ;; connect to new block
+	  (ssa-connect-blocks from-block new-block)
+	  ;; fix succ-block predecessors
+	  (setf (ssa-block-predecessors succ-block)
+		(substitute (ssa-block-index new-block)
+			    (ssa-block-index from-block)
+			    (ssa-block-predecessors succ-block))))
+	(let* ((jump-index (ssa-block-uncond-jump from-block))
+	       (jump-block (ssa-find-block-by-index lambda-ssa jump-index))
+	       (new-block-label (generate-label-for-string "PHI-UNCOND-MOVE-"))
+	       (if-instr (ssa-block-last-instruction from-block)))
+	  (assert (typep if-instr 'ssa-if))
+	  ;; initialize  new block
+	  (label-ssa-block new-block new-block-label)
+	  (setf (ssa-block-uncond-jump new-block) jump-index)
+	  (setf (ssa-block-predecessors new-block) (list (ssa-block-index from-block)))
+	  (assert (ssa-block-label jump-block))
+	  (emit-ir (make-ssa-go :label (ssa-block-label jump-block)) new-block)
+	  ;; fix FROM-BLOCK
+	  (setf (ssa-if-false-block-label if-instr) new-block-label)
+	  (setf (ssa-block-uncond-jump from-block) (ssa-block-index new-block))
+	  ;; fix predecessor to jump block
+	  (setf (ssa-block-predecessors jump-block)
+		(substitute (ssa-block-index new-block)
+			    (ssa-block-index from-block)
+			    (ssa-block-predecessors jump-block)))))
+    (lambda-ssa-add-block-after-block lambda-ssa (ssa-block-index from-block) new-block)
     new-block))
 
 (defun check-predecessors (lambda-ssa)
@@ -2555,8 +2596,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Actual LINEAR-SCAN implementation
 (defstruct alloc unhandled active inactive handled (per-name-handled (make-hash-table))
-	   intervals-index split-moves phi-moves stack-index)
-
+  intervals-index spill-moves edge-moves phi-moves stack-index)
 
 (defun get-stack-index (alloc)
   (incf (alloc-stack-index alloc)))
@@ -2605,7 +2645,8 @@
 
 (defun alloc-delete-moves (alloc)
   (setf (alloc-phi-moves alloc) nil)
-  (setf (alloc-split-moves alloc) nil))
+  (setf (alloc-spill-moves alloc) nil)
+  (setf (alloc-edge-moves alloc) nil))
 
 (defun collect-interval-childs (alloc interval)
   (let ((current-interval interval)
@@ -2625,18 +2666,17 @@
   (unless (intervals-same-storage-p from-interval to-interval nil)
     (let ((from-number (interval-number from-interval))
 	  (to-number (interval-number to-interval)))
-      (push (list :split (list :from-interval from-number :to-interval to-number :split-index split-index))
-	    (alloc-split-moves alloc)))))
+      (push (list :from-interval from-number :to-interval to-number :split-index split-index)
+	    (alloc-spill-moves alloc)))))
 
 (defun maybe-insert-interval-edge-move (alloc from-interval from-block to-interval to-block)
   (unless (intervals-same-storage-p from-interval to-interval nil)
     (let ((from-number (interval-number from-interval))
 	  (to-number (interval-number to-interval)))
-      (push (list :edge (list :from-block (ssa-block-index from-block) :from-interval from-number
-			      :to-block (ssa-block-index to-block) :to-interval to-number))
-	    (alloc-split-moves alloc)))))
+      (push (list :from-block (ssa-block-index from-block) :from-interval from-number
+		  :to-block (ssa-block-index to-block) :to-interval to-number)
+	    (alloc-edge-moves alloc)))))
 
-;; FIXME, we need blocks numbers here
 (defun maybe-insert-phi-move (alloc from-interval from-block to-interval to-block)
   (unless (intervals-same-storage-p from-interval to-interval nil)
     (let ((from-number (interval-number from-interval))
@@ -2831,7 +2871,7 @@
     (lambda-linear-scan (cdr ls))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; SPILL MOVES AND PHI MOVES
+;;; SPILL/EDGE/PHI moves resolution
 
 (defun make-interval-index (alloc)
   (let ((intervals (mapcar #'cdr (alloc-handled alloc)))
@@ -2865,7 +2905,7 @@
 	   (setf current child-interval)
 	   (go loop))))))
 
-(defun insert-splitted-intervals-move (lambda-ssa alloc)
+(defun generate-edge-moves (lambda-ssa alloc)
   #.*fun-optimize-level*
   (dolist (blck (lambda-ssa-blocks lambda-ssa))
     (let ((succ-indexes (ssa-block-successors-indexes blck)))
@@ -2883,7 +2923,7 @@
 		(maybe-insert-interval-edge-move alloc from blck to sblock))))))))
   alloc)
 
-(defun insert-phi-moves (lambda-ssa alloc)
+(defun generate-phi-moves (lambda-ssa alloc)
   #.*fun-optimize-level*
   (dolist (blck (lambda-ssa-blocks lambda-ssa))
     (let ((phis (get-block-real-phis blck)))
@@ -2898,7 +2938,8 @@
 		  (dolist (operand pblock-phi-operands )
 		    (let* ((operand-root-interval (get-root-interval alloc operand))
 			   (_ (assert operand-root-interval))
-			   (operand-interval (get-interval-at-index alloc operand-root-interval (ssa-block-last-index pblock)))
+			   (operand-interval (get-interval-at-index alloc operand-root-interval
+								    (ssa-block-last-index pblock)))
 			   (phi-root-interval (get-root-interval alloc (phi-place phi)))
 			   (__ (assert phi-root-interval))
 			   (phi-interval (get-interval-at-index alloc phi-root-interval (ssa-block-first-index blck))))
@@ -2908,53 +2949,39 @@
 		      (assert (and operand-interval phi-interval))))))))))))
   alloc)
 
-(defun add-move (move block succ-type)
+(defun add-edge-move (move block succ-type)
   (ecase succ-type
     (:succ (push move (ssa-block-succ-moves block)))
     (:cond-jump (push move (ssa-block-cond-jump-moves block)))
     (:uncond-jump (push move (ssa-block-uncond-jump-moves block)))))
 
-(defun resolve-interval-split-move-data (lambda-ssa alloc)
+(defun resolve-spill-moves (lambda-ssa alloc)
   #.*fun-optimize-level*
-  (dolist (move (alloc-split-moves alloc))
-    (let* ((type (first move))
-	   (mdata (second move))
-	   (from-interval (alloc-get-interval alloc (getf mdata :from-interval)))
-	   (to-interval (alloc-get-interval  alloc(getf mdata :to-interval))))
+  (dolist (move (alloc-spill-moves alloc))
+    (let* ((from-interval (alloc-get-interval alloc (getf move :from-interval)))
+	   (to-interval (alloc-get-interval  alloc(getf move :to-interval))))
       (assert (and from-interval to-interval))
-      (ecase type
-	(:edge (let* ((from-block (ssa-find-block-by-index lambda-ssa (getf mdata :from-block)))
-		      (to-block-index (getf mdata :to-block))
-		      (from-storage (make-interval-storage from-interval))
-		      (to-storage (make-interval-storage to-interval))
-		      (succ-block-branch-type (ssa-block-successor-type from-block to-block-index)))
-		 (assert (and from-block to-block-index from-storage to-storage))
-		 (add-move (make-ssa-load :to (make-operand-place :operand to-storage)
-					  :from (make-operand-place :operand from-storage))
-			   from-block
-			   succ-block-branch-type)))
-	(:split (let* ((split-index (getf mdata :split-index))
-		       (first-index-block (lambda-ssa-is-start-block-index lambda-ssa split-index)))
-		  ;; We can have move duplicate between :split and :edge move
-		  ;; If it's :split move at exact block boundary (last_block_index+2)
-		  ;; then we also emmited same :edge move
-		  ;; skipping duplicate move
-		  ;; FIXME, not sure about this
-		  (if first-index-block
-		      (error "We should skip this move?")
-		      ;; (debug-print "Skipping :split move" move)
-		      (let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
-			    (move-instr (list split-index
-					      (make-ssa-load :to (make-operand-place
-								  :operand (make-interval-storage to-interval))
-							     :from (make-operand-place
-								    :operand (make-interval-storage from-interval))))))
-			(assert any-index-block)
-			(push move-instr (ssa-block-spill-moves any-index-block))))))))))
+      (let* ((split-index (getf move :split-index))
+	     (first-index-block (lambda-ssa-is-start-block-index lambda-ssa split-index)))
+	;; We can have move duplicate between :split and :edge move
+	;; If it's :split move at exact block boundary (last_block_index+2)
+	;; then we also emmited same :edge move
+	;; skipping duplicate move
+	;; FIXME, not sure about this
+	(if first-index-block
+	    (error "We should skip this move?")
+	    ;; (debug-print "Skipping :split move" move)
+	    (let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
+		  (move-instr (list split-index
+				    (make-ssa-load :to (make-operand-place
+							:operand (make-interval-storage to-interval))
+						   :from (make-operand-place
+							  :operand (make-interval-storage from-interval))))))
+	      (assert any-index-block)
+	      (push move-instr (ssa-block-spill-moves any-index-block))))))))
 
-(defun resolve-phi-move-data (lambda-ssa alloc)
-  #.*fun-optimize-level*
-  (dolist (move (alloc-phi-moves alloc))
+(defun resolve-edge-moves (lambda-ssa alloc moves)
+  (dolist (move moves)
     (let* ((from-block (ssa-find-block-by-index lambda-ssa (getf move :from-block)))
 	   (to-block-index (getf move :to-block))
 	   (from-interval (alloc-get-interval alloc (getf move :from-interval)))
@@ -2963,14 +2990,15 @@
 	   (to-storage (make-interval-storage to-interval))
 	   (succ-block-branch-type (ssa-block-successor-type from-block to-block-index)))
       (assert (and from-block to-block-index from-interval to-interval succ-block-branch-type))
-      (add-move (make-ssa-load :to (make-operand-place :operand to-storage)
-			       :from (make-operand-place :operand from-storage))
-		from-block
-		succ-block-branch-type))))
+      (add-edge-move (make-ssa-load :to (make-operand-place :operand to-storage)
+				    :from (make-operand-place :operand from-storage))
+		     from-block
+		     succ-block-branch-type))))
 
-(defun resolve-move-data (lambda-ssa alloc)
-  (resolve-interval-split-move-data lambda-ssa alloc)
-  (resolve-phi-move-data lambda-ssa alloc))
+(defun resolve-moves (lambda-ssa alloc)
+  (resolve-spill-moves lambda-ssa alloc)
+  (resolve-edge-moves lambda-ssa alloc (alloc-edge-moves alloc))
+  (resolve-edge-moves lambda-ssa alloc (alloc-phi-moves alloc)))
 
 (defun parallel-move-helper (src dst i status tmp out)
   (if (equalp (aref src i) (aref dst i))
@@ -3050,11 +3078,12 @@
 ;;; Just simple insert at the end of the block
 ;;; if there is GO instruction at the end just insert moves before GO
 ;;; This only works if there are no branches, just simple fall-through or GO
-(defun merge-simple-phi-moves (sblock moves)
+(defun merge-simple-edge-moves (sblock moves)
+  #.*fun-optimize-level*
   (assert (= 1 (length (ssa-block-successors-indexes sblock))))
   (ssa-block-add-instruction-to-end sblock moves))
 
-(defun block-merge-phi-moves (lambda-ssa sblock)
+(defun block-merge-moves (lambda-ssa sblock)
   #.*fun-optimize-level*
   (if (= 1 (length (ssa-block-successors-indexes  sblock)))
       (let ((moves (remove nil (list (ssa-block-cond-jump-moves sblock)
@@ -3062,7 +3091,8 @@
 				     (ssa-block-succ-moves sblock)))))
 	(assert (<= (length moves) 1))
 	(assert (not (ssa-block-cond-jump-moves sblock) ))
-	(merge-simple-phi-moves sblock (first moves)))
+	(merge-simple-edge-moves sblock (first moves)))
+      ;; this can be only inside of block that have SSA-IF instruction
       ;; here we maybe need to create new block
       ;; Our move combinations can be
       ;; COND + SUCC (IF without false-block label)
@@ -3075,54 +3105,51 @@
 		    2))
 	(assert (not (and succ-moves uncond-moves)))
 	(when cond-moves
+	  ;; For cond-moves we will insert new block right after current block and fix jumps
 	  (let* ((cond-block-index (ssa-block-cond-jump sblock))
 		 (cond-block (ssa-find-block-by-index lambda-ssa cond-block-index)))
 	    (assert cond-block)
 	    (let ((new-block (lambda-ssa-insert-block-in-between-cond-jump lambda-ssa sblock cond-block)))
-	      ;; FIXME, this is not good, we have first instruction LABEL and last
-	      (ssa-block-add-instruction-to-start new-block cond-moves)
-	      (setf (ssa-block-ssa new-block)
-		    (append cond-moves (ssa-block-ssa new-block))))))
+	      (ssa-block-add-instruction-to-start new-block cond-moves))))
 	(let ((moves (or succ-moves uncond-moves))
 	      (last-instr (ssa-block-last-instruction sblock)))
-	  (assert (typep last-instr 'ssa-if))
-	  (let ((label (ssa-if-false-block-label last-instr)))
-	    (setf (ssa-if-false-block-label last-instr) nil)
-	    (setf (ssa-block-ssa sblock) (append (ssa-block-ssa sblock)
-						 moves))
-	    (emit-ir (make-ssa-go :label label) sblock))))))
+	  (when moves
+	    ;; we need another new block here
+	    ;; we are free to insert another block right after current block
+	    ;; (even after new block is already for cond-moves)
+	    ;; becase cond is jump so we can safely insert block in the middle
+	    (assert (typep last-instr 'ssa-if))
+	    (let ((new-block (lambda-ssa-insert-block-in-between-uncond-or-succ lambda-ssa sblock)))
+	      (ssa-block-add-instruction-to-start new-block moves)))))))
 
-(defun lambda-merge-phi-moves (lambda-ssa)
+;;; this merge edge moves (phi + edge interval moves)
+(defun lambda-merge-edge-moves (lambda-ssa)
   #.*fun-optimize-level*
+  ;; copy list since we are adding new blocks
   (dolist (sblock (copy-list (lambda-ssa-blocks lambda-ssa)))
     (when (or (ssa-block-cond-jump-moves sblock)
 	      (ssa-block-uncond-jump-moves sblock)
 	      (ssa-block-succ-moves sblock))
-     (block-merge-phi-moves lambda-ssa sblock))))
+      (block-merge-moves lambda-ssa sblock))))
 
-;; (defun merge-data-flow-moves (lambda-ssa)
-;;   )
-
-;;; ALLOC-PHI-MOVES are  processed and insert into block COND-JUMP-MOVES, UNCOND-JUMP-MOVES or SUCC-MOVES
-;;; ALLOC-SPLIT moves can be :SPLIT (inserted during allocation) and :EDGE (calcuated in INSERT-SPLITTED-INTERVALS-MOVE)
-;;; not sure what :EDGE moves means and why are they not inserted during allocation
 (defun resolve-data-flow (lambda-ssa alloc)
   (lambda-ssa-clear-data-moves lambda-ssa)
   ;; (alloc-delete-moves alloc) ;; this deletes moves from LINEAR-SCAN
-  (insert-splitted-intervals-move lambda-ssa alloc)
-  (insert-phi-moves lambda-ssa alloc)
-  (resolve-move-data lambda-ssa alloc)
+  (generate-edge-moves lambda-ssa alloc)
+  (generate-phi-moves lambda-ssa alloc)
+  (resolve-moves lambda-ssa alloc)
   (resolve-lambda-moves-order lambda-ssa
 			      (make-operand-place :operand *tmp-reg*))
-  (lambda-merge-phi-moves lambda-ssa)
-  (fill-blocks-ordering lambda-ssa)
-  (lambda-ssa-fix-instruction-indexes lambda-ssa))
+  (lambda-merge-edge-moves lambda-ssa)
+  (fill-blocks-ordering lambda-ssa))
 
-;;; FIXME, after this we need to fix instructions numbers
 (defun lambda-resolve-data-flow (lambda-ssa)
   (resolve-data-flow lambda-ssa (lambda-ssa-alloc lambda-ssa))
+  (lambda-ssa-fix-instruction-indexes lambda-ssa)
   (dolist (l (lambda-ssa-sub-lambdas lambda-ssa))
-    (lambda-resolve-data-flow (cdr l))))
+    (lambda-resolve-data-flow (cdr l))
+    (lambda-ssa-fix-instruction-indexes lambda-ssa)
+    ))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
