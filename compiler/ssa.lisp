@@ -27,7 +27,7 @@
       (keyword :register)
       (cons :stack))))
 
-(defstruct (virtual-place (:include named-place)))
+(defstruct (virtual-place (:include named-place)) variable)
 (defstruct (phi-place
 	    (:print-function (lambda (struct stream depth)
 			       (declare (ignore depth))
@@ -194,9 +194,10 @@
     (incf *block-header-counter*)))
 
 (defparameter *ssa-symbol-counter* 0)
-(defun generate-virtual-place (&optional (s "T-"))
+(defun generate-virtual-place (&optional (s "T-") variable)
   (prog1
-      (make-virtual-place :name (make-symbol (concatenate 'string s (write-to-string *ssa-symbol-counter*))))
+      (make-virtual-place :name (make-symbol (concatenate 'string s (write-to-string *ssa-symbol-counter*)))
+			  :variable variable)
     (incf *ssa-symbol-counter*)))
 
 (defparameter *if-label-counter* 0)
@@ -1302,7 +1303,7 @@
 (defun ssa-write-variable (place block env)
   (declare (ignore env)
 	   (optimize debug))
-  (let ((vplace (generate-virtual-place "V-")))
+  (let ((vplace (generate-virtual-place "V-" (named-place-name place))))
     (setf (virtual-place-allocation vplace) (named-place-allocation place))
     (set-block-def block (named-place-name place) vplace)))
 
@@ -2968,17 +2969,17 @@
 	;; then we also emmited same :edge move
 	;; skipping duplicate move
 	;; FIXME, not sure about this
-	(if first-index-block
-	    (error "We should skip this move?")
-	    ;; (debug-print "Skipping :split move" move)
-	    (let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
-		  (move-instr (list split-index
-				    (make-ssa-load :to (make-operand-place
-							:operand (make-interval-storage to-interval))
-						   :from (make-operand-place
-							  :operand (make-interval-storage from-interval))))))
-	      (assert any-index-block)
-	      (push move-instr (ssa-block-spill-moves any-index-block))))))))
+	;; Can we have spill at first instruction of block ?
+	(assert (not first-index-block)) 
+	;; (debug-print "Skipping :split move" move)
+	(let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
+	      (move-instr (list split-index
+				(make-ssa-load :to (make-operand-place
+						    :operand (make-interval-storage to-interval))
+					       :from (make-operand-place
+						      :operand (make-interval-storage from-interval))))))
+	  (assert any-index-block)
+	  (push move-instr (ssa-block-spill-moves any-index-block)))))))
 
 (defun resolve-edge-moves (lambda-ssa alloc moves)
   (dolist (move moves)
@@ -3132,6 +3133,24 @@
 	      (ssa-block-succ-moves sblock))
       (block-merge-moves lambda-ssa sblock))))
 
+(defun lambda-merge-spill-moves (lambda-ssa)
+  (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+    (let ((new-insts nil)
+	  (spills (ssa-block-spill-moves sblock )))
+      (setf spills (sort spills #'< :key #'first))
+      (dolist (ir (ssa-block-ssa sblock))
+	(let ((index (ssa-form-index ir))
+	      (spill-index (first (first spills))))
+	  (when (and spill-index index ( = index spill-index))
+	    (dolist (move (second (first spills)))
+	      (push move new-insts))
+	    (setf spills (cdr spills)))
+	  (push ir new-insts)))
+      (setf (ssa-block-ssa sblock) (reverse new-insts)))))
+
+;;; This inserts moves as instructions without numner
+;;; we can't index instructions again because our allocation storage depends on instruction numbers
+;;; at the time allocation was done
 (defun resolve-data-flow (lambda-ssa alloc)
   (lambda-ssa-clear-data-moves lambda-ssa)
   ;; (alloc-delete-moves alloc) ;; this deletes moves from LINEAR-SCAN
@@ -3141,60 +3160,15 @@
   (resolve-lambda-moves-order lambda-ssa
 			      (make-operand-place :operand *tmp-reg*))
   (lambda-merge-edge-moves lambda-ssa)
+  (lambda-merge-spill-moves lambda-ssa)
   (fill-blocks-ordering lambda-ssa))
 
 (defun lambda-resolve-data-flow (lambda-ssa)
   (resolve-data-flow lambda-ssa (lambda-ssa-alloc lambda-ssa))
-  (lambda-ssa-fix-instruction-indexes lambda-ssa)
   (dolist (l (lambda-ssa-sub-lambdas lambda-ssa))
-    (lambda-resolve-data-flow (cdr l))
-    (lambda-ssa-fix-instruction-indexes lambda-ssa)
-    ))
-
+    (lambda-resolve-data-flow (cdr l))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defparameter *generate-graph-fun* nil)
-
-(defun generate-graph (ssa file)
-  (when *generate-graph-fun*
-    (funcall *generate-graph-fun* ssa file)))
-
-(defun make-lssa (exp &optional file (optimize-blocks t) (optimize-phis t))
-  (let ((*optimize-redundant-blocks* optimize-blocks)
-	(*optimize-redundant-phis* optimize-phis))
-    (let ((lssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp)))))
-      (when file
-	(generate-graph lssa file))
-      lssa)))
-
-(defun make-lssa-intervals (exp)
-  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
-	 (intervals (build-intervals lambda-ssa)))
-    (values lambda-ssa intervals)))
-
-(defun make-ssa-write-graph (exp &optional (optimize-blocks t) (optimize-phis t) (graph-name "default"))
-  (let ((lambda-ssa (make-lssa exp optimize-blocks optimize-phis)))
-    (generate-graph lambda-ssa graph-name)))
-
-(defun test-ssa (exp &optional (graph-name "default"))
-  #.*fun-optimize-level*
-  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
-	 (_ (generate-graph lambda-ssa graph-name))
-	 (intervals (build-intervals lambda-ssa))
-	 (alloc (linear-scan intervals)))
-    (declare (ignore _))
-    (resolve-data-flow lambda-ssa alloc)
-    (values lambda-ssa intervals alloc)))
-
-(defun make-optimized-and-not-optimized (exp)
-  (test-ssa exp "optimized")
-  (let ((*optimize-redundant-blocks* nil))
-    (test-ssa exp "not_optimized")))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defparameter *alignment* 16)
 
@@ -3507,6 +3481,111 @@
   (ql:quickload "clcomp")
   (load "/Users/milan/projects/clcomp.github/compiler/cldot.lisp"))
 
+;;; DEBUG STUFF
 
 (defun do-nodes (form)
   (clcomp::map-to-nodes (clcomp::clcomp-macroexpand form)))
+
+(defun debug-translate-block (sblock lambda-ssa alloc translator)
+  #.*fun-optimize-level*
+  (do* ((c (ssa-block-ssa sblock) (cdr c))
+	(ir (car c) (car c)))
+       ((null c))
+    (etypecase ir
+      (lambda-entry (translate-lambda-entry ir translator alloc sblock lambda-ssa))
+      (deallocate-function-frame
+       (emit-adjust-function-stack-frame translator alloc :add))
+      (ssa-function-epilogue (apply #'emit-ir-assembly translator alloc
+				    (clcomp::generate-function-epilogue)))
+      (arg-check
+       (translate-arg-check ir translator alloc sblock lambda-ssa))
+      (allocate-stack
+       (translate-allocate-stack ir translator alloc sblock lambda-ssa))
+      (deallocate-stack
+       (translate-deallocate-stack ir translator alloc sblock lambda-ssa))
+      (ssa-rest-listify (apply #'emit-ir-assembly translator alloc
+			       (clcomp::listify-code-generator (ssa-rest-listify-count ir))))
+      (ssa-load
+       (translate-load ir translator alloc sblock lambda-ssa ))
+      (ssa-mvb-bind
+       (translate-mvb-bind ir translator alloc sblock lambda-ssa))
+      (ssa-if
+       (translate-if ir translator alloc sblock lambda-ssa))
+      (ssa-go
+       (emit-ir-assembly translator alloc (make-inst :jump-fixup :jmp (ssa-go-label ir))))
+      (ssa-label
+       (emit-ir-assembly translator alloc (make-inst :label (ssa-label-label ir))))
+      (ssa-vop
+       (translate-vop ir translator alloc sblock lambda-ssa))
+      (ssa-unknown-values-fun-call 
+       (translate-fun-call ir translator alloc sblock lambda-ssa))
+      (ssa-unknown-return (apply #'emit-ir-assembly translator alloc
+				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (alloc-get-number-of-stack-slots alloc))))
+      (ssa-multiple-return
+       (translate-return ir translator alloc sblock lambda-ssa))
+      (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc
+				    (clcomp::maybe-mv-adjust-stack-generator)))
+      (ssa-embedded-instr (emit-ir-assembly translator alloc  (ssa-embedded-instr-instruction ir))))
+    (if (ssa-form-index ir)
+	(let ((instruction (ir2asm-translator-code translator)))
+	  (if (= 1 (length (ir2asm-translator-code translator)))
+	      (setf (car c)
+		    (list ir instruction))
+	      (setf (car c)
+		    (list ir nil)))
+	  (setf (ir2asm-translator-code translator) nil))
+	(list ir nil))))
+
+(defun debug-translate-to-asm (lambda-ssa alloc)
+  (let ((translator (make-ir2asm-translator)))
+    (dolist (sblock (lambda-ssa-blocks lambda-ssa))
+      (debug-translate-block sblock lambda-ssa alloc translator))
+    (setf (lambda-ssa-asm lambda-ssa)
+	  (ir2asm-translator-code translator))))
+
+(defun debug-lambda-translate-to-asm (lambda-ssa)
+  (debug-translate-to-asm lambda-ssa (lambda-ssa-alloc lambda-ssa))
+  (dolist (l (lambda-ssa-sub-lambdas lambda-ssa))
+    (lambda-translate-to-asm (cdr l))))
+
+
+#+nil
+(defun make-output-json (form &optional include-asm)
+  (let ((lambda-ssa (clcomp-compile nil form)))
+    (when include-asm
+      (debug-lambda-translate-to-asm lambda-ssa))
+    (clcomp.ssa-json::ssa-to-json lambda-ssa)))
+
+
+(defparameter *generate-graph-fun* nil)
+
+(defun generate-graph (ssa file)
+  (when *generate-graph-fun*
+    (funcall *generate-graph-fun* ssa file)))
+
+(defun make-lssa (exp &optional file (optimize-blocks t) (optimize-phis t))
+  (let ((*optimize-redundant-blocks* optimize-blocks)
+	(*optimize-redundant-phis* optimize-phis))
+    (let ((lssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp)))))
+      (when file
+	(generate-graph lssa file))
+      lssa)))
+
+(defun make-lssa-intervals (exp)
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
+	 (intervals (build-intervals lambda-ssa)))
+    (values lambda-ssa intervals)))
+
+(defun make-ssa-write-graph (exp &optional (optimize-blocks t) (optimize-phis t) (graph-name "default"))
+  (let ((lambda-ssa (make-lssa exp optimize-blocks optimize-phis)))
+    (generate-graph lambda-ssa graph-name)))
+
+(defun test-ssa (exp &optional (graph-name "default"))
+  #.*fun-optimize-level*
+  (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp))))
+	 (_ (generate-graph lambda-ssa graph-name))
+	 (intervals (build-intervals lambda-ssa))
+	 (alloc (linear-scan intervals)))
+    (declare (ignore _))
+    (resolve-data-flow lambda-ssa alloc)
+    (values lambda-ssa intervals alloc)))
