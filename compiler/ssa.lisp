@@ -47,7 +47,7 @@
 (defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa name blocks (delayed-blocks (make-hash-table)) intervals alloc
+(defstruct lambda-ssa name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals alloc
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
@@ -931,15 +931,13 @@
 	(incf i)))
     i))
 
-(defun contains-rest-arg (args)
-  (dolist (arg args)
-    (when (clcomp::lexical-binding-node-rest arg)
-      (return-from contains-rest-arg (get-minimum-number-of-args args)))))
-
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
   #.*fun-optimize-level*
-  (if (contains-rest-arg arguments)
+  (if (some (lambda (bn)
+	      (clcomp::lexical-binding-node-rest bn))
+	    arguments)
       (let ((min-args-count (get-minimum-number-of-args arguments)))
+	(setf (lambda-ssa-contains-rest-arg lambda-ssa) t)
 	(emit-ir (make-arg-check :min-arg-count min-args-count) block)
 	(emit-ir (make-ssa-rest-listify :count min-args-count) block))
       (emit-ir (make-arg-check :arg-count (length arguments)) block))
@@ -3211,20 +3209,23 @@
 			      (- index (length *fun-arguments-regs*))))
 			*stack-pointer-reg*))))
 
-(defun make-recv-arg-place (place)
+(defun make-recv-arg-place (place lambda-contains-rest)
   (let ((arg-reg-count (length *fun-arguments-regs*))
 	(index (+ 1 (rcv-argument-place-index place))))
     (if (> index arg-reg-count)
-	(make-stack-op (+ 16
-			  (* clcomp::*word-size*
-			     (- (rcv-argument-place-min-count place) index))))
+	(if lambda-contains-rest
+	    (@ *base-pointer-reg* *fun-number-of-ret-values-reg*
+				  clcomp::*word-size* (- (* clcomp::*word-size* (- index arg-reg-count 1))))
+	    (make-stack-op (+ 16
+			      (* clcomp::*word-size*
+				 (- (rcv-argument-place-min-count place) index)))))
 	(make-reg-op (nth (- index 1) *fun-arguments-regs*)))))
 
-(defun get-fixed-place-storage (place)
+(defun get-fixed-place-storage (place lambda-ssa)
   #.*fun-optimize-level*
   (etypecase place
     (argument-count-place (make-reg-op *fun-number-of-arguments-reg*))
-    (rcv-argument-place (make-recv-arg-place place))
+    (rcv-argument-place (make-recv-arg-place place (lambda-ssa-contains-rest-arg lambda-ssa)))
     (argument-place (get-fun-argument-storage place (argument-place-count place)))
     (return-value-place (make-return-value-storage place))
     (function-value-place (make-reg-op *fun-address-reg*))
@@ -3267,16 +3268,17 @@
 					       (make-stack-op (calculate-local-var-stack stack))))))))
     (error "Can't find storage for name")))
 
-(defun get-storage (alloc place index)
+(defun get-storage (slambda place index)
   #.*fun-optimize-level*
-  (etypecase place
-    (fixed-place (get-fixed-place-storage place))
-    (phi-place (let ((reduced (get-phi-place-reduced-value place)))
-                 (get-alloc-storage alloc (or reduced place) index)))
-    (virtual-place (get-alloc-storage alloc place index))
-    (immediate-constant (immediate-constant-constant place))
-    ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
-    (fixup (get-rip-location-storage place))))
+  (let ((alloc (lambda-ssa-alloc slambda)))
+    (etypecase place
+      (fixed-place (get-fixed-place-storage place slambda))
+      (phi-place (let ((reduced (get-phi-place-reduced-value place)))
+                   (get-alloc-storage alloc (or reduced place) index)))
+      (virtual-place (get-alloc-storage alloc place index))
+      (immediate-constant (immediate-constant-constant place))
+      ;; FIXME, fixup is wrong, check old  compiler for FIXUP format
+      (fixup (get-rip-location-storage place)))))
 
 (defun emit-ir-assembly (translator alloc &rest instructions)
   (declare (ignore alloc))
@@ -3338,10 +3340,10 @@
 		    (make-inst :ud2)))
 
 (defun translate-load (ir translator alloc sblock lambda-ssa)
-  (declare (ignore sblock lambda-ssa))
-  (let* ((to-storage (get-storage alloc (ssa-load-to ir) (ssa-form-index ir)))
+  (declare (ignore sblock))
+  (let* ((to-storage (get-storage lambda-ssa (ssa-load-to ir) (ssa-form-index ir)))
 	 (to-type (get-storage-type to-storage))
-	 (from-storage (get-storage alloc (ssa-load-from ir) (ssa-form-index ir)) )
+	 (from-storage (get-storage lambda-ssa (ssa-load-from ir) (ssa-form-index ir)) )
 	 (from-type (get-storage-type from-storage)))
     (if (and (eq to-type :memory)
 	     (eq from-type :memory))
@@ -3356,10 +3358,10 @@
 	(emit-ir-assembly translator alloc
 			  (make-inst :mov to-storage from-storage)))))
 
-(defun translate-mvb-bind (ir translator alloc sblock lambda-ssa)
-  (declare (ignore sblock lambda-ssa))
+(defun translate-mvb-bind (ir translator alloc sblock slambda)
+  (declare (ignore sblock))
   (let ((storages (mapcar (lambda (p)
-			    (get-storage  alloc  p (ssa-form-index ir)))
+			    (get-storage slambda  p (ssa-form-index ir)))
 			  (ssa-mvb-bind-places ir))))
     (when (position nil storages)
       (error "Can't find storage for MVB"))
@@ -3367,17 +3369,17 @@
 
 
 (defun translate-vop (ir translator alloc sblock lambda-ssa)
-  (declare (ignore sblock lambda-ssa))
+  (declare (ignore sblock))
   #.*fun-optimize-level*
   (let* ((ir-index (ssa-form-index ir))
 	 (name (ssa-vop-name ir))
 	 (args-storage (mapcar #'(lambda (p)
-				   (get-storage alloc p ir-index))
+				   (get-storage lambda-ssa p ir-index))
 			       (ssa-vop-args ir)))
 	 ;; FIXME, immediate as VOP arguments ?
 	 (args-types (mapcar #'get-storage-type args-storage))
 	 (ret-vals-storage (mapcar #'(lambda (p)
-				       (get-storage alloc p ir-index))
+				       (get-storage lambda-ssa p ir-index))
 				   (ssa-vop-return-values ir)))
 	 (ret-vals-types (mapcar #'get-storage-type ret-vals-storage))
 	 (vop (clcomp::find-vop name ret-vals-types args-types)))
@@ -3390,10 +3392,10 @@
 	(error "Unknown VOP"))))
 
 (defun translate-if (ir translator alloc sblock lambda-ssa)
-  (declare (ignore sblock lambda-ssa)
+  (declare (ignore sblock)
 	   (optimize (debug 3) (speed 0)))
   (let* ((test-place (ssa-if-test ir))
-	 (test-place-storage (get-storage alloc test-place (ssa-form-index ir)))
+	 (test-place-storage (get-storage lambda-ssa test-place (ssa-form-index ir)))
 	 (true-label (ssa-if-true-block-label ir))
 	 (false-label (ssa-if-false-block-label ir)))
     (declare (ignorable false-label))
@@ -3483,7 +3485,7 @@
 
 ;;; DEBUG STUFF
 
-(defun do-nodes (form)
+(defun make-nodes (form)
   (clcomp::map-to-nodes (clcomp::clcomp-macroexpand form)))
 
 (defun debug-translate-block (sblock lambda-ssa alloc translator)
@@ -3491,6 +3493,7 @@
   (do* ((c (ssa-block-ssa sblock) (cdr c))
 	(ir (car c) (car c)))
        ((null c))
+    (setf (ir2asm-translator-code translator) nil)
     (etypecase ir
       (lambda-entry (translate-lambda-entry ir translator alloc sblock lambda-ssa))
       (deallocate-function-frame
@@ -3532,8 +3535,7 @@
 	      (setf (car c)
 		    (list ir instruction))
 	      (setf (car c)
-		    (list ir nil)))
-	  (setf (ir2asm-translator-code translator) nil))
+		    (list ir nil))))
 	(list ir nil))))
 
 (defun debug-translate-to-asm (lambda-ssa alloc)
@@ -3548,14 +3550,17 @@
   (dolist (l (lambda-ssa-sub-lambdas lambda-ssa))
     (lambda-translate-to-asm (cdr l))))
 
-
 #+nil
-(defun make-output-json (form &optional include-asm)
+(defun generate-lambda-html (form &optional include-asm)
   (let ((lambda-ssa (clcomp-compile nil form)))
     (when include-asm
       (debug-lambda-translate-to-asm lambda-ssa))
-    (clcomp.ssa-json::ssa-to-json lambda-ssa)))
-
+    (clcomp.ssa-json::ssa-to-json lambda-ssa)
+    (uiop::run-program '("/Users/milan/python/lsp-bridge/bin/python3"
+			 "/Users/milan/projects/clcomp/ssa_viz.py"
+			 "/Users/milan/projects/clcomp/output/lambda.json"
+			 "/Users/milan/projects/clcomp/output/lambda.html")
+		       :output nil)))
 
 (defparameter *generate-graph-fun* nil)
 
