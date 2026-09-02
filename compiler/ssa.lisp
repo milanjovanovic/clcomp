@@ -255,11 +255,6 @@
 (defun lambda-ssa-find-header-index (lambda-ssa end-block-index)
   (cdr (assoc end-block-index (lambda-ssa-loop-end-blocks lambda-ssa))))
 
-(defun lambda-ssa-is-start-block-index (lambda-ssa index)
-  (dolist (b (lambda-ssa-blocks lambda-ssa))
-    (when (= index (ssa-block-first-index b))
-      (return-from lambda-ssa-is-start-block-index b))))
-
 (defun lambda-ssa-find-block-at-end-index (lambda-ssa index)
   (dolist (b (lambda-ssa-blocks lambda-ssa))
     (when (= index (+ 2 (ssa-block-last-index b)))
@@ -775,9 +770,12 @@
 
 (defun emit-vop-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
-  (let ((ret-vals (length (clcomp::vop-res (clcomp::get-vop (clcomp::vop-node-vop node)))))
-	(arguments (clcomp::vop-node-arguments node))
-	(args-places nil))
+  (let* ((vop (clcomp::get-vop (clcomp::vop-node-vop node)))
+	 (ret-vals (length (clcomp::vop-res vop)))
+	 (arguments (clcomp::vop-node-arguments node))
+	 (args-places nil))
+    ;; for now we only allow one return place
+    (assert (= 1 ret-vals))
     (dolist (arg arguments)
       (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
 	(if direct-place
@@ -807,7 +805,7 @@
 	  (t
 	   ;; FIXME, this is issue when caller of the VOP don't expect that VOP returns anything
 	   ;; we should have option when VOP doesn't require any return places, so side-effect only VOP
-	   (assert (= 1 ret-vals))
+
 	   (emit-ir (make-ssa-vop :name (clcomp::vop-node-vop node)
 				  :return-values (generate-return-places ret-vals)
 				  :args args-places)
@@ -2960,15 +2958,13 @@
     (let* ((from-interval (alloc-get-interval alloc (getf move :from-interval)))
 	   (to-interval (alloc-get-interval  alloc(getf move :to-interval))))
       (assert (and from-interval to-interval))
-      (let* ((split-index (getf move :split-index))
-	     (first-index-block (lambda-ssa-is-start-block-index lambda-ssa split-index)))
+      (let* ((split-index (getf move :split-index)))
 	;; We can have move duplicate between :split and :edge move
 	;; If it's :split move at exact block boundary (last_block_index+2)
 	;; then we also emmited same :edge move
 	;; skipping duplicate move
 	;; FIXME, not sure about this
 	;; Can we have spill at first instruction of block ?
-	(assert (not first-index-block)) 
 	;; (debug-print "Skipping :split move" move)
 	(let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
 	      (move-instr (list split-index
@@ -3214,6 +3210,10 @@
 	(index (+ 1 (rcv-argument-place-index place))))
     (if (> index arg-reg-count)
 	(if lambda-contains-rest
+	    ;; NOTE, this is only valid with RCX after SSA-REST-LISTIFY instruction
+	    ;; later in function body when RCX changes after first fun call this will be invalid
+	    ;; this is important if we do some registe optimisation later
+	    ;; FIXME, check what SSA-REST-LISTIFY does with RCX
 	    (@ *base-pointer-reg* *fun-number-of-ret-values-reg*
 				  clcomp::*word-size* (- (* clcomp::*word-size* (- index arg-reg-count 1))))
 	    (make-stack-op (+ 16
@@ -3368,28 +3368,85 @@
     (apply #'emit-ir-assembly translator alloc (clcomp::multiple-value-bind-generator storages))))
 
 
+;;; FIXME, implement VOP storage stuff in reg allocator (when vop ret/args requirements doesn't match to current variables)
 (defun translate-vop (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock))
   #.*fun-optimize-level*
-  (let* ((ir-index (ssa-form-index ir))
-	 (name (ssa-vop-name ir))
-	 (args-storage (mapcar #'(lambda (p)
-				   (get-storage lambda-ssa p ir-index))
-			       (ssa-vop-args ir)))
-	 ;; FIXME, immediate as VOP arguments ?
-	 (args-types (mapcar #'get-storage-type args-storage))
-	 (ret-vals-storage (mapcar #'(lambda (p)
-				       (get-storage lambda-ssa p ir-index))
-				   (ssa-vop-return-values ir)))
-	 (ret-vals-types (mapcar #'get-storage-type ret-vals-storage))
-	 (vop (clcomp::find-vop name ret-vals-types args-types)))
-    (if vop
-	(apply #'emit-ir-assembly translator alloc
-	       (clcomp::get-vop-code vop
-				     (append ret-vals-storage args-storage
-					     (list (make-stack-op
-						    (calculate-local-var-stack (alloc-stack-index alloc))))) ))
-	(error "Unknown VOP"))))
+  (flet ((storage-type-match (s1 s2)
+	   (or (equal s1 s2)
+	       (and (or (equal s1 :stack)
+			(equal s1 :memory))
+		    (or (equal s2 :stack)
+			(equal s2 :memory))))))
+    (let* ((ir-index (ssa-form-index ir))
+	   (name (ssa-vop-name ir))
+	   (args-storage (mapcar #'(lambda (p)
+				     (get-storage lambda-ssa p ir-index))
+				 (ssa-vop-args ir)))
+	   (ret-vals-storage (mapcar #'(lambda (p)
+					 (get-storage lambda-ssa p ir-index))
+				     (ssa-vop-return-values ir)))
+	   (vop (clcomp::get-vop name))
+	   (vop-ret-types (clcomp::get-res-types vop))
+	   (vop-args-types (clcomp::get-args-types vop))
+	   ;; for now we will use argument/return passing registers
+	   (available-regs *fun-arguments-regs*)
+	   (final-ret-storages nil)
+	   (final-args-storage nil)
+	   (ret-storage-moves nil))
+      (assert (= (length args-storage) (length vop-args-types)))
+      (assert (= (length ret-vals-storage) (length vop-ret-types)))
+      ;; not smart but fastest way to do this for now
+      ;; return values (currently we can have only one)
+      (do ((vrts vop-ret-types (cdr vrts))
+	   (irs ret-vals-storage (cdr irs)))
+	  ((null vrts))
+	(let* ((vrt (first vrts))
+	       (ir (first irs))
+	       (irt (get-storage-type ir)))
+	  (if (storage-type-match vrt irt)
+	      (push ir final-ret-storages)
+	      (progn
+		(assert available-regs)
+		;; for now we only have cases like this
+		(assert (and (eq :memory irt)
+			     (eq :register vrt)))
+		(emit-ir-assembly translator alloc
+				  (make-inst :mov (first available-regs) ir))
+		(push (make-inst :mov ir (first available-regs)) ret-storage-moves)
+		(push (first available-regs) final-ret-storages)
+		(setf available-regs (cdr available-regs))))))
+      ;; same as above for arguments
+      ;; we will throw error if we don't have as many reserve registers as we need
+      ;; TODO, spill some if needed
+      (do ((vats vop-args-types (cdr vats))
+	   (ias args-storage (cdr ias)))
+	  ((null vats))
+	(let* ((vat (first vats))
+	       (ia (first ias))
+	       (iat (get-storage-type ia)))
+	  (if (storage-type-match vat iat)
+	      (push ia final-args-storage)
+	      (progn
+		(assert available-regs)
+		;; for now we only have cases like this
+		(assert (and (eq :memory iat)
+			     (eq :register vat)))
+		(emit-ir-assembly translator alloc
+				  (make-inst :mov (first available-regs) ia))
+		(push (first available-regs) final-args-storage)
+		(setf available-regs (cdr available-regs))))))
+      (if vop
+	  (progn
+	    (apply #'emit-ir-assembly translator alloc
+		   (clcomp::get-vop-code vop
+					 (append final-ret-storages final-args-storage
+						 (list (make-stack-op
+							(calculate-local-var-stack (alloc-stack-index alloc))))) ))
+	    (when ret-storage-moves
+	      (dolist (inst (reverse ret-storage-moves))
+		(emit-ir-assembly translator alloc inst))))
+	  (error "Unknown VOP")))))
 
 (defun translate-if (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock)

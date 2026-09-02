@@ -32,6 +32,9 @@
 (defun get-res-type (vop)
   (second (vop-res vop)))
 
+(defun get-res-types (vop)
+  (mapcar #'second (vop-res vop)))
+
 
 (defun generate-alias-proof-vop-body (body arguments res)
   `(let ,(loop for arg in arguments
