@@ -289,8 +289,10 @@
 ;;; looks bloated
 ;;; anyway, we can optimize  most of leaf function calls to tail calls
 ;;; FIXME, extract this to assembly stub, emiting this at every tail call is stupid, it will increase binary
-(defun maybe-copy-mv-stack-frame-and-return-generator (function-frame-size)
+(defun maybe-copy-mv-stack-frame-and-return-generator (stack-slots)
   (let* ((*segment-instructions* nil)
+	 (aligned-stack-slots (evenp (+ stack-slots (length *preserved-regs*))))
+	 (stack-slots (if aligned-stack-slots stack-slots (1+ stack-slots)))
 	 (copy-loop (make-vop-label "stack-copy-loop-"))
 	 (skip-copy-loop (make-vop-label "skip-copy-loop-"))
 	 (skip-alignment (make-vop-label "skip-alignment-") )
@@ -301,8 +303,8 @@
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
     (inst :jump-fixup :jg copy-to-caller-frame)
 
-    (when (> function-frame-size 0 )
-      (inst :add *stack-pointer-reg* (* function-frame-size *word-size*)))
+    (when (> stack-slots 0 )
+      (inst :add *stack-pointer-reg* (* stack-slots *word-size*)))
 
     (add-instructions (generate-function-epilogue))
 

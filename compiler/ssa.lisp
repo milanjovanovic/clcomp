@@ -3590,7 +3590,7 @@
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
       (ssa-unknown-return (apply #'emit-ir-assembly translator alloc
-				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (calculate-full-function-frame-size alloc))))
+				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (alloc-get-number-of-stack-slots alloc))))
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa))
       (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc
