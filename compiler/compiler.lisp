@@ -784,7 +784,7 @@
 
 
 (defstruct rip-location rip byte-offset)
-(defstruct compile-component id code prefix-code start code-size subcomps rips rip-offsets byte-code)
+(defstruct compile-component id form code prefix-code start code-size subcomps rips rip-offsets byte-code)
 (defstruct compilation-unit name compile-component start fixups code main-offset eval-at-load)
 
 (defun get-compilation-unit-code-size (compilation-unit)
@@ -1010,6 +1010,7 @@
 ;;     (maybe-rt-%defun name assembled-compile-unit)
 ;;     assembled-compile-unit))
 
+#+nil
 (defun clcomp-compile (name exp &key (eval-at-load nil))
   (declare (optimize debug))
   (let* ((compilation-unit (clcomp.translator::translate-to-compilation-unit (clcomp.ssa::clcomp-compile name exp)))

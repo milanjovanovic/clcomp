@@ -47,7 +47,7 @@
 (defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals alloc
+(defstruct lambda-ssa form name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals alloc
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
@@ -3186,6 +3186,17 @@
 (defun make-inst (&rest inst)
   inst)
 
+(defun calculate-full-function-frame-size (alloc)
+  (let* ((full-stack-slots (+ (alloc-get-number-of-stack-slots alloc)
+			      (length *preserved-regs*)
+			      ;; 1 for RBP
+			      1))
+	 (aligned (oddp full-stack-slots)))
+    ;; If it's even then it's not aligned, it should be odd because we still have RIP on the stack
+    (if aligned
+	full-stack-slots
+	(1+ full-stack-slots))))
+
 (defun get-fun-argument-storage (argument-place arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*))
 	(place-index (+ 1 (argument-place-index argument-place))))
@@ -3429,9 +3440,6 @@
 	      (push ia final-args-storage)
 	      (progn
 		(assert available-regs)
-		;; for now we only have cases like this
-		(assert (and (eq :memory iat)
-			     (eq :register vat)))
 		(emit-ir-assembly translator alloc
 				  (make-inst :mov (first available-regs) ia))
 		(push (first available-regs) final-args-storage)
@@ -3440,9 +3448,10 @@
 	  (progn
 	    (apply #'emit-ir-assembly translator alloc
 		   (clcomp::get-vop-code vop
-					 (append final-ret-storages final-args-storage
+					 (append (reverse final-ret-storages) (reverse final-args-storage)
 						 (list (make-stack-op
-							(calculate-local-var-stack (alloc-stack-index alloc))))) ))
+							;; FIXME (alloc-get-number-of-stack-slots alloc) is this good ?
+							(calculate-local-var-stack (alloc-get-number-of-stack-slots alloc))))) ))
 	    (when ret-storage-moves
 	      (dolist (inst (reverse ret-storage-moves))
 		(emit-ir-assembly translator alloc inst))))
@@ -3517,6 +3526,7 @@
 (defun clcomp-compile (name exp)
   #.*fun-optimize-level*
   (let* ((lambda-ssa (lambda-construct-ssa (clcomp::map-to-nodes (clcomp::clcomp-macroexpand exp)))))
+    (setf (lambda-ssa-form lambda-ssa) (list name exp))
     (lambda-build-intervals lambda-ssa)
     (lambda-linear-scan lambda-ssa)
     (lambda-resolve-data-flow lambda-ssa)
@@ -3580,7 +3590,7 @@
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
       (ssa-unknown-return (apply #'emit-ir-assembly translator alloc
-				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (alloc-get-number-of-stack-slots alloc))))
+				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (calculate-full-function-frame-size alloc))))
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa))
       (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc

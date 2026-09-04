@@ -290,11 +290,11 @@
 ;;; anyway, we can optimize  most of leaf function calls to tail calls
 ;;; FIXME, extract this to assembly stub, emiting this at every tail call is stupid, it will increase binary
 (defun maybe-copy-mv-stack-frame-and-return-generator (function-frame-size)
-  (let ((*segment-instructions* nil)
-	(copy-loop (make-vop-label "stack-copy-loop-"))
-	(skip-copy-loop (make-vop-label "skip-copy-loop-"))
-	(skip-alignment (make-vop-label "skip-alignment-") )
-	(copy-to-caller-frame (make-vop-label "copy-to-caller-frame")))
+  (let* ((*segment-instructions* nil)
+	 (copy-loop (make-vop-label "stack-copy-loop-"))
+	 (skip-copy-loop (make-vop-label "skip-copy-loop-"))
+	 (skip-alignment (make-vop-label "skip-alignment-") )
+	 (copy-to-caller-frame (make-vop-label "copy-to-caller-frame")))
 
     ;; check if we have extra values on stack
     (inst :mov *tmp-reg* *fun-number-of-arguments-reg*)

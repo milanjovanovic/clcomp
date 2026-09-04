@@ -24,7 +24,8 @@
   (clcomp::make-compile-component
    :code (clcomp.ssa::lambda-ssa-asm lambda-ssa)
    :rips (mapcar #'translate-fixup (clcomp.ssa::lambda-ssa-fixups lambda-ssa))
-   :subcomps (mapcar #'translate-subcomp (clcomp.ssa::lambda-ssa-sub-lambdas lambda-ssa))))
+   :subcomps (mapcar #'translate-subcomp (clcomp.ssa::lambda-ssa-sub-lambdas lambda-ssa))
+   :form (clcomp.ssa::lambda-ssa-form lambda-ssa)))
 
 (defun translate-to-compilation-unit (lambda-ssa)
   (clcomp::make-compilation-unit :compile-component
