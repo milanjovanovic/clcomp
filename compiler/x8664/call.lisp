@@ -291,8 +291,8 @@
 ;;; FIXME, extract this to assembly stub, emiting this at every tail call is stupid, it will increase binary
 (defun maybe-copy-mv-stack-frame-and-return-generator (stack-slots)
   (let* ((*segment-instructions* nil)
-	 (aligned-stack-slots (evenp (+ stack-slots (length *preserved-regs*))))
-	 (stack-slots (if aligned-stack-slots stack-slots (1+ stack-slots)))
+	 (is-aligned (evenp (+ stack-slots (length *preserved-regs*))))
+	 (aligned-stack-slots (if is-aligned stack-slots (1+ stack-slots)))
 	 (copy-loop (make-vop-label "stack-copy-loop-"))
 	 (skip-copy-loop (make-vop-label "skip-copy-loop-"))
 	 (skip-alignment (make-vop-label "skip-alignment-") )
@@ -303,8 +303,8 @@
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
     (inst :jump-fixup :jg copy-to-caller-frame)
 
-    (when (> stack-slots 0 )
-      (inst :add *stack-pointer-reg* (* stack-slots *word-size*)))
+    (when (> stack-slots 0)
+      (inst :add *stack-pointer-reg* (* aligned-stack-slots *word-size*)))
 
     (add-instructions (generate-function-epilogue))
 

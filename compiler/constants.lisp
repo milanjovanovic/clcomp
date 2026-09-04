@@ -11,7 +11,8 @@
 (defparameter *scratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
 (defparameter *tmp-reg-2* :R11)
-(defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI))
+;;; NOTE. keep *preserved-regs* always at even number, stack alignment
+(defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI :RSI))
 (defparameter *heap-header-reg* :R15)
 
 
