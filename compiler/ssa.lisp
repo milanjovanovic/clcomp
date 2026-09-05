@@ -441,7 +441,7 @@
     (if (typep first-instr 'ssa-label)
 	(setf (ssa-block-ssa ssa-block)
 	      (cons first-instr (append instructions
-					(ssa-block-ssa ssa-block) )))
+					(cdr (ssa-block-ssa ssa-block)) )))
 	(setf (ssa-block-ssa ssa-block)
 	      (append instructions
 		      (ssa-block-ssa ssa-block) )))))
@@ -1889,15 +1889,18 @@
 	     (ssa-block-index to-block)))
   (let ((new-block (make-new-ssa-block lambda-ssa))
 	(if-instr (ssa-block-last-instruction from-block))
-	(new-block-label (generate-label-for-string "PHI-COND-BLOCK-MOVES-"))
+	(new-block-label (generate-label-for-string "PHI-COND-BLOCK-MOVES"))
 	(cond-jump-index (ssa-block-cond-jump from-block)))
     (assert (= cond-jump-index (ssa-block-index to-block)))
     (assert (typep if-instr 'ssa-if))
     ;; initialize new block
-    (label-ssa-block new-block new-block-label)
+    (setf (ssa-block-label new-block) new-block-label)
+    (ssa-block-add-instruction-to-start new-block (list
+						   (make-ssa-label :label new-block-label)))
     (setf (ssa-block-cond-jump new-block) cond-jump-index)
     (setf (ssa-block-predecessors new-block) (list (ssa-block-index from-block)))
-    (emit-ir (make-ssa-go :label (ssa-if-true-block-label if-instr)) new-block)
+    (ssa-block-add-instruction-to-end new-block (list
+						 (make-ssa-go :label (ssa-if-true-block-label if-instr))))
     ;; fix SSA-IF label and COND-JUMP index for FROM-BLOCK
     (setf (ssa-if-true-block-label if-instr) new-block-label)
     (setf (ssa-block-cond-jump from-block) (ssa-block-index new-block))
@@ -1933,15 +1936,17 @@
 			    (ssa-block-predecessors succ-block))))
 	(let* ((jump-index (ssa-block-uncond-jump from-block))
 	       (jump-block (ssa-find-block-by-index lambda-ssa jump-index))
-	       (new-block-label (generate-label-for-string "PHI-UNCOND-MOVE-"))
+	       (new-block-label (generate-label-for-string "PHI-UNCOND-MOVE"))
 	       (if-instr (ssa-block-last-instruction from-block)))
 	  (assert (typep if-instr 'ssa-if))
 	  ;; initialize  new block
-	  (label-ssa-block new-block new-block-label)
+	  (setf (ssa-block-label new-block) new-block-label)
+	  (ssa-block-add-instruction-to-start new-block (list
+							 (make-ssa-label :label new-block-label)))
 	  (setf (ssa-block-uncond-jump new-block) jump-index)
 	  (setf (ssa-block-predecessors new-block) (list (ssa-block-index from-block)))
 	  (assert (ssa-block-label jump-block))
-	  (emit-ir (make-ssa-go :label (ssa-block-label jump-block)) new-block)
+	  (ssa-block-add-instruction-to-end new-block (list (make-ssa-go :label (ssa-block-label jump-block))))
 	  ;; fix FROM-BLOCK
 	  (setf (ssa-if-false-block-label if-instr) new-block-label)
 	  (setf (ssa-block-uncond-jump from-block) (ssa-block-index new-block))
@@ -3468,8 +3473,9 @@
     (emit-ir-assembly translator alloc
 		      (make-inst :cmp test-place-storage clcomp::*nil*)
 		      (make-inst :jump-fixup :jne true-label))
-    (when (ssa-if-false-block-label ir)
-      (make-inst :jump-fixup :jne false-label))))
+    (when false-label
+      (emit-ir-assembly translator alloc
+			(make-inst :jump-fixup :jmp false-label)) )))
 
 (defun translate-block (sblock lambda-ssa alloc translator)
   #.*fun-optimize-level*
