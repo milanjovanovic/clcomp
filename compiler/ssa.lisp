@@ -942,6 +942,8 @@
   (let ((min-args-count (get-minimum-number-of-args arguments))
 	(index 0))
     (dolist (argument arguments)
+      (when (clcomp::lexical-binding-node-rest argument)
+	(return))
       (etypecase argument
 	(clcomp::lexical-binding-node
 	 (emit-ir (if (clcomp::lexical-binding-node-closed-over argument)
@@ -3231,7 +3233,7 @@
 	    ;; this is important if we do some registe optimisation later
 	    ;; FIXME, check what SSA-REST-LISTIFY does with RCX
 	    (@ *base-pointer-reg* *fun-number-of-ret-values-reg*
-				  clcomp::*word-size* (- (* clcomp::*word-size* (- index arg-reg-count 1))))
+				  nil (- (* clcomp::*word-size* (- index arg-reg-count 1))))
 	    (make-stack-op (+ 16
 			      (* clcomp::*word-size*
 				 (- (rcv-argument-place-min-count place) index)))))
