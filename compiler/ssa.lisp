@@ -942,7 +942,8 @@
   (let ((min-args-count (get-minimum-number-of-args arguments))
 	(index 0))
     (dolist (argument arguments)
-      (when (clcomp::lexical-binding-node-rest argument)
+      (when (and (clcomp::lexical-binding-node-rest argument)
+		 (> index 0))
 	(return))
       (etypecase argument
 	(clcomp::lexical-binding-node
