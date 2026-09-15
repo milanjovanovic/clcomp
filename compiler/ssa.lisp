@@ -2966,13 +2966,7 @@
 	   (to-interval (alloc-get-interval  alloc(getf move :to-interval))))
       (assert (and from-interval to-interval))
       (let* ((split-index (getf move :split-index)))
-	;; We can have move duplicate between :split and :edge move
-	;; If it's :split move at exact block boundary (last_block_index+2)
-	;; then we also emmited same :edge move
-	;; skipping duplicate move
-	;; FIXME, not sure about this
-	;; Can we have spill at first instruction of block ?
-	;; (debug-print "Skipping :split move" move)
+
 	(let ((any-index-block (lambda-ssa-find-block-at-index lambda-ssa split-index))
 	      (move-instr (list split-index
 				(make-ssa-load :to (make-operand-place
@@ -2980,7 +2974,13 @@
 					       :from (make-operand-place
 						      :operand (make-interval-storage from-interval))))))
 	  (assert any-index-block)
-	  (push move-instr (ssa-block-spill-moves any-index-block)))))))
+	  (if (= split-index (ssa-block-first-index any-index-block))
+	      ;; We can have move duplicate between :split and :edge move
+	      ;; If it's :split move at exact block boundary (last_block_index+2)
+	      ;; then we also emmited same :edge move
+	      ;; issue that we do not compute moves with :edge and :split (spill) moves together
+	      (debug-print "Skipping :split move" move)
+	      (push move-instr (ssa-block-spill-moves any-index-block))))))))
 
 (defun resolve-edge-moves (lambda-ssa alloc moves)
   (dolist (move moves)
