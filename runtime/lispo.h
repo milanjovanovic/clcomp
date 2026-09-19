@@ -46,14 +46,14 @@ struct array {
   lispobj size;
   lispobj type;
   lispobj etype;
-  lispobj elements;
+  lispobj elements[1];
 };
 
 struct structure {
   lispobj tag;
   lispobj layoyt;
   lispobj struct_type;
-  lispobj elements;
+  lispobj elements[1];
 };
 
 struct symbol {

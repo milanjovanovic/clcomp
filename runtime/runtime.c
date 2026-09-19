@@ -181,14 +181,11 @@ void print_lisp_string(lispobj obj, int quote) {
   lispobj size = ar->size;
   int64_t array_size = untag_fixnum(size);
 
-  lispobj *first = &ar->elements;
-
   if (quote)
     printf("\"");
 
   for (long index = 0; index < array_size; index++) {
-    printf("%c", untag_char(*(first + index)));
-    //    print_lisp(*(first + index));
+    printf("%c", untag_char(ar->elements[index]));
   }
   
   if (quote)
@@ -201,12 +198,10 @@ void print_lisp_array(lispobj obj) {
    lispobj size = ar->size;
    int64_t array_size = untag_fixnum(size);
 
-   lispobj *first = &ar->elements;
-
    printf("#(");
 
    for (long index = 0; index < array_size; index++) {
-     print_lisp(*(first + index));
+     print_lisp(ar->elements[index]);
      if (index + 1 < array_size)
        printf(" ");
    }
