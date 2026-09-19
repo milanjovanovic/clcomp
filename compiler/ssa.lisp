@@ -47,11 +47,12 @@
 (defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa form name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals alloc
+(defstruct lambda-ssa id form name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals alloc
   asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
-  (redundant-phis (make-hash-table :test #'equalp)) (nodes-id-var-cache (make-hash-table :test #'eql)))
+  (redundant-phis (make-hash-table :test #'equalp)) (nodes-id-var-cache (make-hash-table :test #'eql))
+  env-place)
 
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump
   predecessors is-loop-end is-header (branch-to-count 0) sealed processed label
@@ -123,15 +124,20 @@
       last))
 
 (defun create-or-get-cached-var-place (node lambda-ssa &optional error-if-not-cached)
+  #.*fun-optimize-level*
   (let* ((id (clcomp::tnode-id node))
 	 (cached-place (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa))))
-    (if cached-place
-	cached-place
-	(if error-if-not-cached
-	    (error "Can't find cached var place")
-	    (let ((place (make-var-place :name (clcomp::get-lexical-variable-name node))))
-	      (setf (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa)) place)
-	      place)))))
+    (assert (typep node 'clcomp::lexical-var-node ))
+    (if (= (lambda-ssa-id lambda-ssa)
+	   (clcomp::lexical-var-node-lambda-id node))
+	(or cached-place
+	    (if error-if-not-cached
+		(error "Can't find cached var place")
+		(let ((place (make-var-place :name (clcomp::get-lexical-variable-name node))))
+		  (setf (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa)) place)
+		  place)))
+	;; closed over variable
+	(break))))
 
 ;;; because of REDUCED in PHI-PLACE we need custom NAMED-PLACE-NAME function
 (defun get-place-name (place)
@@ -948,9 +954,11 @@
       (etypecase argument
 	(clcomp::lexical-binding-node
 	 (emit-ir (if (clcomp::lexical-binding-node-closed-over argument)
-		      (error "not implemented yet")
-		      ;; (make-ssa-box-and-load :to (make-var-place :name (clcomp::get-lexical-variable-name (clcomp::lexical-binding-node-bin-node argument)))
-		      ;; 		     :from (make-rcv-argument-place :index index))
+		      (make-ssa-vop :name 'make-bcell
+				    :return-values (list (create-or-get-cached-var-place
+							  (clcomp::lexical-binding-node-bin-node argument)
+							  lambda-ssa))
+				    :args (list (make-rcv-argument-place :index index :min-count min-args-count)))
 		      (make-ssa-load :to (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node argument)
 									 lambda-ssa)
 				     :from (make-rcv-argument-place :index index :min-count min-args-count)))
@@ -984,8 +992,6 @@
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa (clcomp::load-time-value-node-node node)) fixup))
       (clcomp::lambda-node
-       (when (> (length (clcomp::lambda-node-closed-over-vars node)) 0)
-	 (error "Closure detected, still not implemented "))
        (add-sub-lambda lambda-ssa
 		       (lambda-construct-ssa node (lambda-ssa-env lambda-ssa)) fixup))
       ((or clcomp::compile-time-bootstrap-constant-node
@@ -1986,11 +1992,19 @@
 	 (*error-on-ir-touch* nil)
 	 (*error-on-ssa-touch* t)
 	 (lambda-ssa (make-lambda-ssa :env (or ssa-env
-					       (make-ssa-env))))
+					       (make-ssa-env))
+				      :id (clcomp::lambda-node-id lambda-node)))
 	 (entry-block (make-new-ssa-block lambda-ssa)))
     (ssa-add-block lambda-ssa entry-block)
     (emit-ir (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) lambda-ssa entry-block)
+    (when (clcomp::lambda-node-closed-over-vars lambda-node)
+      (let* ((env-name (gensym "CLOSURE-ENV-"))
+	     (env-place (make-virtual-place  :name env-name :variable env-name)))
+	(emit-ir (make-ssa-load :to env-place
+    				:from (make-operand-place :operand clcomp::*closure-env-reg*))
+		 entry-block)
+	(setf (lambda-ssa-env-place lambda-ssa) env-place)))
     (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)

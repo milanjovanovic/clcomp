@@ -15,6 +15,8 @@
 (defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI :RSI))
 (defparameter *heap-header-reg* :R15)
 
+(defparameter *closure-env-reg* :RBX)
+
 
 (defparameter *allocation-size* 8)
 (defparameter *word-size* 8)
@@ -68,3 +70,11 @@
 (defun characterize (char)
   (let ((code (char-code char)))
     (+ (ash code *tag-size*) *char-tag*)))
+
+
+;;; how to encode heap allocated objects
+;;; use the same tagging scheme for heap allocated objets
+;;; so for single-floats, chars, fixnums it's just one qword-heap-allocated objet
+;;; copy to heap is just one mov [ptr], value
+;;; if heap allocated object first qword has *pointer-tag* then we look at header qword as only type
+;;; this complex types need to have 3 lower bits as *pointer-tag*

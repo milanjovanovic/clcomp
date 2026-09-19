@@ -124,6 +124,13 @@
     (when (cenv-current-lambda cenv)
       (return (cenv-current-lambda cenv)))))
 
+(defun get-parent-lambda-node (environment)
+  (let ((current nil))
+    (dolist (cenv environment)
+      (if (and current (cenv-current-lambda cenv))
+	  (return (cenv-current-lambda cenv))
+	  (setf current t)))))
+
 ;; FIXME - slow
 (defun fun-inlined-p (environment fun)
   (dolist (cenv environment)
@@ -180,8 +187,8 @@
 (defun get-lambda-new-bindings (lambda-list)
   (filter lambda-list '&compiler-rest))
 
-
 (defun create-lambda-node (form environment)
+  (declare (optimize debug))
   (let* ((declarations (parse-declarations (third form)))
 	 (lambda-node (make-lambda-node)))
     (setf (lambda-node-declarations lambda-node) declarations)
@@ -192,6 +199,17 @@
 			      environment)))
       (setf (lambda-node-arguments lambda-node) argument-nodes)
       (setf (lambda-node-body lambda-node)  (create-node (fourth form) environment))
+      ;; process captured variables in a case of closure
+      ;; maybe we need to propagate it up the call chain
+      (when (lambda-node-closed-over-vars lambda-node)
+	(let ((parent-lambda (get-parent-lambda-node environment)))
+	  (assert parent-lambda)
+	  (dolist (var (lambda-node-closed-over-vars lambda-node))
+	    (print (list 'var var 'equal (= (lexical-var-node-lambda-id var)
+					    (lambda-node-id parent-lambda))))
+	    (unless (= (lexical-var-node-lambda-id var)
+		       (lambda-node-id parent-lambda))
+	      (pushnew var (lambda-node-closed-over-vars parent-lambda))))))
       lambda-node)))
 
 (defun create-if-node (form environment)
