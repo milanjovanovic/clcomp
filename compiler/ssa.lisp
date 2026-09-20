@@ -52,7 +52,7 @@
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
   (redundant-phis (make-hash-table :test #'equalp)) (nodes-id-var-cache (make-hash-table :test #'eql))
-  env-place)
+  env-place closed-over-vars)
 
 (defstruct ssa-block index order ir ir-last-cons ssa succ cond-jump uncond-jump
   predecessors is-loop-end is-header (branch-to-count 0) sealed processed label
@@ -102,6 +102,7 @@
 
 (defstruct (ssa-mvb-bind (:include ssa-form-rw)) places)
 
+;; closures support
 
 (defparameter *break-block* -1)
 
@@ -123,7 +124,7 @@
 	    last))
       last))
 
-(defun create-or-get-cached-var-place (node lambda-ssa &optional error-if-not-cached)
+(defun create-or-get-cached-var-place (node lambda-ssa block &optional error-if-not-cached)
   #.*fun-optimize-level*
   (let* ((id (clcomp::tnode-id node))
 	 (cached-place (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa))))
@@ -137,7 +138,14 @@
 		  (setf (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa)) place)
 		  place)))
 	;; closed over variable
-	(break))))
+	(let* ((place (generate-virtual-place "CAPTURED-VAR-"))
+	       (env-index (position node (lambda-ssa-closed-over-vars lambda-ssa))))
+	  (assert (and (lambda-ssa-env-place lambda-ssa) env-index))
+	  ;; we don't need cache here, this is just once time usage  of PLACE
+	  (emit-ir (make-ssa-vop :name 'clcomp::get-from-closure-env :return-values (list place)
+				 :args (list (lambda-ssa-env-place lambda-ssa) (make-immediate-constant :constant env-index)))
+		   block)
+	  place))))
 
 ;;; because of REDUCED in PHI-PLACE we need custom NAMED-PLACE-NAME function
 (defun get-place-name (place)
@@ -678,7 +686,7 @@
      block)
     (clcomp::lexical-var-node
      (emit-ir (make-ssa-load :to place
-    			     :from (create-or-get-cached-var-place node lambda-ssa t))
+    			     :from (create-or-get-cached-var-place node lambda-ssa block t))
 	      block)
      (when leaf
        (emit-single-return-sequence place block))
@@ -688,10 +696,10 @@
     (t (emit-ssa node lambda-ssa leaf place block))))
 
 ;;; FIXME, there is more here
-(defun make-direct-place-or-nil (node lambda-ssa)
+(defun make-direct-place-or-nil (node lambda-ssa block)
   (etypecase node
     (clcomp::immediate-constant-node (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
-    (clcomp::lexical-var-node (create-or-get-cached-var-place node lambda-ssa t))
+    (clcomp::lexical-var-node (create-or-get-cached-var-place node lambda-ssa block t))
     (t nil)))
 
 ;;; If forms is not direct place create new and emit all forms
@@ -701,7 +709,7 @@
 	(stack-allocation (> (length forms)
 			     (length *fun-arguments-regs*))))
     (dolist (form forms)
-      (let ((direct-place (make-direct-place-or-nil form lambda-ssa)))
+      (let ((direct-place (make-direct-place-or-nil form lambda-ssa block)))
 	(if direct-place
 	    (progn
 	      (when (and stack-allocation (var-place-p direct-place))
@@ -729,7 +737,7 @@
 			      (1+ arg-diff)))
 	 (args-places nil))
     (dolist (arg arguments)
-      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
+      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa block)))
 	(if direct-place
 	    (push direct-place args-places)
 	    (let* ((place (generate-virtual-place))
@@ -783,7 +791,7 @@
     ;; for now we only allow one return place
     (assert (= 1 ret-vals))
     (dolist (arg arguments)
-      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
+      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa block)))
 	(if direct-place
 	    (push direct-place args-places)
 	    (let* ((place (generate-virtual-place))
@@ -820,12 +828,23 @@
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
   (declare (ignore leaf))
-  (let ((form (clcomp::lexical-binding-node-form node)))
+  #.*fun-optimize-level*
+  (let* ((form (clcomp::lexical-binding-node-form node))
+	 (var-place (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node node) lambda-ssa block)))
     (maybe-emit-direct-load form lambda-ssa nil
-			    (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node node) lambda-ssa)
-			    block)))
+			    var-place
+			    block)
+    ;; when value is captures in closure
+    (when (clcomp::lexical-binding-node-closed-over node)
+      (emit-ir (make-ssa-vop :name 'clcomp::make-bcell
+			     :return-values (list var-place)
+			     :args (list var-place))
+	       block)
+      block)))
 
 (defun emit-let-node-ssa (node lambda-ssa leaf place block)
+  #.*fun-optimize-level*
+  (when (null block) (break))
   (dolist (n (clcomp::let-node-bindings node))
     (let ((new-block (emit-lexical-binding-node-ssa n lambda-ssa nil block)))
       (setf block new-block)))
@@ -845,7 +864,7 @@
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
-  (let ((var (create-or-get-cached-var-place node lambda-ssa t) ))
+  (let ((var (create-or-get-cached-var-place node lambda-ssa block t) ))
     (if place
 	(emit-ir (make-ssa-load :to place :from var)
 		 block)
@@ -922,7 +941,7 @@
   (declare (optimize debug))
   (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
 					   lambda-ssa leaf
-					   (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa t)
+					   (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa block t)
 					   block)))
     (if place
 	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
@@ -954,13 +973,15 @@
       (etypecase argument
 	(clcomp::lexical-binding-node
 	 (emit-ir (if (clcomp::lexical-binding-node-closed-over argument)
-		      (make-ssa-vop :name 'make-bcell
+		      (make-ssa-vop :name 'clcomp::make-bcell
 				    :return-values (list (create-or-get-cached-var-place
 							  (clcomp::lexical-binding-node-bin-node argument)
-							  lambda-ssa))
+							  lambda-ssa
+							  block))
 				    :args (list (make-rcv-argument-place :index index :min-count min-args-count)))
 		      (make-ssa-load :to (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node argument)
-									 lambda-ssa)
+									 lambda-ssa
+									 block)
 				     :from (make-rcv-argument-place :index index :min-count min-args-count)))
 		  block)))
       (incf index))))
@@ -1009,7 +1030,7 @@
   #.*fun-optimize-level*
   (let ((mvb-place (make-mvb-place
 		    :var-places (mapcar (lambda (b)
-					  (create-or-get-cached-var-place (clcomp::m-v-b-binding-node-bin-node b) lambda-ssa))
+					  (create-or-get-cached-var-place (clcomp::m-v-b-binding-node-bin-node b) lambda-ssa block))
 					(clcomp::m-v-b-node-bindings node)))))
     (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
@@ -2004,7 +2025,10 @@
 	(emit-ir (make-ssa-load :to env-place
     				:from (make-operand-place :operand clcomp::*closure-env-reg*))
 		 entry-block)
-	(setf (lambda-ssa-env-place lambda-ssa) env-place)))
+	(setf (lambda-ssa-env-place lambda-ssa)
+	      env-place)
+	(setf (lambda-ssa-closed-over-vars lambda-ssa)
+	      (clcomp::lambda-node-closed-over-vars lambda-node))))
     (emit-ssa (clcomp::lambda-node-body lambda-node) lambda-ssa t nil entry-block)
     (remove-not-accessible-blocks lambda-ssa)
     (fill-blocks-ordering lambda-ssa)
@@ -2017,6 +2041,7 @@
     (fill-blocks-ordering lambda-ssa)
     (maybe-fix-uncond-jumps-to-succ lambda-ssa)
     (setf *error-on-ssa-touch* nil)
+    (print lambda-ssa)
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
     (setf *error-on-ir-touch* t)

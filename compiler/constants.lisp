@@ -15,7 +15,7 @@
 ;;; so it can't be used as temporary in VOP body
 (defparameter *tmp-reg-2* :R11)
 ;;; NOTE. keep *preserved-regs* always at even number, stack alignment
-(defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI :RSI))
+(defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI))
 (defparameter *heap-header-reg* :R15)
 
 (defparameter *closure-env-reg* :RBX)
@@ -31,6 +31,7 @@
 (defparameter *pointer-tag* 1)
 (defparameter *list-tag* 2)
 (defparameter *function-tag* 3)
+
 (defparameter *char-tag* 4)
 (defparameter *symbol-tag* 5)
 (defparameter *single-float-tag* 6)
@@ -42,14 +43,18 @@
 ;;; we use the same 3 bit tagging scheme like in the immediate objects case
 ;;; fixnum, char, single-float, all the others are free
 ;;; we use *pointer-tag* as tag for other-heap-allocated-types
-;;; every tupe in *extended-tags* need to have #b001 as low 3 bits
+;;; every type in *extended-tags* need to have #b001 as low 3 bits
 
 (defparameter *other-boxed-type* *pointer-tag*)
 
 (defparameter *extended-tags*
   '((struct 193)
     (simple-array 209)
-    (string 217)))
+    (string 217)
+    (closure-env 225)
+    ;;; closure related, variable binding cell
+    (bcell 233)
+    ))
 
 (defparameter *largest-extended-tag* 249)
 
@@ -80,11 +85,3 @@
 (defun characterize (char)
   (let ((code (char-code char)))
     (+ (ash code *tag-size*) *char-tag*)))
-
-
-;;; how to encode heap allocated objects
-;;; use the same tagging scheme for heap allocated objets
-;;; so for single-floats, chars, fixnums it's just one qword-heap-allocated objet
-;;; copy to heap is just one mov [ptr], value
-;;; if heap allocated object first qword has *pointer-tag* then we look at header qword as only type
-;;; this complex types need to have 3 lower bits as *pointer-tag*

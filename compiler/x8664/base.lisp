@@ -27,13 +27,26 @@
 ;;; closures support
 (define-vop make-closure-env (res :register) ((count :immediate))
   (inline-vop 'allocate res (1+ count) $stack-top-operand$)
-  (inst :mov (@ res) value))
+  (inst :mov (@ res) (get-extended-tag 'closure-env))
+  (inst :add res *pointer-tag*))
 
-;; FIXME
-;; FIXME, not good
+(define-vop get-from-closure-env (res :register :stack) ((env :register :stack)
+							 (index :immediate))
+  (inst :mov *tmp-reg* env)
+  ;; get bcell
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 1 *word-size*) ;; header type qword
+						  (* index *word-size*))
+					       *pointer-tag*)))
+  ;; get value
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (* 1 *word-size*) ;; header type qword
+					       *pointer-tag*)))
+  (inst :mov res *tmp-reg*))
+
 (define-vop make-bcell (res :register) ((value :register))
-  (inline-vop 'allocate res 1 $stack-top-operand$)
-  (inst :mov (@ res) value))
+  (inline-vop 'allocate res 2 $stack-top-operand$)
+  (inst :mov (@ res) (get-extended-tag 'bcell))
+  (inst :mov (@ res nil nil *word-size*) value)
+  (inst :add res *pointer-tag*))
 
 (define-vop get-bcell (res :register) ((env :register)
 				       (index :immediate))
