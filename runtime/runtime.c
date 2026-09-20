@@ -73,12 +73,20 @@ int is_symbol(lispobj obj) {
   return (obj & MASK) == SYMBOL_TAG ? 1 : 0;
 }
 
+int get_tag(lispobj obj) {
+  return (obj & MASK);
+}
+
+int get_extended_tag(lispobj obj) {
+  return (obj & EXTENDED_TAG_MASK);
+}
 
 lispobj get_symbol_address(lispobj fun_name) {
   char *fun_str = c_string(fun_name);
   uintptr_t *address = map_get(symbols_map, fun_str);
   return tag_fixnum(*address);
 }
+
 
 int is_simple_array(lispobj obj) {
 
@@ -104,24 +112,76 @@ int is_string(lispobj obj) {
   unsigned char extended_tag = (unsigned char) *((unsigned char*) ptr);
 
   return (extended_tag == EXTENDED_TAG_STRING);
+}
 
+
+int is_struct(lispobj obj) {
+  if (!is_pointer(obj)) {
+    return 0;
+  }
+
+  lispobj ptr = untag_pointer(obj);
+
+  unsigned char extended_tag = (unsigned char)*((unsigned char *)ptr);
+
+  return (extended_tag == EXTENDED_TAG_STRUCT);
+}
+
+enum base_lisp_type get_lisp_immediate_type(lispobj obj) {
+  int tag = get_tag(obj);
+  switch (tag) {
+  case FIXNUM_TAG:
+    return FIXNUM;
+  case CHAR_TAG:
+    return CHAR;
+  case SINGLE_FLOAT_TAG:
+    return SINGLE_FLOAT;
+  default:
+    return -1;
+  }
 }
 
 enum base_lisp_type get_lisp_type(lispobj obj) {
-  
-  if (is_fixnum(obj)) {
+
+  int tag = get_tag(obj);
+
+  switch (tag) {
+  case FIXNUM_TAG:
     return FIXNUM;
-  } else if (is_char(obj)) {
-    return CHAR;
-  } else if (is_pointer(obj)) {
-    return POINTER;
-  } else if (is_cons(obj)) {
+  case CONS_TAG:
     return CONS;
-  } else if (is_fun(obj)) {
+  case FUNCTION_TAG:
     return FUNCTION;
-  } else if (is_symbol(obj)) {
+  case CHAR_TAG:
+    return CHAR;
+  case SYMBOL_TAG:
     return SYMBOL;
-  } else {
+  case SINGLE_FLOAT_TAG:
+    return SINGLE_FLOAT;
+  case POINTER_TAG: {
+    lispobj robj = untag_pointer(obj);
+    lispobj type_header = (lispobj) * ((lispobj *)robj);
+    enum base_lisp_type htype = get_lisp_immediate_type(type_header);
+    if (htype == -1) {
+      int extended_tag = get_extended_tag(type_header);
+      switch (extended_tag) {
+      case EXTENDED_TAG_SIMPLE_ARRAY:
+        return ARRAY;
+      case EXTENDED_TAG_STRING:
+        return STRING;
+      case EXTENDED_TAG_STRUCT:
+        return STRUCT;
+        // FIXME, do something if we screw up tag
+      default:
+        return -1;
+      }
+
+    } else {
+      return htype;
+    }
+  }
+    // FIXME, do something if we screw up tag
+  default:
     return -1;
   }
 }
@@ -147,18 +207,17 @@ void print_lisp_cons_cdr(lispobj obj) {
     print_lisp(_cdr);
     printf(")");
   }
-  
 }
 
 void print_lisp_cons(lispobj obj) {
 
   printf("(");
-  
+
   lispobj _car = car(obj);
   lispobj _cdr = cdr(obj);
 
   print_lisp(_car);
-    if (_cdr != LISP_NIL) {
+  if (_cdr != LISP_NIL) {
     printf(" ");
   }
 
@@ -181,14 +240,11 @@ void print_lisp_string(lispobj obj, int quote) {
   lispobj size = ar->size;
   int64_t array_size = untag_fixnum(size);
 
-  lispobj *first = &ar->elements;
-
   if (quote)
     printf("\"");
 
   for (long index = 0; index < array_size; index++) {
-    printf("%c", untag_char(*(first + index)));
-    //    print_lisp(*(first + index));
+    printf("%c", untag_char(ar->elements[index]));
   }
   
   if (quote)
@@ -201,12 +257,10 @@ void print_lisp_array(lispobj obj) {
    lispobj size = ar->size;
    int64_t array_size = untag_fixnum(size);
 
-   lispobj *first = &ar->elements;
-
    printf("#(");
 
    for (long index = 0; index < array_size; index++) {
-     print_lisp(*(first + index));
+     print_lisp(ar->elements[index]);
      if (index + 1 < array_size)
        printf(" ");
    }
@@ -215,7 +269,6 @@ void print_lisp_array(lispobj obj) {
 }
 
 void print_lisp_pointer(lispobj obj) {
-  // printf("IN POINTER\n");
   if (is_simple_array(obj)) {
     if (is_string(obj)) {
       print_lisp_string(obj, 1);
@@ -236,46 +289,55 @@ void print_lisp_symbol(lispobj obj) {
 
 void print_lisp(lispobj obj) {
 
-  if(obj == LISP_NIL) {
-    
+  if (obj == LISP_NIL) {
+
     printf("NIL");
-    
+
   } else if (obj == LISP_T) {
-    
+
     printf("T");
-    
+
   } else {
 
     enum base_lisp_type type = get_lisp_type(obj);
-    
-    switch(type) {
-    
-    case FIXNUM :
+
+    switch (type) {
+
+    case FIXNUM:
       printf("%lli", untag_fixnum(obj));
       break;
-    case CHAR :
+    case CHAR:
       printf("#\\%c", untag_char(obj));
       break;
-    case CONS :
+    case CONS:
       print_lisp_cons(obj);
       break;
-    case FUNCTION :
+    case FUNCTION:
       printf("FUNCTION\n");
       break;
-    case POINTER :
-      print_lisp_pointer(obj);
-      break;
-    case SYMBOL_TAG :
+    case SYMBOL_TAG:
       print_lisp_symbol(obj);
       break;
-    default :
+    case STRING:
+      print_lisp_string(obj, 1);
+      break;
+    case ARRAY:
+      print_lisp_array(obj);
+      break;
+    case STRUCT:
+      // TODO
+      printf("STRUCT, TODO !\n");
+      break;
+    case POINTER:
+      printf("BUG, this should not happen !\n");
+      break;
+    default:
       printf("UNKNOWN PRINT: %d", type);
       break;
     }
   }
   fflush(stdout);
 }
-
 
 void set_rip_value(int64_t rip_position, lispobj lambda) {
   // FIXME

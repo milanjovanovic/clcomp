@@ -10,6 +10,9 @@
 
 (defparameter *scratch-regs* '(:R10 :R11))
 (defparameter *tmp-reg* :R10)
+
+;;; this one is tricky, it's used in define-vop as default tmp register in a case of aliasinge
+;;; so it can't be used as temporary in VOP body
 (defparameter *tmp-reg-2* :R11)
 ;;; NOTE. keep *preserved-regs* always at even number, stack alignment
 (defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI :RSI))
@@ -35,9 +38,16 @@
 (defparameter *exteneded-tag-size* 8)
 (defparameter *extended-tag-mask* 255)
 
+;;; first qword in heap allocated objects is type
+;;; we use the same 3 bit tagging scheme like in the immediate objects case
+;;; fixnum, char, single-float, all the others are free
+;;; we use *pointer-tag* as tag for other-heap-allocated-types
+;;; every tupe in *extended-tags* need to have #b001 as low 3 bits
+
+(defparameter *other-boxed-type* *pointer-tag*)
 
 (defparameter *extended-tags*
-  '((struct 199)
+  '((struct 193)
     (simple-array 209)
     (string 217)))
 

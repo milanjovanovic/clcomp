@@ -20,16 +20,30 @@ typedef uintptr_t lispobj;
 #define FUNCTION_TAG 0x3 // #b011
 #define CHAR_TAG 0x4 // #b100
 #define SYMBOL_TAG 0x5 //#b101
-#define SINGLE_FLOAT_TAG 0x6 //#b110
+#define SINGLE_FLOAT_TAG 0x6 // #b110
+
+#define EXTENDED_TAG_MASK 0xFF
+#define EXTENDED_TAG_OTHER_TYPE 0x1
 
 #define EXTENDED_TAG_SIMPLE_ARRAY 0xD1
 #define EXTENDED_TAG_STRING 0xD9
-#define EXPTENDET_TAG_STRUCT 0xF0
+#define EXTENDED_TAG_STRUCT 0xC1
 
 // tag 0x7 is free
 
-enum base_lisp_type {FIXNUM, CHAR, CONS, FUNCTION, POINTER, SYMBOL};
-enum pointer_lisp_type {STRING, UNKNOWN};
+enum base_lisp_type {
+  FIXNUM,
+  CHAR,
+  CONS,
+  FUNCTION,
+  POINTER,
+  SYMBOL,
+  SINGLE_FLOAT,
+  STRUCT,
+  STRING,
+  ARRAY
+};
+
 
 #define CHAR_SHIFT 0x8
 
@@ -46,14 +60,14 @@ struct array {
   lispobj size;
   lispobj type;
   lispobj etype;
-  lispobj elements;
+  lispobj elements[1];
 };
 
 struct structure {
   lispobj tag;
   lispobj layoyt;
   lispobj struct_type;
-  lispobj elements;
+  lispobj elements[1];
 };
 
 struct symbol {
