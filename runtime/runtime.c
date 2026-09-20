@@ -127,6 +127,20 @@ int is_struct(lispobj obj) {
   return (extended_tag == EXTENDED_TAG_STRUCT);
 }
 
+enum base_lisp_type get_lisp_immediate_type(lispobj obj) {
+  int tag = get_tag(obj);
+  switch (tag) {
+  case FIXNUM_TAG:
+    return FIXNUM;
+  case CHAR_TAG:
+    return CHAR;
+  case SINGLE_FLOAT_TAG:
+    return SINGLE_FLOAT;
+  default:
+    return -1;
+  }
+}
+
 enum base_lisp_type get_lisp_type(lispobj obj) {
 
   int tag = get_tag(obj);
@@ -145,10 +159,11 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
   case SINGLE_FLOAT_TAG:
     return SINGLE_FLOAT;
   case POINTER_TAG: {
-    lispobj type_header = (lispobj) * ((lispobj *)obj);
-    enum base_lisp_type htype = get_lisp_type(type_header);
-    if (htype == EXTENDED_TAG_OTHER_TYPE) {
-      int extended_tag = get_extended_tag(htype);
+    lispobj robj = untag_pointer(obj);
+    lispobj type_header = (lispobj) * ((lispobj *)robj);
+    enum base_lisp_type htype = get_lisp_immediate_type(type_header);
+    if (htype == -1) {
+      int extended_tag = get_extended_tag(type_header);
       switch (extended_tag) {
       case EXTENDED_TAG_SIMPLE_ARRAY:
         return ARRAY;
@@ -170,6 +185,7 @@ enum base_lisp_type get_lisp_type(lispobj obj) {
     return -1;
   }
 }
+
 void print_lisp_cons_cdr(lispobj obj) {
 
   lispobj _car = car(obj);

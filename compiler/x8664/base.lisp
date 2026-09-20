@@ -8,7 +8,7 @@
   (let ((true-label (make-vop-label "true"))
 	(exit-label (make-vop-label "exit")))
     ;; FIXME, we need way to auto do stuff like this
-    (mov *tmp-reg* arg1)
+    (inst :mov *tmp-reg* arg1)
     (inst :cmp *tmp-reg* arg2)
     (inst :jump-fixup :je true-label)
     (inst :mov res *nil*)
