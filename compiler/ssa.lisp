@@ -124,6 +124,7 @@
 	    last))
       last))
 
+;;; FIXME, here we need to create GET-BCELL-VALUE VOP if variable is captured
 (defun create-or-get-cached-var-place (node lambda-ssa block &optional error-if-not-cached)
   #.*fun-optimize-level*
   (let* ((id (clcomp::tnode-id node))
@@ -839,8 +840,8 @@
       (emit-ir (make-ssa-vop :name 'clcomp::make-bcell
 			     :return-values (list var-place)
 			     :args (list var-place))
-	       block)
-      block)))
+	       block))
+    block))
 
 (defun emit-let-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
@@ -1020,6 +1021,7 @@
     (lambda-add-fixup fixup lambda-ssa)
     (if place
 	(emit-ir (make-ssa-load :to place :from fixup) block)
+	;; FIXME, here we decide if it's simple lambda or closure, if closure we need to box it with environment
 	(if leaf
 	    (emit-single-return-sequence fixup block)
 	    ;; FIXME, we can omit SSA-VALUE node here ???

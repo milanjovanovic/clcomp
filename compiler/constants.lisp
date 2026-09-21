@@ -51,9 +51,10 @@
   '((struct 193)
     (simple-array 209)
     (string 217)
-    (closure-env 225)
+    (closure 225)
+    (closure-env 233)
     ;;; closure related, variable binding cell
-    (bcell 233)
+    (bcell 241)
     ))
 
 (defparameter *largest-extended-tag* 249)

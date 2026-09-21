@@ -17,6 +17,12 @@
     (inst :mov res *t*)
     (inst :label exit-label)))
 
+
+;; FIXME
+(define-vop call (f :register) ()
+  (inst :mov f f)
+  )
+
 ;; size = number of qwords
 (define-vop allocate (res :register) ((size :immediate :register :stack))
   (inst :mov res (@ *heap-header-reg*))
@@ -25,9 +31,20 @@
   (inst :mov (@ *heap-header-reg*) *tmp-reg*))
 
 ;;; closures support
+(define-vop make-closure (res :register) ((env :register :stack)
+					  (fun :register :stack))
+  (inline-vop 'allocate res 3 $stack-top-operand$)
+  (inst :mov (@ res) (get-extended-tag 'closure))
+  (inst :mov *tmp-reg* env)
+  (inst :mov (@ res nil nil *word-size*) *tmp-reg*)
+  (inst :mov *tmp-reg* fun)
+  (inst :mov (@ res nil nil (* 2 *word-size*)) *tmp-reg* )
+  (inst :add res *pointer-tag*))
+
 (define-vop make-closure-env (res :register) ((count :immediate))
-  (inline-vop 'allocate res (1+ count) $stack-top-operand$)
+  (inline-vop 'allocate res (+ 2 count) $stack-top-operand$)
   (inst :mov (@ res) (get-extended-tag 'closure-env))
+  (inst :mov (@ res nil nil *word-size*) count) ;; maybe put count in upper half of first qword
   (inst :add res *pointer-tag*))
 
 (define-vop get-from-closure-env (res :register :stack) ((env :register :stack)
@@ -48,14 +65,11 @@
   (inst :mov (@ res nil nil *word-size*) value)
   (inst :add res *pointer-tag*))
 
-(define-vop get-bcell (res :register) ((env :register)
-				       (index :immediate))
-  (inst :mov res (@ env nil nil index)))
+(define-vop get-bcell-value (res :register) ((bcell :register :stack))
+  (inst :mov *tmp-reg* bcell)
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *word-size* *pointer-tag*)))
+  (inst :mov res *tmp-reg*))
 
-(define-vop get-bcell-value (res :register) ((env :register)
-					     (index :immediate))
-  (inline-vop 'get-bcell res env index)
-  (inst :mov res (@ res)))
 
 (define-vop bla (res :register) ((arg :register))
   (inst :ud2))
