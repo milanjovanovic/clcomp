@@ -205,8 +205,6 @@
 	(let ((parent-lambda (get-parent-lambda-node environment)))
 	  (assert parent-lambda)
 	  (dolist (var (lambda-node-closed-over-vars lambda-node))
-	    (print (list 'var var 'equal (= (lexical-var-node-lambda-id var)
-					    (lambda-node-id parent-lambda))))
 	    (unless (= (lexical-var-node-lambda-id var)
 		       (lambda-node-id parent-lambda))
 	      (pushnew var (lambda-node-closed-over-vars parent-lambda))))))

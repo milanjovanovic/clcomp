@@ -18,10 +18,9 @@
     (inst :label exit-label)))
 
 
-;; FIXME
+;; FIXME, we need to branch between normal fun and closure
 (define-vop call (f :register) ()
-  (inst :mov f f)
-  )
+  (inst :mov f f))
 
 ;; size = number of qwords
 (define-vop allocate (res :register) ((size :immediate :register :stack))
@@ -70,6 +69,10 @@
   (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *word-size* *pointer-tag*)))
   (inst :mov res *tmp-reg*))
 
+(define-vop set-bcell-value (res :register :stack) ((bcell :register) (value :register :stack))
+  (inst :mov *tmp-reg* value)
+  (inst :mov (@ bcell nil nil (- *word-size* *pointer-tag*)) *tmp-reg*)
+  (inst :mov res *tmp-reg*))
 
 (define-vop bla (res :register) ((arg :register))
   (inst :ud2))

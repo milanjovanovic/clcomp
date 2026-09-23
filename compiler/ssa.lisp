@@ -36,6 +36,7 @@
 				       (funcall (phi-place-reduced struct)))))
 	    (:include named-place)) reduced)
 (defstruct (var-place (:include named-place)))
+(defstruct (cell-var-place (:include var-place)))
 
 (defstruct (mvb-place (:include place)) var-places)
 
@@ -123,6 +124,18 @@
 	    (get-phi-place-reduced-value red red)
 	    last))
       last))
+
+(defun create-binding-var-place (node lambda-ssa block closure-captured)
+  #.*fun-optimize-level*
+  (declare (ignore block))
+  (let* ((id (clcomp::tnode-id node)))
+    (assert (typep node 'clcomp::lexical-var-node))
+
+    (let ((place (if closure-captured
+		     (make-cell-var-place :name (clcomp::get-lexical-variable-name node))
+		     (make-var-place :name (clcomp::get-lexical-variable-name node)))))
+      (setf (gethash id (lambda-ssa-nodes-id-var-cache lambda-ssa)) place)
+      place)))
 
 ;;; FIXME, here we need to create GET-BCELL-VALUE VOP if variable is captured
 (defun create-or-get-cached-var-place (node lambda-ssa block &optional error-if-not-cached)
@@ -681,19 +694,25 @@
   (etypecase node
     (clcomp::immediate-constant-node
      (emit-ir (make-ssa-load :to place
-    			     :from (make-immediate-constant :constant (clcomp::immediate-constant-node-value node))) block)
-     (when leaf
-       (emit-single-return-sequence place block))
-     block)
-    (clcomp::lexical-var-node
-     (emit-ir (make-ssa-load :to place
-    			     :from (create-or-get-cached-var-place node lambda-ssa block t))
+    			     :from (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
 	      block)
      (when leaf
        (emit-single-return-sequence place block))
      block)
-    ;; (clcomp::values-node
-    ;;  (error "not implemented"))
+    (clcomp::lexical-var-node
+     (let ((from-place (create-or-get-cached-var-place node lambda-ssa block t)))
+       (etypecase from-place
+	 (cell-var-place
+	  (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list place)
+				 :args (list from-place))
+		   block))
+	 (var-place
+	  (emit-ir (make-ssa-load :to place
+    				  :from from-place)
+		   block))))
+     (when leaf
+       (emit-single-return-sequence place block))
+     block)
     (t (emit-ssa node lambda-ssa leaf place block))))
 
 ;;; FIXME, there is more here
@@ -749,8 +768,16 @@
       (emit-ir (make-allocate-stack :count stack-arguments) block))
     (let ((arg-index 0))
       (dolist (p (reverse args-places))
-	;; FIXME, maybe p is already virtual place, no need for additional move
-	(emit-ir (make-ssa-load :to (make-argument-place :index arg-index :count arguments-count) :from p) block)
+	(typecase p
+	  ;; unbox BCELL
+	  (cell-var-place
+	   (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list
+										 (make-argument-place :index arg-index
+												      :count arguments-count))
+				  :args (list p))
+		    block))
+	  (otherwise
+	   (emit-ir (make-ssa-load :to (make-argument-place :index arg-index :count arguments-count) :from p) block)))
 	(incf arg-index)))
     ;; FIXME, maybe emit this at the end ??
     (emit-ir (make-ssa-load :to (make-argument-count-place)
@@ -789,12 +816,20 @@
 	 (ret-vals (length (clcomp::vop-res vop)))
 	 (arguments (clcomp::vop-node-arguments node))
 	 (args-places nil))
-    ;; for now we only allow one return place
+    ;; NOTE, for now we only allow VOP to return one place
     (assert (= 1 ret-vals))
     (dolist (arg arguments)
       (let ((direct-place (make-direct-place-or-nil arg lambda-ssa block)))
 	(if direct-place
-	    (push direct-place args-places)
+	    ;; unbox BCELL if we got any
+	    (typecase direct-place
+	      (cell-var-place
+	       (let* ((place (generate-virtual-place)))
+		 (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list place)
+					:args (list direct-place))
+			  block)))
+	      (otherwise
+	       (push direct-place args-places)))
 	    (let* ((place (generate-virtual-place))
 		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
 	      (setf block new-block)
@@ -831,7 +866,8 @@
   (declare (ignore leaf))
   #.*fun-optimize-level*
   (let* ((form (clcomp::lexical-binding-node-form node))
-	 (var-place (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node node) lambda-ssa block)))
+	 (var-place (create-binding-var-place (clcomp::lexical-binding-node-bin-node node)
+					      lambda-ssa block  (clcomp::lexical-binding-node-closed-over node))))
     (maybe-emit-direct-load form lambda-ssa nil
 			    var-place
 			    block)
@@ -864,11 +900,18 @@
   block)
 
 ;;; FIXME, we can omit SSA-VALUE when it's not leaf ?
+;;; FIXME, check this thing again
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
   (let ((var (create-or-get-cached-var-place node lambda-ssa block t) ))
     (if place
-	(emit-ir (make-ssa-load :to place :from var)
-		 block)
+	(etypecase var
+	  (cell-var-place (emit-ir
+			   (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list place)
+					 :args (list var))
+			   block))
+	  (var-place
+	   (emit-ir (make-ssa-load :to place :from var)
+		    block)))
 	(if leaf
 	    (emit-single-return-sequence  var block)
 	    (emit-ir (make-ssa-value :value var) block))))
@@ -938,14 +981,40 @@
     (setf (ssa-block-succ block) nil)
     (make-new-ssa-block lambda-ssa)))
 
+
 (defun emit-setq-node-ssa (node lambda-ssa leaf place block)
-  (declare (optimize debug))
-  (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
-					   lambda-ssa leaf
-					   (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa block t)
-					   block)))
-    (if place
-	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
+  #.*fun-optimize-level*
+  (let* ((setq-var-node (clcomp::setq-node-var node))
+	 (setq-var (create-or-get-cached-var-place setq-var-node lambda-ssa block t))
+	 (new-block block))
+    (etypecase setq-var
+      (cell-var-place
+       (let ((temp-place (generate-virtual-place "TEMP-SET-BCELL-")))
+	 (setf new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
+						 ;; leaf need to be nil because
+						 lambda-ssa nil
+						 temp-place
+						 block))
+	 ;; place is maybe nil
+	 (let ((ret-place (if leaf
+			      (make-return-value-place :index 0)
+			      (progn
+				(assert place)
+				place))))
+	   (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value :return-values (list ret-place)
+				  :args (list setq-var temp-place))
+		    new-block)
+	   (when leaf
+	     (emit-ir (make-deallocate-function-frame) new-block)
+	     (emit-ir (make-ssa-function-epilogue) new-block)
+	     (emit-ir (make-ssa-multiple-return :count 1) new-block)))))
+      (var-place
+       (setf new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
+					       lambda-ssa leaf
+					       (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa block t)
+					       block))
+       (when place
+	 (maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))))
     new-block))
 
 (defun get-minimum-number-of-args (args)
@@ -974,12 +1043,12 @@
       (etypecase argument
 	(clcomp::lexical-binding-node
 	 (emit-ir (if (clcomp::lexical-binding-node-closed-over argument)
-		      (make-ssa-vop :name 'clcomp::make-bcell
-				    :return-values (list (create-or-get-cached-var-place
-							  (clcomp::lexical-binding-node-bin-node argument)
-							  lambda-ssa
-							  block))
-				    :args (list (make-rcv-argument-place :index index :min-count min-args-count)))
+		      (let ((var-place (create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
+								 lambda-ssa block  (clcomp::lexical-binding-node-closed-over argument))))
+			(assert (cell-var-place-p var-place))
+			(make-ssa-vop :name 'clcomp::make-bcell
+				      :return-values (list var-place)
+				      :args (list (make-rcv-argument-place :index index :min-count min-args-count))))
 		      (make-ssa-load :to (create-or-get-cached-var-place (clcomp::lexical-binding-node-bin-node argument)
 									 lambda-ssa
 									 block)
@@ -1032,7 +1101,8 @@
   #.*fun-optimize-level*
   (let ((mvb-place (make-mvb-place
 		    :var-places (mapcar (lambda (b)
-					  (create-or-get-cached-var-place (clcomp::m-v-b-binding-node-bin-node b) lambda-ssa block))
+					  (create-binding-var-place (clcomp::m-v-b-binding-node-bin-node b)
+								    lambda-ssa block (clcomp::m-v-b-binding-node-closed-over b)))
 					(clcomp::m-v-b-node-bindings node)))))
     (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
@@ -1078,14 +1148,22 @@
 	    (let* ((result (emit-evaluate-forms-to-stack lambda-ssa block (clcomp::values-node-forms node)))
 		   (values-places (car result))
 		   (new-block (cdr result)))
+	      (break)
 	      (setf block new-block)
 	      ;; handle values that goes to registers
+	      ;; FIXME, instead of unpacking BCELL in EMIT-EVALUATE-FORMS-TO-STACK do it here
 	      (dotimes (index (length *fun-arguments-regs*))
 		(let ((value-place (nth index values-places)))
 		  (if value-place
-		      (emit-ir (make-ssa-load :to (make-return-value-place :index index)
-    					      :from value-place)
-			       block)
+		      (typecase value-place
+			(cell-var-place
+			 (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (make-return-value-place :index index)
+						:args (list value-place))
+				  block))
+			(otherwise
+			 (emit-ir (make-ssa-load :to (make-return-value-place :index index)
+    						 :from value-place)
+				  block)))
 		      (return))))
 	      ;; return early if we don't have more values than registers
 	      (unless (> (length values-places)
@@ -3711,3 +3789,34 @@
     (declare (ignore _))
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; closure tests
+
+#+nil
+(clcomp-compile nil '(lambda (q)
+		      (multiple-value-bind (a b) (values 1 q)
+			(let ((l (lambda () (list a b q))))
+			  (list a b q)))))
+
+#+nil
+(clcomp-compile nil '(lambda (q)
+		      (multiple-value-bind (a b) (values 1 q)
+			(let ((l (lambda () (list a b q))))
+			  (setf a q)))))
+
+#+nil
+(clcomp-compile nil '(lambda (q)
+		      (multiple-value-bind (a b) (values 1 q)
+			(let ((l (lambda () (list a b q))))
+			  (let ((d (setf a q)))
+			    d)))))
+
+
+#+nil
+(clcomp-compile nil '(lambda (q)
+		      (multiple-value-bind (a b) (foo)
+			(let ((l (lambda () (list a b q))))
+			  (let ((d (setf a q)))
+			    d)))))

@@ -403,6 +403,8 @@
 	(index-diff (1+ (- index (length *fun-arguments-regs*)))))
     (* (- (- index-diff diff)) *word-size*)))
 
+;;; NOTE, it is bad that we need to put this here for now instead of IR generation
+;;; FIXME, change in IR how we process MULTIPLE-VALUE-BIND
 (defun multiple-value-bind-generator (places)
   (let ((*segment-instructions* nil))
     (let ((places-count (length places))
@@ -421,12 +423,12 @@
 	  (inst :cmp *fun-number-of-arguments-reg*  index)
 	  (inst :jump-fixup :je (car lbs))
 	  (if reg
-	      (inst :mov place reg)
+	      (inst :mov reg place)
 	      (if (is-register place)
-		  (inst :mov place reg (@ *stack-pointer-reg* (mvb-value-stack-offset index places-count)))
+		  (inst :mov (@ *stack-pointer-reg* (mvb-value-stack-offset index places-count)) place)
 		  (progn
-		    (inst :mov *tmp-reg* (@ *stack-pointer-reg* (mvb-value-stack-offset index places-count)))
-		    (inst :mov place *tmp-reg*))))))
+		    (inst :mov *tmp-reg* place)
+		    (inst :mov (@ *stack-pointer-reg* (mvb-value-stack-offset index places-count)) *tmp-reg*))))))
       (inst :jump-fixup :jmp :end-label)
       (do ((nil-labels nil-labels (cdr nil-labels))
 	   (places places (cdr places)))
@@ -435,3 +437,4 @@
 	(inst :mov (car places) *nil*))
       (inst :label end-label))
     (reverse *segment-instructions*)))
+
