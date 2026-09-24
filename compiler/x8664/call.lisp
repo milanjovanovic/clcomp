@@ -438,6 +438,11 @@
 
 
 ;; FIXME
-(defun make-closure-env-generator (places)
-  place)
+(defun make-closure-env-generator (env vars)
+  (let ((*segment-instructions* nil)
+	(i 0))
+    (dolist (v vars))
+
+    
+    (reverse *segment-instructions*)))
 

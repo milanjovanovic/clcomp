@@ -60,11 +60,14 @@
 					       *pointer-tag*)))
   (inst :mov res *tmp-reg*))
 
-(define-vop set-in-closure-env (res :register :stack) ((env :register :stack)
-						       (index :immediate)
-						       (value :register :stack))
-  "FIXME"
-  )
+(define-vop set-bcell-in-closure-env () ((env :register)
+					 (index :immediate)
+					 (bcell :register :stack))
+  (inst :mov *tmp-reg* bcell)
+  (inst :mov (@ env nil nil (- (+ (* 1 *word-size*)
+				  (* index *word-size*))
+			       *pointer-tag*))
+	*tmp-reg*))
 
 ;; bcell format =  | header qword | qword |
 (define-vop make-bcell (res :register) ((value :register))

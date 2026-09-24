@@ -1081,6 +1081,27 @@
     (clcomp::load-time-value-node (clcomp::load-time-value-node-node rip-node))
     (clcomp::lambda-node rip-node)))
 
+(defun emit-closure-boxing-sequence (closed-over-vars block fixup)
+  (let ((env-place (generate-virtual-place "CLOSURE-ENV-"))
+	(rip-value-place (generate-virtual-place "CLOSURE-ENV-RIP-LAMBDA-"))
+	(ret-place (generate-virtual-place "CLOSURE-PLACE-")))
+    (emit-ir (make-ssa-vop :name 'clcomp::make-closure-env
+			   :return-values (list env-place)
+			   :args (list (length closed-over-vars)))
+	     block)
+    (let ((i 0))
+      (dolist (cov closed-over-vars)
+	(emit-ir (make-ssa-vop :name 'clcomp::set-bcell-in-closure-env
+			       :return-values (list)
+			       :args (list env-place i cov))
+		 block)
+	(incf i)))
+    (emit-ir (make-ssa-load :to rip-value-place :from fixup) block)
+    (emit-ir (make-ssa-vop :name 'clcomp::make-closure
+			   :return-values (list ret-place)
+			   :args (list env-place rip-value-place))
+	     block)))
+
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
   (let ((fixup (rip-relative-node-to-fixup node)))
@@ -1097,31 +1118,16 @@
     ;; here we check if we have lambda node that closed over vars
     ;; in this case we allocate CLOSURE object
     ;; if not then it is just regular flat function (no additional allocation)
-    (if place
-	(if (and (clcomp::lambda-node-p node)
-		 (clcomp::lambda-node-closed-over-vars node))
-	    (let ((env-place (generate-virtual-place "CLOSURE-ENV-"))
-		  (closed-over-vars (clcomp::lambda-node-closed-over-vars node)))
-	      (emit-ir (make-ssa-vop :name 'clcomp::make-closure-env
-				     :return-values (list env-place)
-				     :args (list (length closed-over-vars)))
-		       block)
-	      ;; fixme, generate env setf
-	      (dolist (cov closed-over-vars)
-		(emit-ir (make-ssa-vop :name 'clcomp::set-in-closure-env
-				       :return-values (list env-place)
-				       :args (list (length closed-over-vars)))
-			 block))
-	      (emit-ir (make-ssa-vop :name 'clcomp::make-closure-env
-				     :return-values (list place)
-				     :args (list env-place fixup))
-		       block))
-	    (emit-ir (make-ssa-load :to place :from fixup) block))
-	;; FIXME, here we decide if it's simple lambda or closure, if closure we need to box it with environment
-	(if leaf
-	    (emit-single-return-sequence fixup block)
-	    ;; FIXME, we can omit SSA-VALUE node here ???
-	    (emit-ir (make-ssa-value :value fixup) block)))
+    (let* ((full-closure (and (clcomp::lambda-node-p node)
+			      (clcomp::lambda-node-closed-over-vars node)))
+	   (closure-place (when full-closure
+			    (emit-closure-boxing-sequence (clcomp::lambda-node-closed-over-vars node) block fixup))))
+      (if place
+	  (emit-ir (make-ssa-load :to place :from (or closure-place fixup)) block)
+	  (if leaf
+	      (emit-single-return-sequence (or closure-place fixup) block)
+	      ;; FIXME, we can omit SSA-VALUE node here ???
+	      (emit-ir (make-ssa-value :value (or closure-place fixup)) block))))
     block))
 
 (defun emit-m-v-b-node-ssa (node lambda-ssa leaf place block)

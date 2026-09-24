@@ -52,9 +52,10 @@
 		      &body body)
   `(setf (gethash ',name *known-vops*)
 	 (make-vop :name ',name
-		   :res '(,res)
+		   :res ,(when res `(,res))
 		   :arguments ',arguments
-		   :fun (lambda ,(cons (first res) (append (mapcar 'car arguments) (list '$stack-top-operand$)))
+		   :fun (lambda ,(if res (cons (first res) (append (mapcar 'car arguments) (list '$stack-top-operand$)))
+				     (append (mapcar 'car arguments) (list '$stack-top-operand$)))
 			  (declare (ignorable $stack-top-operand$))
 			  ,(generate-alias-proof-vop-body body arguments res)))))
 
