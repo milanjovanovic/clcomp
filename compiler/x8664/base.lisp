@@ -7,7 +7,7 @@
 (define-vop eq (res :register :stack) ((arg1 :register :stack) (arg2 :register :stack))
   (let ((true-label (make-vop-label "true"))
 	(exit-label (make-vop-label "exit")))
-    ;; FIXME, we need way to auto do stuff like this
+    ;; FIXME, we need way to automate stuff like this
     (inst :mov *tmp-reg* arg1)
     (inst :cmp *tmp-reg* arg2)
     (inst :jump-fixup :je true-label)
@@ -30,6 +30,7 @@
   (inst :mov (@ *heap-header-reg*) *tmp-reg*))
 
 ;;; closures support
+;;; closure format = | header qword | env ptr | fun ptr
 (define-vop make-closure (res :register) ((env :register :stack)
 					  (fun :register :stack))
   (inline-vop 'allocate res 3 $stack-top-operand$)
@@ -40,6 +41,7 @@
   (inst :mov (@ res nil nil (* 2 *word-size*)) *tmp-reg* )
   (inst :add res *pointer-tag*))
 
+;; closure-env format =  | header qword | count (row 64 bit int) | stack-info-or-bcell-ptr | ...
 (define-vop make-closure-env (res :register) ((count :immediate))
   (inline-vop 'allocate res (+ 2 count) $stack-top-operand$)
   (inst :mov (@ res) (get-extended-tag 'closure-env))
@@ -58,6 +60,13 @@
 					       *pointer-tag*)))
   (inst :mov res *tmp-reg*))
 
+(define-vop set-in-closure-env (res :register :stack) ((env :register :stack)
+						       (index :immediate)
+						       (value :register :stack))
+  "FIXME"
+  )
+
+;; bcell format =  | header qword | qword |
 (define-vop make-bcell (res :register) ((value :register))
   (inline-vop 'allocate res 2 $stack-top-operand$)
   (inst :mov (@ res) (get-extended-tag 'bcell))

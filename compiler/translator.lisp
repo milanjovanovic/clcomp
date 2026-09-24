@@ -10,6 +10,8 @@
 					 :name (clcomp.ssa::compile-function-fixup-function fixup)))
     (clcomp.ssa::local-component-fixup (clcomp::make-component-rip-relative
 					:name (clcomp.ssa::local-component-fixup-name fixup)))
+    (clcomp.ssa::anonymous-function-fixup (clcomp::make-component-rip-relative
+					:name (clcomp.ssa::anonymous-function-fixup-name fixup)))
     (clcomp.ssa::load-time-eval-fixup (clcomp::make-fixup-rip-relative
 				       :name (clcomp.ssa::load-time-eval-fixup-name fixup)))
     (clcomp.ssa::compile-time-bootstrap-constant-fixup (clcomp::make-fixup-rip-relative-constant

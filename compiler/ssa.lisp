@@ -42,6 +42,7 @@
 
 (defstruct (fixup (:include named-place)))
 (defstruct (local-component-fixup (:include fixup)))
+(defstruct (anonymous-function-fixup (:include fixup)))
 (defstruct (compile-function-fixup (:include fixup)) function)
 (defstruct (load-time-eval-fixup (:include fixup)))
 (defstruct (compile-time-constant-fixup (:include fixup)) form)
@@ -74,7 +75,6 @@
 (defstruct (ssa-form-rw (:include ssa-form)))
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
-(defstruct (ssa-box-and-load (:include ssa-load)))
 
 (defstruct (ssa-jump (:include ssa-form)) label)
 (defstruct (ssa-go (:include ssa-jump)))
@@ -802,7 +802,13 @@
 	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
 	  (typecase place
 	    (mvb-place
-	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block))
+	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block)
+	     (dolist (p (mvb-place-var-places place))
+	       (when (cell-var-place-p p)
+		 (emit-ir (make-ssa-vop :name 'clcomp::make-bcell
+					:return-values (list p)
+					:args (list p))
+			  block))))
 	    (otherwise
 	     (emit-ir (make-ssa-load :to place :from (make-return-value-place :index 0)) block)))
 	  (emit-ir (make-maybe-mv-adjust-stack) block)
@@ -1059,7 +1065,7 @@
 (defun rip-relative-node-to-fixup (node)
   (let ((fixup-sym (generate-fixup-symbol)))
     (etypecase node
-      (clcomp::lambda-node (make-local-component-fixup :name fixup-sym))
+      (clcomp::lambda-node (make-anonymous-function-fixup :name fixup-sym))
       (clcomp::load-time-value-node (make-load-time-eval-fixup :name fixup-sym))
       (clcomp::fun-rip-relative-node (make-compile-function-fixup :name fixup-sym
 								  :function (clcomp::fun-rip-relative-node-form node)))
@@ -1088,8 +1094,29 @@
       ((or clcomp::compile-time-bootstrap-constant-node
 	   clcomp::fun-rip-relative-node)))
     (lambda-add-fixup fixup lambda-ssa)
+    ;; here we check if we have lambda node that closed over vars
+    ;; in this case we allocate CLOSURE object
+    ;; if not then it is just regular flat function (no additional allocation)
     (if place
-	(emit-ir (make-ssa-load :to place :from fixup) block)
+	(if (and (clcomp::lambda-node-p node)
+		 (clcomp::lambda-node-closed-over-vars node))
+	    (let ((env-place (generate-virtual-place "CLOSURE-ENV-"))
+		  (closed-over-vars (clcomp::lambda-node-closed-over-vars node)))
+	      (emit-ir (make-ssa-vop :name 'clcomp::make-closure-env
+				     :return-values (list env-place)
+				     :args (list (length closed-over-vars)))
+		       block)
+	      ;; fixme, generate env setf
+	      (dolist (cov closed-over-vars)
+		(emit-ir (make-ssa-vop :name 'clcomp::set-in-closure-env
+				       :return-values (list env-place)
+				       :args (list (length closed-over-vars)))
+			 block))
+	      (emit-ir (make-ssa-vop :name 'clcomp::make-closure-env
+				     :return-values (list place)
+				     :args (list env-place fixup))
+		       block))
+	    (emit-ir (make-ssa-load :to place :from fixup) block))
 	;; FIXME, here we decide if it's simple lambda or closure, if closure we need to box it with environment
 	(if leaf
 	    (emit-single-return-sequence fixup block)
@@ -3374,7 +3401,7 @@
     (compile-function-fixup
      (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (compile-function-fixup-function place)))
 		    *instruction-pointer-reg*))
-    ((or load-time-eval-fixup local-component-fixup )
+    ((or load-time-eval-fixup local-component-fixup anonymous-function-fixup)
      (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (named-place-name place)))
 		    *instruction-pointer-reg*))
     (compile-time-bootstrap-constant-fixup
@@ -3820,3 +3847,21 @@
 			(let ((l (lambda () (list a b q))))
 			  (let ((d (setf a q)))
 			    d)))))
+
+
+;; this doesn't work, look at EMIT-VALUES where it's not LEAF
+#+nil
+(clcomp-compile nil '(lambda (q)
+		      (let ((a (values 1 2)))
+			(let ((l (lambda () (list a q))))
+			  (let ((d (setf a q)))
+			    d)))))
+;;; TO FIX
+;; EMIT-VALUES-NODE-SSA
+
+;;; CHECK THIS
+;; (multiple-value-bind (a b) 1
+;; 	      (list a b))
+
+;;; also at the end of EMIT-CALL-NODE-SSA there is mov to place from return register and we dont' check for CELL-VAR-PLACE
+;;; check everywhere for MAKE-SSA-LOAD

@@ -403,8 +403,6 @@
 	(index-diff (1+ (- index (length *fun-arguments-regs*)))))
     (* (- (- index-diff diff)) *word-size*)))
 
-;;; NOTE, it is bad that we need to put this here for now instead of IR generation
-;;; FIXME, change in IR how we process MULTIPLE-VALUE-BIND
 (defun multiple-value-bind-generator (places)
   (let ((*segment-instructions* nil))
     (let ((places-count (length places))
@@ -437,4 +435,9 @@
 	(inst :mov (car places) *nil*))
       (inst :label end-label))
     (reverse *segment-instructions*)))
+
+
+;; FIXME
+(defun make-closure-env-generator (places)
+  place)
 
