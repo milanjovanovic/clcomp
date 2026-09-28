@@ -4,6 +4,27 @@
   ;; FIXME
   )
 
+(define-vop %call-dispatch () ((fun :register))
+  (let ((closure-label (make-vop-label "closure-label"))
+	(continue-label (make-vop-label "continue-label")))
+    ;; FIXME, we need way to automate stuff like this
+    (inst :mov *tmp-reg* fun)
+    (inst :and *mask*)
+    (inst :cmp *tmp-reg* *function-tag*)
+    (inst :jump-fixup :jne closure-label)
+    (inst :lea *tmp-reg* (@ *tmp-reg* nil nil (- *function-tag*)))
+    (inst :call *tmp-reg*)
+    (inst :jump-fixup :jmp continue-label)
+    (inst :label closure-label)
+    ;; full closure
+    (inst :mov *tmp-reg* (@ fun nil nil (- (* 2 *word-size*) *pointer-tag*)))
+    (inst :lea *tmp-reg* (@ *tmp-reg* nil nil (- *function-tag*)))
+    (inst :call *tmp-reg*)))
+
+(define-vop %fun-call () ((fun :register))
+  (inst :lea *tmp-reg* (@ fun nil nil (- *function-tag*)))
+  (inst :call *tmp-reg*))
+
 (defun generate-function-prologue ()
   (let ((*segment-instructions* nil))
     (inst :push *base-pointer-reg*)
@@ -441,8 +462,7 @@
 (defun make-closure-env-generator (env vars)
   (let ((*segment-instructions* nil)
 	(i 0))
-    (dolist (v vars))
-
-    
+    (dolist (v vars)
+      )
     (reverse *segment-instructions*)))
 

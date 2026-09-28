@@ -18,7 +18,7 @@
 (defparameter *c-call-save-registers* '(:rax :rbx :rcx :rdx :rsi :rdi :r8
 					:r9 :r10 :r11 :r12 :r13 :r14 :r15))
 
-(defstruct vop name arguments res fun)
+(defstruct vop name arguments arguments-metadata res fun)
 
 (defun get-vop (name)
   (gethash name *known-vops*))
@@ -35,6 +35,8 @@
 (defun get-res-types (vop)
   (mapcar #'second (vop-res vop)))
 
+(defun vop-argument-metadata-bcell (metadata)
+  (find :bcell metadata))
 
 (defun generate-alias-proof-vop-body (body arguments res)
   `(let ,(loop for arg in arguments
@@ -45,6 +47,32 @@
 					  ,(first arg))))
      (progn ,@body)))
 
+(defun operand-argument (operand)
+  (let ((res (list (first operand))))
+    (dolist (od (rest operand))
+      (when  (member od '(:register :stack :immediate))
+	(push od res)))
+    (reverse res)))
+
+(defun operand-metadata (operand)
+  (let ((res nil))
+    (dolist (od (rest operand))
+      (when  (not (member od '(:register :stack :immediate)))
+	(push od res)))
+    (reverse res)))
+
+(defun parse-operands (operands fun)
+  (let ((ops nil))
+    (dolist (op operands)
+      (push (funcall fun op) ops))
+    (reverse ops)))
+
+(defun operands-arguments-storage (operands)
+  (parse-operands operands #'operand-argument))
+
+(defun operands-arguments-metadata (operands)
+  (parse-operands operands #'operand-metadata))
+
 ;;; FIXME, look in original DEFINE-VOP and (&rest res), this is for multiple values
 (defmacro define-vop (name
 		      (&rest res)
@@ -52,8 +80,9 @@
 		      &body body)
   `(setf (gethash ',name *known-vops*)
 	 (make-vop :name ',name
-		   :res ,(when res `(,res))
-		   :arguments ',arguments
+		   :res ,(when res `'(,res))
+		   :arguments ',(operands-arguments-storage arguments)
+		   :arguments-metadata ',(operands-arguments-metadata arguments)
 		   :fun (lambda ,(if res (cons (first res) (append (mapcar 'car arguments) (list '$stack-top-operand$)))
 				     (append (mapcar 'car arguments) (list '$stack-top-operand$)))
 			  (declare (ignorable $stack-top-operand$))

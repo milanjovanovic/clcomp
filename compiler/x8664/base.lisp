@@ -17,11 +17,6 @@
     (inst :mov res *t*)
     (inst :label exit-label)))
 
-
-;; FIXME, we need to branch between normal fun and closure
-(define-vop call (f :register) ()
-  (inst :mov f f))
-
 ;; size = number of qwords
 (define-vop allocate (res :register) ((size :immediate :register :stack))
   (inst :mov res (@ *heap-header-reg*))
@@ -62,12 +57,23 @@
 
 (define-vop set-bcell-in-closure-env () ((env :register)
 					 (index :immediate)
-					 (bcell :register :stack))
+					 (bcell :register :stack :bcell))
   (inst :mov *tmp-reg* bcell)
   (inst :mov (@ env nil nil (- (+ (* 1 *word-size*)
 				  (* index *word-size*))
 			       *pointer-tag*))
 	*tmp-reg*))
+
+(define-vop set-bcell-value-in-closure-env () ((env :register :stack)
+					       (index :immediate)
+					       (value :register))
+  (inst :mov *tmp-reg* env)
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 1 *word-size*) ;; header type qword
+						  (* index *word-size*))
+					       *pointer-tag*)))
+  (inst :mov (@ *tmp-reg* nil nil (- (* 1 *word-size*) ;; header type qword
+				     *pointer-tag*))
+	value))
 
 ;; bcell format =  | header qword | qword |
 (define-vop make-bcell (res :register) ((value :register))
@@ -76,15 +82,14 @@
   (inst :mov (@ res nil nil *word-size*) value)
   (inst :add res *pointer-tag*))
 
-(define-vop get-bcell-value (res :register) ((bcell :register :stack))
+(define-vop get-bcell-value (res :register) ((bcell :register :stack :bcell))
   (inst :mov *tmp-reg* bcell)
   (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *word-size* *pointer-tag*)))
   (inst :mov res *tmp-reg*))
 
-(define-vop set-bcell-value (res :register :stack) ((bcell :register) (value :register :stack))
+(define-vop set-bcell-value () ((bcell :register :bcell) (value :register :stack))
   (inst :mov *tmp-reg* value)
-  (inst :mov (@ bcell nil nil (- *word-size* *pointer-tag*)) *tmp-reg*)
-  (inst :mov res *tmp-reg*))
+  (inst :mov (@ bcell nil nil (- *word-size* *pointer-tag*)) *tmp-reg*))
 
 (define-vop bla (res :register) ((arg :register))
   (inst :ud2))
