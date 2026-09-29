@@ -690,6 +690,18 @@
       (and (var-place-p place)
 	   (var-place-closure-captured place))))
 
+
+(defun make-simple-move (from to)
+  (assert (and (not (binding-place-p from))
+	       (not (binding-place-p to))) )
+  (make-ssa-load :to to :from from))
+
+(defun emit-simple-move (from to block lambda-ssa)
+  (declare (ignore lambda-ssa))
+  (assert (and (not (binding-place-p from))
+	       (not (binding-place-p to))) )
+  (emit-ir (make-simple-move from to) block))
+
 (defun move-from-to-simple-place (from to block lambda-ssa)
   (assert (not (binding-place-p to)))
   (etypecase from
@@ -703,13 +715,11 @@
 	 (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list to)
 				:args (list from))
 		  block)
-	 (emit-ir (make-ssa-load :to to
-    				 :from from)
-		  block)))
+	 (emit-simple-move from to block lambda-ssa)))
+    (virtual-place
+     (emit-simple-move from to block lambda-ssa))
     ((or immediate-constant fixup)
-     (emit-ir (make-ssa-load :to to
-    			     :from from)
-	      block))))
+     (emit-simple-move from to block lambda-ssa))))
 
 (defun move-from-simple-to-place (from to block lambda-ssa)
   (assert (not (binding-place-p from)))
@@ -727,7 +737,9 @@
 				:args (list from))
 		  block)
 
-	 (emit-ir (make-ssa-load :from from :to to) block)))))
+	 (emit-simple-move from to block lambda-ssa)))
+    (virtual-place
+     (emit-simple-move from to block lambda-ssa))))
 
 (defun maybe-box-bindings (places block)
   (dolist (p places)
@@ -748,20 +760,18 @@
     (unless (eq temp-to-place to)
       (move-from-simple-to-place temp-to-place to block lambda-ssa))))
 
+
 (defun emit-binding-move  (node lambda-ssa leaf place block)
+  #.*fun-optimize-level*
+  (assert (not leaf))
   (etypecase node
     (clcomp::immediate-constant-node
-     (emit-ir (make-ssa-load :to place
-    			     :from (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
-	      block)
-     (when leaf
-       (emit-single-return-sequence place block lambda-ssa))
+     (emit-simple-move  (make-immediate-constant :constant (clcomp::immediate-constant-node-value node))
+			place block lambda-ssa)
      block)
     (clcomp::lexical-var-node
      (let ((from-place (create-or-get-cached-var-place node lambda-ssa  t)))
        (move-from-to-place from-place place block lambda-ssa))
-     (when leaf
-       (emit-single-return-sequence place block lambda-ssa))
      block)
     (t (emit-ssa node lambda-ssa leaf place block))))
 
@@ -770,9 +780,8 @@
   (assert (not (binding-place-p place)))
   (etypecase node
     (clcomp::immediate-constant-node
-     (emit-ir (make-ssa-load :to place
-    			     :from (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
-	      block)
+     (emit-simple-move  (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)) place block lambda-ssa)
+     block
      (when leaf
        (emit-single-return-sequence place block lambda-ssa))
      block)
@@ -789,7 +798,7 @@
   (etypecase node
     (clcomp::immediate-constant-node (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)))
     (clcomp::lexical-var-node (create-or-get-cached-var-place node lambda-ssa t))
-    (clcomp::rip-relative-node (error "FIXME"))
+    ;; (clcomp::rip-relative-node (error "FIXME"))
     (t nil)))
 
 ;;; If forms is not direct place create new and emit all forms
@@ -840,12 +849,11 @@
       (dolist (p (reverse args-places))
 	(move-from-to-simple-place p (make-argument-place :index arg-index :count arguments-count) block lambda-ssa)
 	(incf arg-index)))
-    (emit-ir (make-ssa-load :to (make-argument-count-place)
-			    :from (make-immediate-constant :constant arguments-count))
-	     block)
+    (emit-simple-move (make-immediate-constant :constant arguments-count)
+		      (make-argument-count-place) block lambda-ssa)
     (let ((fixup (make-compile-function-fixup :name (generate-fixup-symbol)
 					      :function fun)))
-      (emit-ir (make-ssa-load :to (make-function-value-place) :from fixup) block)
+      (emit-simple-move fixup (make-function-value-place) block lambda-ssa)
       (lambda-add-fixup fixup lambda-ssa))
     (if (null place)
 	(progn
@@ -967,9 +975,7 @@
 (defun emit-immediate-node-ssa (node lambda-ssa leaf place block)
   (let ((constant (make-immediate-constant :constant (clcomp::immediate-constant-node-value node)) ))
     (if place
-	(emit-ir (make-ssa-load :to place
-				:from constant)
-		 block)
+	(emit-simple-move constant place block lambda-ssa)
 	(when leaf
 	  (emit-single-return-sequence constant block lambda-ssa))))
   block)
@@ -978,8 +984,7 @@
 (defun emit-lexical-var-node-ssa (node lambda-ssa leaf place block)
   (let ((var (create-or-get-cached-var-place node lambda-ssa t) ))
     (if place
-	(emit-ir (make-ssa-load :to place :from var)
-		 block)
+	(emit-simple-move var place block lambda-ssa)
 	(if leaf
 	    (emit-single-return-sequence  var block lambda-ssa)
 	    (emit-ir (make-ssa-value :value var) block))))
@@ -1029,7 +1034,8 @@
       (setf block current-block))
     (pop-lexenv lambda-ssa)
     (if place
-	(emit-ir (make-ssa-load :to place :from (make-immediate-constant :constant clcomp::*nil*)) block)
+	;; (emit-ir (make-ssa-load :to place :from (make-immediate-constant :constant clcomp::*nil*)) block)
+	(emit-simple-move (make-immediate-constant :constant clcomp::*nil*) place block lambda-ssa)
 	(when leaf
 	  (emit-single-return-sequence (make-immediate-constant :constant clcomp::*nil*) block lambda-ssa)
 	  ;; FIXME, need this ?
@@ -1091,9 +1097,9 @@
 							  lambda-ssa
 							  t))
 				    :args (list (make-rcv-argument-place :index index :min-count min-args-count)))
-		      (make-ssa-load :to (create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
-								   lambda-ssa nil)
-				     :from (make-rcv-argument-place :index index :min-count min-args-count)))
+		      (make-simple-move (make-rcv-argument-place :index index :min-count min-args-count)
+					(create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
+								  lambda-ssa nil)))
 		  block)))
       (incf index))))
 
@@ -1130,7 +1136,7 @@
 	   clcomp::fun-rip-relative-node)))
     (lambda-add-fixup fixup lambda-ssa)
     (if place
-	(emit-ir (make-ssa-load :to place :from fixup) block)
+	(emit-simple-move fixup place block lambda-ssa)
 	(if leaf
 	    (emit-single-return-sequence fixup block lambda-ssa)
 	    ;; FIXME, we can omit SSA-VALUE node here ???
@@ -1175,9 +1181,9 @@
       (if (zerop (length (clcomp::values-node-forms node)))
 	  ;; empty (VALUES) form, just load NIL to first return value register
 	  (progn
-	    (emit-ir (make-ssa-load :to (make-return-value-place :index 0)
-				    :from (make-immediate-constant :constant clcomp::*nil*))
-		     block)
+	    (emit-simple-move (make-immediate-constant :constant clcomp::*nil*)
+			      (make-return-value-place :index 0)
+			      block lambda-ssa)
 	    (emit-ir (make-deallocate-function-frame) block)
 	    (emit-ir (make-ssa-function-epilogue) block)
 	    (emit-ir (make-ssa-multiple-return :count 0)
@@ -1193,9 +1199,7 @@
 	      (dotimes (index (length *fun-arguments-regs*))
 		(let ((value-place (nth index values-places)))
 		  (if value-place
-		      (emit-ir (make-ssa-load :to (make-return-value-place :index index)
-    					      :from value-place)
-			       block)
+		      (emit-simple-move value-place (make-return-value-place :index index) block lambda-ssa)
 		      (return))))
 	      ;; return early if we don't have more values than registers
 	      (unless (> (length values-places)
@@ -1249,12 +1253,10 @@
 					    0
 					    clcomp::*word-size*)))
 		      (dolist (place (nthcdr (length *fun-arguments-regs*) values-places))
-			(emit-ir (make-ssa-load :to (make-operand-place :operand *tmp-reg-2*)
-						:from place)
-				 block)
-			(emit-ir (make-ssa-load :to (make-operand-place :operand (@ *base-pointer-reg* displacement))
-						:from (make-operand-place :operand *tmp-reg-2*))
-				 block)
+			(emit-simple-move place (make-operand-place :operand *tmp-reg-2*) block lambda-ssa)
+			(emit-simple-move (make-operand-place :operand *tmp-reg-2*)
+					  (make-operand-place :operand (@ *base-pointer-reg* displacement))
+					  block lambda-ssa)
 			(decf displacement clcomp::*word-size*)))
 
 		    ;; resize stack
@@ -1300,7 +1302,7 @@
 		   (< (length (clcomp::values-node-forms node))
 		      (length (mvb-place-var-places place))))
 	  (dolist (p (nthcdr (length (clcomp::values-node-forms node)) (mvb-place-var-places place)))
-	    (emit-ir (make-ssa-load :to p :from (make-immediate-constant :constant clcomp::*nil*)) block)))))
+	    (emit-simple-move (make-immediate-constant :constant clcomp::*nil* ) p block lambda-ssa)))))
   block)
 
 (defun emit-block-node-ssa (node lambda-ssa leaf place block)
@@ -2154,7 +2156,6 @@
     (fill-blocks-ordering lambda-ssa)
     (maybe-fix-uncond-jumps-to-succ lambda-ssa)
     (setf *error-on-ssa-touch* nil)
-    (print lambda-ssa)
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
     (setf *error-on-ir-touch* t)
@@ -3822,17 +3823,3 @@
     (declare (ignore _))
     (resolve-data-flow lambda-ssa alloc)
     (values lambda-ssa intervals alloc)))
-
-
-;;;;;;;;;;;;;;;;;;;;;
-;;; tests
-#+nil
-(clcomp-compile nil '(lambda (x)
-		      (lambda ()
-			(foo x))))
-
-#+nil
-(clcomp-compile nil '(lambda (x) 
-		      (let* ((l (cons 1 2))
-			     (f (lambda () l)))
-			(list l f))))
