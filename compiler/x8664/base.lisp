@@ -33,8 +33,11 @@
   (inst :mov *tmp-reg* env)
   (inst :mov (@ res nil nil *word-size*) *tmp-reg*)
   (inst :mov *tmp-reg* fun)
-  (inst :mov (@ res nil nil (* 2 *word-size*)) *tmp-reg* )
+  (inst :mov (@ res nil nil (* 2 *word-size*)) *tmp-reg*)
   (inst :add res *pointer-tag*))
+
+(define-vop get-closure-env-from-fun-ptr (res :register :stack) ((fun :register))
+  (inst :lea res (@ fun nil nil (- (- *word-size* *function-tag*)))))
 
 ;; closure-env format =  | header qword | count (row 64 bit int) | stack-info-or-bcell-ptr | ...
 (define-vop make-closure-env (res :register) ((count :immediate))

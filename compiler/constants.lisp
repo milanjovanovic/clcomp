@@ -18,9 +18,6 @@
 (defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI))
 (defparameter *heap-header-reg* :R15)
 
-(defparameter *closure-env-reg* :RBX)
-
-
 (defparameter *allocation-size* 8)
 (defparameter *word-size* 8)
 
