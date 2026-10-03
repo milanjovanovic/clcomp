@@ -164,6 +164,7 @@
 
 (defstruct fun-rip-relative name)
 (defstruct component-rip-relative name)
+(defstruct anon-fun-rip-relative name)
 (defstruct fixup-rip-relative name)
 (defstruct fixup-rip-relative-constant name form)
 (defstruct sub-component name component eval)
@@ -171,7 +172,7 @@
 (defun get-rip-relative-name (rip-relative-location)
   (etypecase rip-relative-location
     (fun-rip-relative (fun-rip-relative-name rip-relative-location))
-    (component-rip-relative (component-rip-relative-name rip-relative-location))
+    (anon-fun-rip-relative (anon-fun-rip-relative-name rip-relative-location))
     (fixup-rip-relative (fixup-rip-relative-name rip-relative-location))
     (fixup-rip-relative-constant (fixup-rip-relative-constant-name rip-relative-location))))
 

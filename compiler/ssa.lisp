@@ -41,7 +41,6 @@
 (defstruct (mvb-place (:include place)) var-places)
 
 (defstruct (fixup (:include named-place)))
-(defstruct (local-component-fixup (:include fixup)))
 (defstruct (anonymous-function-fixup (:include fixup)))
 (defstruct (compile-function-fixup (:include fixup)) function)
 (defstruct (load-time-eval-fixup (:include fixup)))
@@ -3509,7 +3508,7 @@
     (compile-function-fixup
      (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (compile-function-fixup-function place)))
 		    *instruction-pointer-reg*))
-    ((or load-time-eval-fixup local-component-fixup anonymous-function-fixup )
+    ((or load-time-eval-fixup anonymous-function-fixup )
      (make-stack-op (list 'clcomp::displacement (list 'clcomp::rip (named-place-name place)))
 		    *instruction-pointer-reg*))
     (compile-time-bootstrap-constant-fixup
@@ -3599,9 +3598,9 @@
 		    (make-inst :add *stack-pointer-reg* (* clcomp::*word-size* (deallocate-stack-count ir)))))
 
 (defun translate-fun-call (ir translator alloc sblock lambda-ssa)
-  (declare (ignore ir sblock lambda-ssa))
-  (emit-ir-assembly translator alloc
-		    (make-inst :call (make-reg-op *fun-address-reg*))))
+  (declare (ignore ir))
+  (translate-vop (make-ssa-vop :name 'clcomp::%call-dispatch :args (list (make-operand-place :operand *fun-address-reg*)))
+		  translator alloc sblock lambda-ssa))
 
 (defun translate-return (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa))

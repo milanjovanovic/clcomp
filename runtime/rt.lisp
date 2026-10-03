@@ -75,7 +75,7 @@
 	(setf (aref unit-code-buffer index) byte)
 	(incf index)))))
 
-(defun resolve-local-fixup (fixup unit-code-buffer)
+(defun resolve-anonymous-fun-fixup (fixup unit-code-buffer)
   (let* ((name (component-rip-relative-name (rip-location-rip fixup)))
 	 (offset (rip-location-byte-offset fixup))
 	 (address (cdr (assoc name *compilation-unit-local-rips*))))
@@ -83,6 +83,10 @@
       (error (format nil "Unknown local RIP ~a" name)))
     (when *debug*
       (format t "Name: ~a, RIP Address: ~x~%" name address))
+    (unless (zerop (mod address *word-size*))
+      (error "Anon fun tag bits not zero"))
+    ;; tag closure
+    (incf address *function-tag*)
     (let ((bytes (little-endian-64bit address))
 	  (index offset))
       (dolist (byte bytes)
@@ -131,12 +135,13 @@
 	(dolist (fixup fixups)
 	  (cond ((fun-rip-relative-p (rip-location-rip fixup))
 		 (resolve-fixup fixup unit-code))
-		((component-rip-relative-p (rip-location-rip fixup))
-		 (resolve-local-fixup fixup unit-code))
+		((anon-fun-rip-relative-p (rip-location-rip fixup))
+		 (resolve-anonymous-fun-fixup fixup unit-code))
 		((fixup-rip-relative-p (rip-location-rip fixup) )
 		 (resolve-eval-load-compile-fixup fixup))
 		((fixup-rip-relative-constant-p (rip-location-rip fixup))
-		 (resolve-compile-time-constant-fixup fixup unit-code))))
+		 (resolve-compile-time-constant-fixup fixup unit-code))
+		(t (error "Unknown fixup"))))
 	(resolve-fixup fixups unit-code))
     (when eval-at-load
       (resolve-eval-at-load-time-fixup unit))
@@ -240,7 +245,7 @@
 			      (get-compilation-unit-code-size entry-compilation-unit))
 			   (compile-component-start (compilation-unit-compile-component entry-compilation-unit)))))
 
-(defparameter *core-output-dir* "/home/ubuntu/lisp/clcomp/runtime/")
+(defparameter *core-output-dir* (concatenate 'string  *clcomp-home* "runtime/"))
 
 (defun make-output-bin-file (file)
   (format nil "~A~A" *core-output-dir* file))
