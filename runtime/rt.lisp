@@ -24,8 +24,8 @@
 
 (defparameter *do-break* nil)
 
-
 (defun make-eval-fixup-pair (funcall-object fixup-address)
+  (assert (zerop (mod funcall-object *word-size*)))
   (cons funcall-object fixup-address))
 
 (defun add-fixup (fixup)
@@ -69,6 +69,10 @@
       (error (format nil "Unknown fun ~a" name)))
     (when *debug*
       (format t "Name: ~a, Address: ~x~%" name fun-address))
+    (unless (zerop (mod fun-address *word-size*))
+      (error "Anon fun tag bits not zero"))
+    ;; tag closure
+    (incf fun-address *function-tag*)
     (let ((bytes (little-endian-64bit fun-address))
 	  (index offset))
       (dolist (byte bytes)
@@ -76,7 +80,7 @@
 	(incf index)))))
 
 (defun resolve-anonymous-fun-fixup (fixup unit-code-buffer)
-  (let* ((name (component-rip-relative-name (rip-location-rip fixup)))
+  (let* ((name (anon-fun-rip-relative-name (rip-location-rip fixup)))
 	 (offset (rip-location-byte-offset fixup))
 	 (address (cdr (assoc name *compilation-unit-local-rips*))))
     (unless address

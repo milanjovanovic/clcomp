@@ -8,15 +8,13 @@
   (let ((closure-label (make-vop-label "closure-label"))
 	(continue-label (make-vop-label "continue-label")))
     ;; FIXME, we need way to automate stuff like this
-    (inst :mov *tmp-reg* fun)
-    (inst :and *tmp-reg* *mask*)
-    (inst :cmp *tmp-reg* *function-tag*)
+    (inst :lea *tmp-reg* (@ fun nil nil (- *function-tag*)))
+    (inst :test (%b *tmp-reg*) *mask*)
     (inst :jump-fixup :jne closure-label)
-    (inst :lea *tmp-reg* (@ *tmp-reg* nil nil (- *function-tag*)))
     (inst :call *tmp-reg*)
     (inst :jump-fixup :jmp continue-label)
-    (inst :label closure-label)
     ;; full closure
+    (inst :label closure-label)
     (inst :mov *tmp-reg* (@ fun nil nil (- (* 2 *word-size*) *pointer-tag*)))
     (inst :lea *tmp-reg* (@ *tmp-reg* nil nil (- *function-tag*)))
     (inst :call *tmp-reg*)
@@ -129,7 +127,8 @@
 				     fun))
     
     ;; FIXME, it's symbol address
-    (inst :call *fun-address-reg*)
+    ;; FIXME, %CALL-DISPATCH
+    (inline-vop '%call-dispatch *fun-address-reg* new-stack-top)
 
     ;; calculate  how much stack to give back
     (inst :mov *tmp-reg* $stack-top-operand$)
