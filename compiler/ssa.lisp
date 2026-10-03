@@ -810,7 +810,7 @@
   (assert (not leaf))
   (etypecase node
     (clcomp::immediate-constant-node
-     (move-from-simple-to-place  (make-immediate-constant :constant (clcomp::immediate-constant-node-value node))
+     (emit-simple-move  (make-immediate-constant :constant (clcomp::immediate-constant-node-value node))
 			place block lambda-ssa)
      block)
     (clcomp::lexical-var-node

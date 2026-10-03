@@ -9,7 +9,7 @@
 	(continue-label (make-vop-label "continue-label")))
     ;; FIXME, we need way to automate stuff like this
     (inst :mov *tmp-reg* fun)
-    (inst :and *mask*)
+    (inst :and *tmp-reg* *mask*)
     (inst :cmp *tmp-reg* *function-tag*)
     (inst :jump-fixup :jne closure-label)
     (inst :lea *tmp-reg* (@ *tmp-reg* nil nil (- *function-tag*)))
@@ -19,7 +19,8 @@
     ;; full closure
     (inst :mov *tmp-reg* (@ fun nil nil (- (* 2 *word-size*) *pointer-tag*)))
     (inst :lea *tmp-reg* (@ *tmp-reg* nil nil (- *function-tag*)))
-    (inst :call *tmp-reg*)))
+    (inst :call *tmp-reg*)
+    (inst :label continue-label)))
 
 (define-vop %fun-call () ((fun :register))
   (inst :lea *tmp-reg* (@ fun nil nil (- *function-tag*)))
