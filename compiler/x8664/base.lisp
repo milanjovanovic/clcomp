@@ -37,7 +37,7 @@
   (inst :add res *pointer-tag*))
 
 (define-vop get-closure-env-from-fun-ptr (res :register :stack) ((fun :register))
-  (inst :lea res (@ fun nil nil (- (- *word-size* *function-tag*)))))
+  (inst :mov res (@ fun nil nil (- *word-size* *pointer-tag*))))
 
 ;; closure-env format =  | header qword | count (row 64 bit int) | stack-info-or-bcell-ptr | ...
 (define-vop make-closure-env (res :register) ((count :immediate))
@@ -50,7 +50,7 @@
 							 (index :immediate))
   (inst :mov *tmp-reg* env)
   ;; get bcell
-  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 1 *word-size*) ;; header type qword
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 2 *word-size*) ;; header type qword + count
 						  (* index *word-size*))
 					       *pointer-tag*)))
   ;; get value
@@ -62,7 +62,7 @@
 					 (index :immediate)
 					 (bcell :register :stack :bcell))
   (inst :mov *tmp-reg* bcell)
-  (inst :mov (@ env nil nil (- (+ (* 1 *word-size*)
+  (inst :mov (@ env nil nil (- (+ (* 2 *word-size*)
 				  (* index *word-size*))
 			       *pointer-tag*))
 	*tmp-reg*))
@@ -71,7 +71,7 @@
 					       (index :immediate)
 					       (value :register))
   (inst :mov *tmp-reg* env)
-  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 1 *word-size*) ;; header type qword
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 2 *word-size*) ;; header type qword + count
 						  (* index *word-size*))
 					       *pointer-tag*)))
   (inst :mov (@ *tmp-reg* nil nil (- (* 1 *word-size*) ;; header type qword
