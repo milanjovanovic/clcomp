@@ -713,10 +713,12 @@
 		(if (var-place-p place)
 		    (push place new-arg-places)
 		    (progn
+		      (assert (env-captured-place-p place))
 		      (let ((tmp-place (generate-virtual-place "TEMP-GET-BCELL-FROM-CLOSURE-ENV-")))
 			(emit-ir (make-ssa-vop :name 'clcomp::get-bcell-from-closure-env
 					       :return-values (list tmp-place)
-					       :args (list place))
+					       :args (list (lambda-ssa-env-place lambda-ssa)
+							   (make-immediate-constant :constant (env-captured-place-env-index place))))
 				 block)
 			(push tmp-place new-arg-places)))))
 	      (cond ((and (var-place-p place)

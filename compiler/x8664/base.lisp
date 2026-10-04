@@ -58,6 +58,16 @@
 					       *pointer-tag*)))
   (inst :mov res *tmp-reg*))
 
+(define-vop get-bcell-from-closure-env (res :register :stack) ((env :register :stack)
+							       (index :immediate))
+  (inst :mov *tmp-reg* env)
+  ;; get bcell
+  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 2 *word-size*) ;; header type qword + count
+						  (* index *word-size*))
+					       *pointer-tag*)))
+  (inst :mov res *tmp-reg*))
+
+
 (define-vop set-bcell-in-closure-env () ((env :register)
 					 (index :immediate)
 					 (bcell :register :stack :bcell))

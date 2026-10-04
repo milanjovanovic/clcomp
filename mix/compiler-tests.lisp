@@ -332,6 +332,44 @@
 					       (equal "KEYWORD" (symbol-package :element-type))
 					       (equal "CL" (symbol-package 'element-type)))))
 
+(define-compiler-test "closures-1" t (lambda ()
+				       (let* ((a 1)
+					      (f (lambda (x) x)))
+					 (= 1 (funcall f 1)))))
+
+(define-compiler-test "closures-2" t (lambda ()
+				       (let* ((a 1)
+					      (f (lambda (x) (+ a x))))
+					 (= 2 (funcall f 1)))))
+
+(define-compiler-test "closures-3" nil (lambda ()
+					 (let* ((a 1)
+						(f (lambda (x) (+ a x))))
+					   (= 3 (funcall f 1)))))
+
+(define-compiler-test "closures-4" t (lambda ()
+				       (let* ((a 1)
+					      (f (lambda ()
+						   (lambda () (+ 1 a))))
+					      (f2 (funcall f)))
+					 (= (funcall f2) 2))))
+
+(define-compiler-test "closures-5" t (lambda ()
+				       (let* ((x (list 1 2))
+					      (f (lambda () (setf (car x) 10))))
+					 (funcall f)
+					 (equal (list 10 2)
+						x))))
+
+(define-compiler-test "closures-6" t (lambda ()
+				       (let* ((x (list 1 2))
+					      (f (lambda () (setf (car x) 10)))
+					      (f2 (lambda () (setf (car x) 100))))
+					 (funcall f)
+					 (funcall f2)
+					 (equal (list 100 2)
+						x))))
+
 
 (defun generate-all-test-cores ()
   (let ((*debug* nil))
