@@ -21,7 +21,7 @@
 (define-vop allocate (res :register) ((size :immediate :register :stack))
   (inst :mov res (@ *heap-header-reg*))
   (inst :mov *tmp-reg* size)
-  (inst :lea *tmp-reg* (@ res *tmp-reg* *word-size*))
+  (inst :lea *tmp-reg* (@ res *tmp-reg* *allocation-size*))
   (inst :mov (@ *heap-header-reg*) *tmp-reg*))
 
 ;;; closures support

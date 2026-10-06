@@ -8,10 +8,7 @@
   (inst :mov res arg))
 
 (define-vop make-symbol (res :register) ((name :register))
-  (inst :mov *tmp-reg* (@ *heap-header-reg*))
-  (inst :mov res *tmp-reg*)
-  (inst :add *tmp-reg* (* 5 *word-size*))
-  (inst :mov (@ *heap-header-reg*) *tmp-reg*)
+  (inline-vop 'allocate res 5 $stack-top-operand$)
   (inst :mov (@ res nil nil nil) name)
   (inst :mov (@ res nil nil *word-size*) *nil*)
   (inst :mov (@ res nil nil (* 2 *word-size*)) *nil*)

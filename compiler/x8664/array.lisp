@@ -1,12 +1,11 @@
 (in-package :clcomp)
 
-(define-vop allocate-array (res :register) ((arg :register)) 
-  (inst :mov *tmp-reg* (@ *heap-header-reg*))
-  (inst :mov res *tmp-reg*)
-  (inst :shr arg *tag-size*)
-  (inst :lea *tmp-reg* (@ *tmp-reg* arg *word-size* (* *word-size* *array-header-size*)))
-  (inst :mov (@ *heap-header-reg*) *tmp-reg*)
-  (inst :shl arg *tag-size*)
+(define-vop allocate-array (res :register) ((arg :register :stack))
+  (inst :mov res arg)
+  (inst :shr res *tag-size*)
+  (inst :add res *array-header-size*)
+  (inline-vop 'allocate res res $stack-top-operand$)
+  (inst :mov *tmp-reg* arg)
   (inst :mov (@ res nil nil *word-size*) arg)
   (inst :add res *pointer-tag*))
 
