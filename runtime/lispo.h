@@ -10,6 +10,9 @@
 
 typedef uintptr_t lispobj;
 
+#define FIXNUM_TAG_SIZE 0x1
+#define FIXNUM_MASK 0x1
+
 #define TAG_SIZE 0x3
 #define MASK 0x7
 #define CLEAR_TAG_MASK 0xfffffffffffffff8

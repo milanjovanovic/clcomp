@@ -58,7 +58,7 @@ int is_char(lispobj obj) {
 }
 
 int is_fixnum(lispobj obj) {
-  return (obj & MASK) == FIXNUM_TAG ? 1 : 0;
+  return (obj & FIXNUM_MASK) == FIXNUM_TAG ? 1 : 0;
 }
 
 int is_cons(lispobj obj) {
@@ -128,10 +128,12 @@ int is_struct(lispobj obj) {
 }
 
 enum base_lisp_type get_lisp_immediate_type(lispobj obj) {
+
+  if (is_fixnum(obj))
+    return FIXNUM;
+
   int tag = get_tag(obj);
   switch (tag) {
-  case FIXNUM_TAG:
-    return FIXNUM;
   case CHAR_TAG:
     return CHAR;
   case SINGLE_FLOAT_TAG:
@@ -143,11 +145,12 @@ enum base_lisp_type get_lisp_immediate_type(lispobj obj) {
 
 enum base_lisp_type get_lisp_type(lispobj obj) {
 
+  if (is_fixnum(obj))
+    return FIXNUM;
+
   int tag = get_tag(obj);
 
   switch (tag) {
-  case FIXNUM_TAG:
-    return FIXNUM;
   case CONS_TAG:
     return CONS;
   case FUNCTION_TAG:

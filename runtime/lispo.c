@@ -172,7 +172,7 @@ lispobj tag_fixnum(int64_t obj) {
   unsigned long mask = 0x8000000000000000UL;
   unsigned long negative = mask & obj;
   
-  long c = obj << TAG_SIZE;
+  long c = obj << FIXNUM_TAG_SIZE;
   
   if(negative) {
     c |= mask;
@@ -187,7 +187,7 @@ int64_t untag_fixnum(lispobj obj) {
   uint64_t mask = 0x8000000000000000UL;
   uint64_t negative = mask & obj;
 
-  int64_t c = obj >> TAG_SIZE;
+  int64_t c = obj >> FIXNUM_TAG_SIZE;
   
   if(negative) {
     c |= 0xF000000000000000UL;
