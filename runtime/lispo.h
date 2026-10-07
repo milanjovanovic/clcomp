@@ -4,8 +4,10 @@
 // FIXME, T values has bad tag
 // FIXME, it's not bad, it is good, T should have pointer low tag, but widetag is symbol
 // FIXME, NIL doesn't have poenter low tag
-#define LISP_T ((lispobj) 0x2000000F)  
+#define LISP_T ((lispobj) 0x2000000F)
 
+// 16 byte heap alignment
+#define ALLOCATION_SIZE 16
 #define WORD_SIZE 8
 
 typedef uintptr_t lispobj;
@@ -13,17 +15,20 @@ typedef uintptr_t lispobj;
 #define FIXNUM_TAG_SIZE 0x1
 #define FIXNUM_MASK 0x1
 
-#define TAG_SIZE 0x3
-#define MASK 0x7
-#define CLEAR_TAG_MASK 0xfffffffffffffff8
+#define TAG_SIZE 0x4
+#define MASK 0xf
+#define CLEAR_TAG_MASK 0xfffffffffffffff0
 
-#define FIXNUM_TAG 0x0 // #b000
-#define POINTER_TAG 0x1 // #b001
-#define CONS_TAG 0x2 // #/* b010 */
-#define FUNCTION_TAG 0x3 // #b011
-#define CHAR_TAG 0x4 // #b100
-#define SYMBOL_TAG 0x5 //#b101
-#define SINGLE_FLOAT_TAG 0x6 // #b110
+#define FIXNUM_TAG 0x0 //   #b0
+#define POINTER_TAG 0x1 //  #b0001
+#define CONS_TAG 0x3 //     #b0011
+#define FUNCTION_TAG 0x5 // #b0101
+#define CHAR_TAG 0x7 //     #b0111
+#define SYMBOL_TAG 0x9 //   #b1001
+#define SINGLE_FLOAT_TAG 0xb // #b1011
+#define WIDETAG_TAG 0xf      // #b1111
+
+// 0xd is free
 
 #define EXTENDED_TAG_MASK 0xFF
 #define EXTENDED_TAG_OTHER_TYPE 0x1
@@ -31,8 +36,6 @@ typedef uintptr_t lispobj;
 #define EXTENDED_TAG_SIMPLE_ARRAY 0xD1
 #define EXTENDED_TAG_STRING 0xD9
 #define EXTENDED_TAG_STRUCT 0xC1
-
-// tag 0x7 is free
 
 enum base_lisp_type {
   FIXNUM,
@@ -48,15 +51,15 @@ enum base_lisp_type {
 };
 
 
-#define CHAR_SHIFT 0x8
+/* #define CHAR_SHIFT 0x8 */
 
 struct cons {
   lispobj car;
   lispobj cdr;
 };
 
-#define CAR_OFFSET -2
-#define CDR_OFFSET 6
+/* #define CAR_OFFSET -2 */
+/* #define CDR_OFFSET 6 */
 
 struct array {
   lispobj tag;
