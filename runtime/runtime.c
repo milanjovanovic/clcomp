@@ -17,7 +17,7 @@
 #include <dlfcn.h>
 
 #define STATIC_SPACE_START 0x20000000 // we have hard coded this address on Lisp VOP's side
-#define STATIC_SPACE_SIZE (30 * 1024 * 1024)
+#define STATIC_SPACE_SIZE (4 * 1024)
 
 #define LISP_HEAP_START 0x200000000
 #define STACK_SIZE (5 * 1024 * 1024)
@@ -46,8 +46,8 @@ uintptr_t static_memory_start = STATIC_SPACE_START;
 size_t memory_size = LISP_HEAP_SIZE + STACK_SIZE;
 
 struct sigaction osa;
-void *static_start;
 lispobj *heap_header;
+lispobj *low_static_space;
 
 int is_pointer(lispobj obj) {
   return (obj & MASK) == POINTER_TAG ? 1 : 0;
@@ -389,32 +389,40 @@ void destroy_runtime() {
   munmap((void *) STATIC_SPACE_START, STATIC_SPACE_SIZE);
 }
 
-void init_runtime() {
+void write_to_low_static_space(lispobj obj) {
+  *low_static_space = obj;
+  low_static_space++;
+}
 
-  void *static_memory = allocate_static_memory();
+void init_low_static_space() {
+  //set NIL car and cdr to start of static memory
+  write_to_low_static_space(LISP_NIL);
+  write_to_low_static_space(LISP_NIL);
+  // this slot was set free ?
+  write_to_low_static_space(LISP_NIL);
+
+  // for Lisp calling C functions
+  // be aware that we have referenced this in Lisp VOP's in respect to STATIC_SPACE_START
+  // this has already bitten me once
+
+  /* lispobj *foreign_funs = ++lp; */
+  /* foreign_funs[0] = (lispobj) get_symbol_address; */
+  /* write_to_low_static_space(LISP_NIL); */
+  write_to_low_static_space((lispobj) get_symbol_address);
+}
+
+void allocate_low_static_space() {
+  low_static_space = (lispobj*) allocate_static_memory();
+}
+
+void init_heap() {
+
   void *current_heap = allocate_heap();
 
   current_heap += STACK_SIZE;
 
   printf("HEAP START: %p\n", current_heap);
   //  printf("STACK START: %p\n", stack_start);
-  printf("STATIC MEMORY: %p\n", static_memory);
-
-  //set NIL car and cdr to start of static memory
-  lispobj *lp = static_memory;
-  *lp = LISP_NIL;
-  lp++;
-  *lp = LISP_NIL;
-  lp++;
-  
-  // save stack memory pointer
-  static_start = (void *) lp;
-
-  // for Lisp calling C functions
-  // be aware that we have referenced this in Lisp VOP's in respect to STATIC_SPACE_START
-  // this has already bitten me once
-  lispobj *foreign_funs = ++lp;
-  foreign_funs[0] = (lispobj) get_symbol_address;
 
   heap_header = (lispobj *) current_heap;
 
@@ -427,6 +435,15 @@ void init_runtime() {
   printf("HEAP_HEADER_START: %p\n", (void *) (*heap_header));
   printf("HEAP_HEADER_END: %p\n", (void *) (*(heap_header+1)));
   
+}
+
+
+void init_runtime() {
+
+  printf("STATIC MEMORY: %p\n", low_static_space);
+
+  init_low_static_space();
+  init_heap();
 }
 
 void load_core() {
@@ -574,6 +591,8 @@ void install_handler() {
 }
 
 int main(int argc, char *argv[]) {
+
+  allocate_low_static_space();
 
   /* setbuf(stdout, NULL); */
   symbols_map = create_nm_hashmap("runtime.nm");
