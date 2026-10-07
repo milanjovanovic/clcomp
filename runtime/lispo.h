@@ -33,9 +33,10 @@ typedef uintptr_t lispobj;
 #define EXTENDED_TAG_MASK 0xFF
 #define EXTENDED_TAG_OTHER_TYPE 0x1
 
-#define EXTENDED_TAG_SIMPLE_ARRAY 0xD1
-#define EXTENDED_TAG_STRING 0xD9
-#define EXTENDED_TAG_STRUCT 0xC1
+#define EXTENDED_TAG_STRUCT 0x0F
+#define EXTENDED_TAG_SIMPLE_ARRAY 0x1F
+#define EXTENDED_TAG_STRING 0x2F
+
 
 enum base_lisp_type {
   FIXNUM,

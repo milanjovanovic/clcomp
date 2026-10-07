@@ -21,40 +21,41 @@
 (defparameter *allocation-size* 8)
 (defparameter *word-size* 8)
 
-(defparameter *tag-size* 3)
-(defparameter *mask* 7)
+(defparameter *fixnum-tag-size* 1)
+(defparameter *fixnum-mask* 1)
+
+(defparameter *tag-size* 4)
+(defparameter *mask* 15)
 
 (defparameter *fixnum-tag* 0)
 (defparameter *pointer-tag* 1)
-(defparameter *list-tag* 2)
-(defparameter *function-tag* 3)
-
-(defparameter *char-tag* 4)
-(defparameter *symbol-tag* 5)
-(defparameter *single-float-tag* 6)
+(defparameter *list-tag* 3)
+(defparameter *function-tag* 5)
+(defparameter *char-tag* 7)
+(defparameter *symbol-tag* 9)
+(defparameter *single-float-tag* 11)
+(defparameter *widetag-tag* 15)
 
 (defparameter *exteneded-tag-size* 8)
 (defparameter *extended-tag-mask* 255)
 
 ;;; first qword in heap allocated objects is type
-;;; we use the same 3 bit tagging scheme like in the immediate objects case
+;;; we use the same 4 bit tagging scheme like in the immediate objects case
 ;;; fixnum, char, single-float, all the others are free
-;;; we use *pointer-tag* as tag for other-heap-allocated-types
-;;; every type in *extended-tags* need to have #b001 as low 3 bits
+;;; we use *widetag-tag* as tag for other-heap-allocated-types
+;;; every type in *extended-tags* need to have #b1111 as low 4 bits
 
-(defparameter *other-boxed-type* *pointer-tag*)
+(defparameter *other-boxed-type* *widetag-tag*)
 
 (defparameter *extended-tags*
-  '((struct 193)
-    (simple-array 209)
-    (string 217)
-    (closure 225)
-    (closure-env 233)
-    ;;; closure related, variable binding cell
-    (bcell 241)
+  '((struct 15)
+    (simple-array 31)
+    (string 47)
+    (closure 63)
+    (closure-env 79)
+    ;; closure related, variable binding cell
+    (bcell 95)
     ))
-
-(defparameter *largest-extended-tag* 249)
 
 (defun get-extended-tag (what)
   (second (assoc what *extended-tags*)))
@@ -77,7 +78,7 @@
 (defun fixnumize (num)
   (if (and (> num *most-negative-fixnum*)
 	   (< num *most-positive-fixnum* ))
-      (ash num *tag-size*)
+      (ash num *fixnum-tag-size*)
       (error "Number is to big to be fixnum !!!")))
 
 (defun characterize (char)
