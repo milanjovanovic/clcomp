@@ -75,7 +75,7 @@
 
     (inst :label loopl)
     (inst :inc *fun-number-of-arguments-reg*)
-    (inline-vop 'cdr *tmp-reg* *tmp-reg* $stack-top-operand$)
+    (inline-vop 'inline-cdr *tmp-reg* *tmp-reg* $stack-top-operand$)
 
     (inst :label startl)
 
@@ -94,23 +94,23 @@
     (inst :cmp *fun-number-of-arguments-reg* 1)
     (inst :jump-fixup :je rdi)
 
-    (inline-vop 'car :rdx *tmp-reg* new-stack-top)
+    (inline-vop 'inline-car :rdx *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label rdi)
-    (inline-vop 'car :rdi *tmp-reg* new-stack-top)
+    (inline-vop 'inlne-car :rdi *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label r8) 
-    (inline-vop 'car :r8 *tmp-reg* new-stack-top)
+    (inline-vop 'inline-car :r8 *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label r9)
-    (inline-vop 'car :r9 *tmp-reg* new-stack-top)
+    (inline-vop 'inline-car :r9 *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label stack-args-label)
-    (inline-vop 'car :r11 *tmp-reg* new-stack-top)
+    (inline-vop 'inline-car :r11 *tmp-reg* new-stack-top)
     (inst :push :r11) 
     (inst :jump-fixup :jmp loopl)
 

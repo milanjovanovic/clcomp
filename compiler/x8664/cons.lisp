@@ -13,6 +13,9 @@
   (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *list-tag*)))
   (inst :mov res *tmp-reg*))
 
+(define-vop inline-car (res :register :stack) ((arg1 :register :stack))
+  (inst :mov res (@ arg1 nil nil (- *list-tag*))))
+
 (define-vop rplaca (res :register :stack) ((arg1 :register :stack) (arg2 :register))
   (inst :mov *tmp-reg* arg1)
   (inst :mov (@ *tmp-reg* nil nil (- *list-tag*)) arg2)
@@ -23,11 +26,13 @@
   (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *word-size* *list-tag*)))
   (inst :mov res *tmp-reg*))
 
+(define-vop inline-cdr (res :register) ((arg1 :register))
+  (inst :mov res (@ arg1 nil nil (- *word-size* *list-tag*))))
+
 (define-vop rplacd (res :register :stack) ((arg1 :register) (arg2 :register))
   (inst :mov *tmp-reg* arg1)
   (inst :mov (@ *tmp-reg* nil nil (- *word-size* *list-tag*)) arg2)
   (inst :mov *tmp-reg* res))
-
 
 ;; USE CMOV
 (define-vop null (res :register) ((arg :register))
