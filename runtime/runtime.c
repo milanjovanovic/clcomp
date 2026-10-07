@@ -315,7 +315,7 @@ void print_lisp(lispobj obj) {
     case FUNCTION:
       printf("FUNCTION\n");
       break;
-    case SYMBOL_TAG:
+    case SYMBOL:
       print_lisp_symbol(obj);
       break;
     case STRING:

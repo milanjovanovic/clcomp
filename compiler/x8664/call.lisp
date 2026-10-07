@@ -98,7 +98,7 @@
     (inst :jump-fixup :jmp loopl)
 
     (inst :label rdi)
-    (inline-vop 'inlne-car :rdi *tmp-reg* new-stack-top)
+    (inline-vop 'inline-car :rdi *tmp-reg* new-stack-top)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label r8) 

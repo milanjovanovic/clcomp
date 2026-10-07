@@ -21,7 +21,15 @@
 (define-vop allocate (res :register) ((size :immediate :register :stack))
   (inst :mov res (@ *heap-header-reg*))
   (inst :mov *tmp-reg* size)
-  (inst :lea *tmp-reg* (@ res *tmp-reg* *allocation-size*))
+  (inst :lea *tmp-reg* (@ res *tmp-reg* *word-size*))
+  (inst :mov (@ *heap-header-reg*) *tmp-reg*))
+
+(define-vop allocate-16bytes-aligned (res :register) ((size :immediate :register :stack))
+  (inst :mov res (@ *heap-header-reg*))
+  (inst :mov *tmp-reg* size)
+  (inst :add *tmp-reg* 1)
+  (inst :and *tmp-reg* -2)
+  (inst :lea *tmp-reg* (@ res *tmp-reg* *word-size*))
   (inst :mov (@ *heap-header-reg*) *tmp-reg*))
 
 ;;; closures support

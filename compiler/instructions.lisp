@@ -230,20 +230,7 @@
 
 ;;; FIXME, we are calculating assembling with every-jump-instruction=5 bytes
 ;;; maybe instructions below will brake that ?!?!
-(define-inst-template :jl (:imm32) ()
-		      #x0f nil #x8C nil)
 
-(define-inst-template :jle (:imm32) ()
-		      #x0f nil #x8E nil)
-
-(define-inst-template :jnge (:imm32) ()
-		      #x0f nil #x8C nil)
-
-(define-inst-template :jg (:imm32) ()
-		      #x0f nil #x8f nil)
-
-(define-inst-template :jnle (:imm32) ()
-		      #x0f nil #x8f nil)
 
 ;;; JZ == JE
 (define-inst-template :je (:imm32) ()
@@ -251,30 +238,76 @@
 (define-inst-template :jz (:imm32) ()
 		      #x0f nil #x84 nil)
 
-;; JNE
+;;; JNE = JNZ
 (define-inst-template :jne (:imm32) ()
 		      #x0f nil #x85 nil)
+(define-inst-template :jnz (:imm32) ()
+		      #x0f nil #x85 nil)
 
+
+(define-inst-template :js (:imm32) ()
+		      #x0f nil #x88 nil)
+
+;;; missing JNS
+;; (define-inst-template :jns (:imm8) ()
+;; 		      nil nil #x79 nil)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; UNSIGNED
+
+;; JNBE = JA
 (define-inst-template :jnbe (:imm32) ()
 		      #x0f nil #x87 nil)
+(define-inst-template :ja (:imm32) ()
+		      #x0f nil #x87 nil)
+
+
+(define-inst-template :jnb (:imm32) ()
+		      #x0f nil #x83 nil)
+(define-inst-template :jae (:imm32) ()
+		      #x0f nil #x83 nil)
+(define-inst-template :jnc (:imm32) ()
+		      #x0f nil #x83 nil)
+
+
+;;; UNSIGNED implement bellow  JB / JNAE / JC
+;;; UNSIGNED implement below or equal JBE / JNA
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SIGNED
+
+(define-inst-template :jg (:imm32) ()
+		      #x0f nil #x8f nil)
+(define-inst-template :jnle (:imm32) ()
+		      #x0f nil #x8f nil)
+
 
 (define-inst-template :jge (:imm32) ()
 		      #x0f nil #x8D nil)
-
 (define-inst-template :jnl (:imm32) ()
 		      #x0f nil #x8D nil)
+
+
+
+(define-inst-template :jl (:imm32) ()
+		      #x0f nil #x8C nil)
+(define-inst-template :jnge (:imm32) ()
+		      #x0f nil #x8C nil)
+
+
+(define-inst-template :jle (:imm32) ()
+		      #x0f nil #x8E nil)
+(define-inst-template :jng (:imm32) ()
+		      #x0f nil #x8E nil)
+
 
 ;; (define-inst-template :jrcxz (:imm8) ()
 ;; 		      nil nil #xE3 nil)
 
-;; (define-inst-template :jns (:imm8) ()
-;; 		      nil nil #x79 nil)
 
-(define-inst-template :jnb (:imm32) ()
-		      #x0f nil #x83 nil)
-
-(define-inst-template :js (:imm32) ()
-		      #x0f nil #x88 nil)
 
 ;; shift
 

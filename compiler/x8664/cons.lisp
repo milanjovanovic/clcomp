@@ -13,7 +13,7 @@
   (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *list-tag*)))
   (inst :mov res *tmp-reg*))
 
-(define-vop inline-car (res :register :stack) ((arg1 :register :stack))
+(define-vop inline-car (res :register) ((arg1 :register))
   (inst :mov res (@ arg1 nil nil (- *list-tag*))))
 
 (define-vop rplaca (res :register :stack) ((arg1 :register :stack) (arg2 :register))
@@ -21,7 +21,7 @@
   (inst :mov (@ *tmp-reg* nil nil (- *list-tag*)) arg2)
   (inst :mov res *tmp-reg*))
 
-(define-vop cdr (res :register :stack) ((arg1 :register :stack))
+(define-vop cdr (res :register) ((arg1 :register))
   (inst :mov *tmp-reg* arg1)
   (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- *word-size* *list-tag*)))
   (inst :mov res *tmp-reg*))
