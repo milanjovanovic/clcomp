@@ -45,7 +45,8 @@
 (defun process-bootstrap-data ()
   (let ((vmem (create-bootstrap-data)))
     (setf *compilation-start-address*
-	  (+ *compilation-start-address* (* 8 (length (dump-data vmem)))))
+	  (+ *compilation-start-address* (+ (* 8 (length (dump-data vmem)))
+					    (length (vmem-alignment-data vmem)))))
     (setf *vmem* vmem)))
 
 (defun dump-bootstrap-data (stream)
@@ -248,7 +249,8 @@
 (defun set-start-address (entry-compilation-unit)
   (setf *start-address* (+ (- *compilation-start-address*
 			      (get-compilation-unit-code-size entry-compilation-unit))
-			   (compile-component-start (compilation-unit-compile-component entry-compilation-unit)))))
+			   (compile-component-start (compilation-unit-compile-component entry-compilation-unit))))
+  (assert (zerop (mod *start-address* *allocation-size*))))
 
 (defparameter *core-output-dir* (concatenate 'string  *clcomp-home* "runtime/"))
 
@@ -311,13 +313,13 @@
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
     (let* ((bootstrap-data-list (make-bootstrap-data))
-	   (boostrap-align-data (vmem-alignment-data *vmem*))
+	   (boostrap-alignment-data (vmem-alignment-data *vmem*))
 	   (code-buffers-list (make-compilation-binary-data))
 	   (fixups-buffers-list (make-fixups-code-buffers-list))
 	   (fixups-size (* *word-size* (length fixups-buffers-list))))
       (with-open-file (f (make-output-bin-file "core") :direction :output
-									    :if-exists :supersede
-									    :element-type '(unsigned-byte 8))
+						       :if-exists :supersede
+						       :element-type '(unsigned-byte 8))
 
 	(dolist (c (immediate-as-byte-list fixups-size :imm64))
 	  (write-byte c f))
@@ -326,6 +328,7 @@
 	(write-start-address f)
 	(dolist (bootstrap-data bootstrap-data-list)
 	  (write-sequence bootstrap-data f))
+	(write-sequence boostrap-alignment-data f)
 	(dolist (code-buffer code-buffers-list)
 	  (write-sequence  code-buffer f))))))
 
