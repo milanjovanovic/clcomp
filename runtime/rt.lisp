@@ -191,6 +191,7 @@
   (let ((vmem (allocate-memory *runtime-heap-start*)))
     (dolist (o *bootstrap-symbols*)
       (allocate-object vmem o))
+    (make-alignment-data vmem *allocation-size*)
     vmem))
 
 (defun rt-dump-binary (file)
@@ -310,6 +311,7 @@
 	       (format t "~a -> ~x~%" k v))
 	     *rt-funs*)
     (let* ((bootstrap-data-list (make-bootstrap-data))
+	   (boostrap-align-data (vmem-alignment-data *vmem*))
 	   (code-buffers-list (make-compilation-binary-data))
 	   (fixups-buffers-list (make-fixups-code-buffers-list))
 	   (fixups-size (* *word-size* (length fixups-buffers-list))))

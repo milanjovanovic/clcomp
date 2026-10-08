@@ -1,6 +1,6 @@
 (in-package #:clcomp)
 
-(defstruct vmem start current allocations data)
+(defstruct vmem start current allocations data alignment-data)
 (defparameter *default-package* "CL")
 
 (defun allocate-memory (start)
@@ -8,6 +8,13 @@
 	     :current start
 	     :allocations (make-hash-table :test 'equal)
 	     :data (make-hash-table)))
+
+(defun make-alignment-data (vmem alignment)
+  (let* ((size (* 8 (length (dump-data vmem))))
+	 (diff (mod size alignment)))
+    (when (> diff 0)
+      (dotimes (i (- alignment diff))
+	(push #x90 (vmem-alignment-data vmem))))))
 
 (defun get-maybe-allocated-object (vmem object)
   (gethash object (vmem-allocations vmem)))
@@ -58,7 +65,7 @@
 				(list (length string)))))
 	  (add-allocated-obj vmem string (+ array-tag-addr *pointer-tag*))
 	  (write-object vmem array-tag-addr (get-extended-tag 'string))
-	  (write-object vmem array-size-addr (ash (length string) *tag-size*))
+	  (write-object vmem array-size-addr (ash (length string) *fixnum-tag-size*))
 	  (write-object vmem array-type-addr (or
 					      (get-maybe-allocated-object vmem array-type)
 					      (allocate-object vmem array-type)))
@@ -104,7 +111,7 @@
 
 (defun allocate-number (vmem number)
   (declare (ignore vmem))
-  (+ (ash number *tag-size*) *fixnum-tag*))
+  (+ (ash number *fixnum-tag-size*) *fixnum-tag*))
 
 (defun allocate-object (vmem object)
   (etypecase object

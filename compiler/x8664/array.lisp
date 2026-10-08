@@ -2,7 +2,7 @@
 
 (define-vop allocate-array (res :register) ((arg :register :stack))
   (inst :mov res arg)
-  (inst :shr res *tag-size*)
+  (inst :shr res *fixnum-tag-size*)
   (inst :add res *array-header-size*)
   (inline-vop 'allocate res res $stack-top-operand$)
   (inst :mov *tmp-reg* arg)
@@ -13,7 +13,7 @@
 				  (index :register))
   (inst :lea res (@ array nil nil (- *pointer-tag*)))
   (inst :mov *tmp-reg* index)
-  (inst :shr *tmp-reg* *tag-size*)
+  (inst :shr *tmp-reg* *fixnum-tag-size*)
   (inst :mov res (@ res *tmp-reg* *word-size* (* *array-header-size* *word-size*))))
 
 (define-vop setf-aref (res :register) ((array :register)
@@ -21,7 +21,7 @@
 				       (value :register))
   (inst :lea res (@ array nil nil (- *pointer-tag*)))
   (inst :mov *tmp-reg* index)
-  (inst :shr *tmp-reg* *tag-size*)
+  (inst :shr *tmp-reg* *fixnum-tag-size*)
   (inst :mov (@ res *tmp-reg* *word-size* (* *array-header-size* *word-size*)) value)
   (inst :mov res value))
 
@@ -108,7 +108,7 @@
     (inst :mov *tmp-reg* (@ *heap-header-reg*))
     (inst :mov res *tmp-reg*)
     (inst :mov *fun-number-of-arguments-reg* (@ array nil nil (- *word-size* *pointer-tag*)))
-    (inst :shr *fun-number-of-arguments-reg* *tag-size*)
+    (inst :shr *fun-number-of-arguments-reg* *fixnum-tag-size*)
     ;; bump allocation pointer
     (inst :lea *tmp-reg* (@ *tmp-reg* *fun-number-of-arguments-reg* *word-size* (* *array-header-size* *word-size*)))
     (inst :mov (@ *heap-header-reg*) *tmp-reg*)

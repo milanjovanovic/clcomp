@@ -3,8 +3,7 @@
 (define-vop fixnump (res :register) ((arg :register))
   (let ((true-label (make-vop-label "true"))
 	(exit-label (make-vop-label "exit")))
-    (inst :lea *tmp-reg* (@ arg nil nil (- *fixnum-tag*)))
-    (inst :test *tmp-reg* *mask*)
+    (inst :test *tmp-reg* *fixnum-mask*)
     (inst :jump-fixup :je true-label)
     (inst :mov res *nil*)
     (inst :jump-fixup :jmp exit-label)
@@ -55,7 +54,7 @@
 
 (define-vop abs (res :register) ((arg1 :register))
   (inst :mov *tmp-reg* arg1)
-  (inst :sar *tmp-reg* *tag-size*)
+  (inst :sar *tmp-reg* *fixnum-tag-size*)
   (inst :sar *tmp-reg* (- (* *word-size* 8) 1))
   (inst :mov res arg1)
   (inst :xor res *tmp-reg*)
@@ -79,21 +78,21 @@
   (inst :and res arg2))
 
 (define-vop %fixnum->fixnum-shift-left (res :register) ((arg1 :register) (arg2 :register))
-  (inst :push :RCX)
+  (inst :mov *tmp-reg* :RCX)
   (inst :mov res arg1)
   (inst :mov :RCX arg2)
-  (inst :shr :RCX *tag-size*)
+  (inst :shr :RCX *fixnum-tag-size*)
   (inst :shl res :CL)
-  (inst :pop :RCX))
+  (inst :mov :RCX *tmp-reg*))
 
 (define-vop %fixnum-shift-right (res :register) ((arg1 :register) (arg2 :register))
-  (inst :push :RCX)
+  (inst :mov *tmp-reg* :RCX)
   (inst :mov res arg1)
   (inst :mov :RCX arg2)
-  (inst :shr :RCX *tag-size*)
+  (inst :shr :RCX *fixnum-tag-size*)
   (inst :sar res :CL)
   (inst :and res -8)
-  (inst :pop :RCX))
+  (inst :mov :RCX *tmp-reg*))
 
 (define-vop %fixnum-larger-than-zero (res :register) ((arg1 :register))
   (inst :test arg1 arg1)
@@ -109,11 +108,11 @@
 
 (define-vop %imul (res :register) ((arg1 :register) (arg2 :register :stack))
   (inst :mov res arg1)
-  (inst :sar res *tag-size*)
+  (inst :sar res *fixnum-tag-size*)
   (inst :mov *tmp-reg* arg2)
-  (inst :sar *tmp-reg* *tag-size*)
+  (inst :sar *tmp-reg* *fixnum-tag-size*)
   (inst :imul res arg2)
-  (inst :shl res *tag-size*))
+  (inst :shl res *fixnum-tag-size*))
 
 ;;; FIXME
 (define-vop %fixnum-evenp (res :register) ((arg :register :stack))
@@ -127,6 +126,7 @@
     (inst :mov res *t*)
     (inst :label end-label)))
 
+;;; FIXME, 
 (define-vop %fixnum-fixnum-remainder (res :register) ((arg1 :register :stack) (arg2 :register))
   (inst :push :rax)
   (inst :push :rdx)
@@ -144,6 +144,6 @@
   (inst :cqo)
   (inst :idiv :rax arg2)
   (inst :mov res :rax)
-  (inst :shl res *tag-size*)
+  (inst :shl res *fixnum-tag-size*)
   (inst :pop :rdx)
   (inst :pop :rax))

@@ -18,7 +18,7 @@
 (defparameter *preserved-regs* '(:R12 :R13 :R14 :RBX :RSI))
 (defparameter *heap-header-reg* :R15)
 
-(defparameter *allocation-size* 8)
+(defparameter *allocation-size* 16)
 (defparameter *word-size* 8)
 
 (defparameter *fixnum-tag-size* 1)
@@ -27,6 +27,8 @@
 (defparameter *tag-size* 4)
 (defparameter *mask* 15)
 
+;; NOTE, don't change *fixnum-tag
+;; in some assembly we are skipping lea DEST, [SRC-*fixnum-tag*] because we know it is 0
 (defparameter *fixnum-tag* 0)
 (defparameter *pointer-tag* 1)
 (defparameter *list-tag* 3)
@@ -66,10 +68,10 @@
 (defparameter *t* 536870927)
 
 (defparameter *most-positive-fixnum* (- (expt 2 (- (* *word-size* 8)
-						   (+ 1 *tag-size*))) 1))
+						   (+ 1 *fixnum-tag-size*))) 1))
 
 (defparameter *most-negative-fixnum* (- (expt 2 (- (* *word-size* 8)
-						   (+ 1 *tag-size*)))))
+						   (+ 1 *fixnum-tag-size*)))))
 
 
 (defparameter *array-header-size* 4) ;; look at lispo.h

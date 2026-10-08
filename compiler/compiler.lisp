@@ -850,6 +850,7 @@
 
 ;;; adjust every compile-component to *allocation-size* borders 
 (defun set-and-maybe-adjust-code-size (component)
+  (declare (optimize debug))
   (let* ((prefix-code-size (code-size (compile-component-prefix-code component)))
 	 (code-size (code-size (compile-component-byte-code component)))
 	 (size (+ prefix-code-size code-size))

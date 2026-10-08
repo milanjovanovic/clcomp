@@ -2,7 +2,7 @@
 
 (define-vop %raw (res :register) ((arg :register))
   (inst :mov res arg)
-  (inst :and res (ash -1 3)))
+  (inst :and res (ash -1 4)))
 
 (define-vop eq (res :register :stack) ((arg1 :register :stack) (arg2 :register :stack))
   (let ((true-label (make-vop-label "true"))
