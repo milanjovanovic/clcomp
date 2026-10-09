@@ -10,15 +10,6 @@
 	     :data (make-hash-table)
 	     :alignment alignment))
 
-(defun make-alignment-data (vmem alignment)
-  (let* ((size (* 8 (length (dump-data vmem))))
-	 (diff (mod size alignment)))
-    (assert (zerop diff))
-    ;; (when (> diff 0)
-    ;;   (dotimes (i (- alignment diff))
-    ;; 	(push #x90 (vmem-alignment-data vmem))))
-    ))
-
 (defun get-maybe-allocated-object (vmem object)
   (gethash object (vmem-allocations vmem)))
 
