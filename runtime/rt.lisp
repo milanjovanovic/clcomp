@@ -189,7 +189,7 @@
     (write-byte c stream)))
 
 (defun create-bootstrap-data ()
-  (let ((vmem (allocate-memory *runtime-heap-start*)))
+  (let ((vmem (allocate-memory *runtime-heap-start* *allocation-size*)))
     (dolist (o *bootstrap-symbols*)
       (allocate-object vmem o))
     (make-alignment-data vmem *allocation-size*)
