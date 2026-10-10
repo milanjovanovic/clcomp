@@ -64,7 +64,7 @@
 
 ;;; tag 1 is free ??
 
-(defparameter *nil* 536870914)
+(defparameter *nil* 536870915)
 (defparameter *t* 536870927)
 
 (defparameter *most-positive-fixnum* (- (expt 2 (- (* *word-size* 8)

@@ -1,6 +1,6 @@
 #include <stdint.h>
 // NIL car/cdr should be set to the same NIL value
-#define LISP_NIL ((lispobj) 0x20000002)
+#define LISP_NIL ((lispobj) 0x20000003)
 // FIXME, T values has bad tag
 // FIXME, it's not bad, it is good, T should have pointer low tag, but widetag is symbol
 // FIXME, NIL doesn't have poenter low tag

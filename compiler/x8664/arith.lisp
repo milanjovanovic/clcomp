@@ -3,7 +3,7 @@
 (define-vop fixnump (res :register) ((arg :register))
   (let ((true-label (make-vop-label "true"))
 	(exit-label (make-vop-label "exit")))
-    (inst :test *tmp-reg* *fixnum-mask*)
+    (inst :test arg *fixnum-mask*)
     (inst :jump-fixup :je true-label)
     (inst :mov res *nil*)
     (inst :jump-fixup :jmp exit-label)

@@ -18,13 +18,13 @@
     (inst :label exit-label)))
 
 ;; size = number of qwords
-(define-vop allocate (res :register) ((size :immediate :register :stack))
+(define-vop allocate-old (res :register) ((size :immediate :register :stack))
   (inst :mov res (@ *heap-header-reg*))
   (inst :mov *tmp-reg* size)
   (inst :lea *tmp-reg* (@ res *tmp-reg* *word-size*))
   (inst :mov (@ *heap-header-reg*) *tmp-reg*))
 
-(define-vop allocate-16bytes-aligned (res :register) ((size :immediate :register :stack))
+(define-vop allocate (res :register) ((size :immediate :register :stack))
   (inst :mov res (@ *heap-header-reg*))
   (inst :mov *tmp-reg* size)
   (inst :add *tmp-reg* 1)
