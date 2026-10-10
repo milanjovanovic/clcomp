@@ -415,11 +415,13 @@
 
 
 (defun create-ref-constant-node (form)
-  (make-load-time-value-node
-   :form form
-   :node (create-node (clcomp-macroexpand (list 'lambda nil
-						form)
-					  (create-macros-env t t)))))
+  (if (bootstraped-object-p form)
+      (make-compile-time-bootstrap-constant-node :form form)
+      (make-load-time-value-node
+       :form form
+       :node (create-node (clcomp-macroexpand (list 'lambda nil
+						    form)
+					      (create-macros-env t t))))))
 
 (defun create-fun-rip-relative-node (form)
   (make-fun-rip-relative-node :form (second form)))
