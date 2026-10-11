@@ -52,7 +52,7 @@
 						(arg2 :register :stack))
   (inst :mov *tmp-reg* arg1)
   (inst :mov res *t*)
-  (inst :xor *tmp-reg* arg2)
+  (inst :cmp *tmp-reg* arg2)
   (inst :mov *tmp-reg* *nil*)
   (inst :cmovl res *tmp-reg*))
 
@@ -60,11 +60,11 @@
 						(arg2 :register :stack))
   (inst :mov *tmp-reg* arg1)
   (inst :mov res *t*)
-  (inst :xor *tmp-reg* arg2)
+  (inst :cmp *tmp-reg* arg2)
   (inst :mov *tmp-reg* *nil*)
   (inst :cmovg res *tmp-reg*))
 
-(define-vop abs (res :register) ((arg1 :register))
+(define-vop abs (res :register :stack) ((arg1 :register))
   (inst :mov *tmp-reg* arg1)
   (inst :sar *tmp-reg* *fixnum-tag-size*)
   (inst :sar *tmp-reg* (- (* *word-size* 8) 1))
@@ -77,18 +77,23 @@
   (inst :neg *tmp-reg*)
   (inst :mov res *tmp-reg*))
 
-(define-vop two-args-logxor (res :register) ((arg1 :register) (arg2 :register))
-  (inst :mov res arg1)
-  (inst :xor res arg2))
+(define-vop two-args-logxor (res :register :stack) ((arg1 :register :stack)
+						    (arg2 :register :stack))
+  (inst :mov *tmp-reg* arg1)
+  (inst :xor *tmp-reg* arg2)
+  (inst :mov res *tmp-reg*))
 
-(define-vop two-args-logand (res :register) ((arg1 :register) (arg2 :register))
-  (inst :mov res arg1)
-  (inst :and res arg2))
+(define-vop two-args-logand (res :register :stack) ((arg1 :register :stack)
+						    (arg2 :register :stack))
+  (inst :mov *tmp-reg* arg1)
+  (inst :and *tmp-reg* arg2)
+  (inst :mov res *tmp-reg*))
 
-(define-vop two-args-logior (res :register) ((arg1 :register) (arg2 :register))
-  (inst :mov res arg1)
-  ;; FIXME
-  (inst :and res arg2))
+(define-vop two-args-logior (res :register :stack) ((arg1 :register :stack)
+						    (arg2 :register :stack))
+  (inst :mov *tmp-reg* arg1)
+  (inst :or *tmp-reg* arg2)
+  (inst :mov res *tmp-reg*))
 
 (define-vop %fixnum->fixnum-shift-left (res :register) ((arg1 :register) (arg2 :register))
   (inst :mov *tmp-reg* :RCX)
@@ -107,19 +112,14 @@
   (inst :and res (ash -1 *fixnum-tag-size*))
   (inst :mov :RCX *tmp-reg*))
 
-(define-vop %fixnum-larger-than-zero (res :register) ((arg1 :register))
-  (inst :test arg1 arg1)
-  (inst :mov res *nil*)
-  (inst :mov *tmp-reg* *t*)
-  (inst :cmovnle res *tmp-reg*))
+(define-vop %fixnum-evenp (res :register :stack) ((arg :register :stack))
+  (inst :mov res *t*)
+  (inst :mov *tmp-reg* arg)
+  (inst :test arg (ash 1 *fixnum-tag-size*))
+  (inst :mov *tmp-reg* *nil*)
+  (inst :cmovnz res *tmp-reg*))
 
-(define-vop %fixnum-less-than-zero (res :register) ((arg1 :register))
-  (inst :test arg1 arg1)
-  (inst :mov res *nil*)
-  (inst :mov *tmp-reg* *t*)
-  (inst :cmovs res *tmp-reg*))
-
-;; fixme
+;; FIXME
 (define-vop %imul (res :register) ((arg1 :register) (arg2 :register :stack))
   (inst :mov res arg1)
   (inst :sar res *fixnum-tag-size*)
@@ -128,11 +128,7 @@
   (inst :imul res arg2)
   (inst :shl res *fixnum-tag-size*))
 
-(define-vop %fixnum-evenp (res :register) ((arg :register :stack))
-  (inst :mov res *nil*)
-  (inst :mov *tmp-reg* *t*)
-  (inst :test arg (ash 1 *fixnum-tag-size*))
-  (inst :cmovnle res *tmp-reg*))
+
 
 ;;; FIXME, 
 (define-vop %fixnum-fixnum-remainder (res :register) ((arg1 :register :stack) (arg2 :register))

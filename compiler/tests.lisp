@@ -40,6 +40,24 @@
    (list (make-instruction :MOV :RAX (@ :R12)) '(#x49 #x8b #x04 #x24))
    (list (make-instruction :MOV :RAX (@ :R12 nil nil -2)) '(#x49 #x8b #x44 #x24 #xfe))
    
+   ;; LOGIC
+   (list (make-instruction :XOR :RAX :RBX) '(#x48 #x31 #xD8))
+   (list (make-instruction :XOR (@ :RAX) :RBX) '(#x48 #x31 #x18))
+   (list (make-instruction :XOR (@ :r12) :RSP) '(#x49 #x31 #x24 #x24))
+   (list (make-instruction :XOR (@ :RSP nil nil 13) :R12) '(#x4C #x31 #x64 #x24 #xD))
+
+   (list (make-instruction :XOR (@ :RAX ) 30) '(#x48 #x83 #x30 #x1E))
+   (list (make-instruction :XOR (@ :RSP nil nil 13) 25) '(#x48 #x83 #x74 #x24 #xD #x19))
+
+   ;; OR
+   (list (make-instruction :OR :RAX :RBX) '(#x48 #x9 #xD8))
+   (list (make-instruction :OR (@ :RAX) :RBX) '(#x48 #x9 #x18))
+   (list (make-instruction :OR (@ :r12) :RSP) '(#x49 #x9 #x24 #x24))
+   (list (make-instruction :OR (@ :RSP nil nil 13) :R12) '(#x4C #x9 #x64 #x24 #xD))
+
+   (list (make-instruction :OR (@ :RAX ) 30) '(#x48 #x83 #x08 #x1E))
+   (list (make-instruction :OR (@ :RSP nil nil 13) 25) '(#x48 #x83 #x4C #x24 #xD #x19))
+   (list (make-instruction :OR (@ :RSP nil nil 13) 300) '(#x48 #x81 #x4C #x24 #xD #x2C #x01 #x00 #x00))
    
    ;; LEA
    (list (make-instruction :lea :RAX (@ :RCX nil nil nil)) '(#x48 #x8D #x01))

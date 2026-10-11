@@ -69,7 +69,6 @@
       (return-from >= nil)))
   t)
 
-;; FIXME, use VOP
 (defun two-args-<= (a b)
   (declare (inline two-args-<=))
   (two-args-<= a b))
@@ -96,19 +95,38 @@
   (declare (inline two-args-logior))
   (two-args-logior x y))
 
-(defun logxor (x y)
-  (logxor x y))
+(defun logior (&rest rest)
+  (declare (inline two-args-logior))
+  (let ((sum 0))
+    (dolist (i rest)
+      (setf sum (two-args-logior sum i)))
+    sum))
 
-(defun logand (x y)
-  (logand x y))
+(defun logxor (&rest rest)
+  (declare (inline two-args-logxor))
+  (let ((sum 0))
+    (dolist (i rest)
+      (setf sum (two-args-logxor sum i)))
+    sum))
+
+(defun logand (&rest rest)
+  (declare (inline two-args-logand))
+  (let ((sum 0))
+    (dolist (i rest)
+      (setf sum (two-args-logand sum i)))
+    sum))
 
 (defun plusp (x)
-  (declare (inline %fixnum-larger-than-zero))
-  (%fixnum-larger-than-zero x))
+  (declare (inline two-args->))
+  (two-args-> x 0))
 
 (defun minusp (x)
-  (declare (inline %fixnum-less-than-zero))
-  (%fixnum-less-than-zero x))
+  (declare (inline two-args-<))
+  (two-args-< x 0))
+
+(defun zerop (z)
+  (declare (inline two-args-=))
+  (two-args-= z 0))
 
 (defun ash (integer count)
   (declare (inline %fixnum->fixnum-shift-left %fixnum-shift-right))

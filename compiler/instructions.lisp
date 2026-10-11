@@ -77,15 +77,33 @@
 (define-inst-template :xor ((:reg64 :addr) :reg64) ()
 		      nil nil #x31 nil)
 
+(define-inst-template :xor (:reg64 (:reg64 :addr)) ()
+		      nil nil #x33 nil)
+
 (define-inst-template :xor ((:reg64 :addr) :imm32) ()
 		      nil nil #x81 #x30)
 
+(define-inst-template :xor ((:reg64 :addr) :imm8) ()
+		      nil nil #x83 #x30)
 
+
+(define-inst-template :or ((:reg64 :addr) :reg64) ()
+		      nil nil #x09 nil)
+
+(define-inst-template :or (:reg64 (:reg64 :addr)) ()
+		      nil nil #x0b nil)
+
+
+;; CHECK THIS
 (define-inst-template :or ((:reg64 :addr) :imm32) ()
 		      nil nil #x81 #x08)
 
-(define-inst-template :or ((:reg64 :addr) :imm32) ()
-		      nil nil #x81 #x30)
+(define-inst-template :or ((:reg64 :addr) :imm8) ()
+		      nil nil #x83 #x08)
+
+;; CHECK THIS
+;; (define-inst-template :or ((:reg64 :addr) :imm32) ()
+;; 		      nil nil #x81 #x30)
 
 
 (define-inst-template :and ((:reg64 :addr) :imm32) ()

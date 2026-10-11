@@ -16,7 +16,8 @@
 					 (char= two-args-char=)
 					 (char-equal two-args-char-equal)
 					 (logxor two-args-logxor)
-					 (logand two-args-logand)))
+					 (logand two-args-logand)
+					 (logior two-args-logior)))
 
 
 ;;; this symbols need to be internet
