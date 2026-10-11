@@ -60,8 +60,8 @@
 
 ;; FIXME, use vop
 (defun two-args->= (a b)
-  (declare (inline two-args-= two-args->))
-  (or (two-args-= a b) (two-args-> a b)))
+  (declare (inline two-args->=))
+  (two-args->= a b))
 
 (defun >= (num &rest rest)
   (dolist (i rest)
@@ -71,8 +71,8 @@
 
 ;; FIXME, use VOP
 (defun two-args-<= (a b)
-  (declare (inline two-args-= two-args-<))
-  (or (two-args-= a b) (two-args-< a b)))
+  (declare (inline two-args-<=))
+  (two-args-<= a b))
 
 (defun <= (num &rest rest)
   (dolist (i rest)

@@ -125,7 +125,74 @@
    (list (make-instruction :movups :xmm0 (@ :xmmword :r10 nil nil nil)) '(#x41 #x0f #x10 #x02))
    (list (make-instruction :movups :xmm14 :xmm12) '(#x45 #x0f #x10 #xf4 ))
    (list (make-instruction :movups :xmm0 (@ :xmmword :rip nil nil 10)) '(#x0f #x10 #x05 #x0a #x00 #x00 #x00))
-   ))
+
+
+   ;; CMOVxx
+   (list (make-instruction :cmove :RAX :RBX) '(#x48 #x0f #x44 #xc3))
+   (list (make-instruction :cmove :R12 :RBX) '(#x4c #x0f #x44 #xe3))
+   (list (make-instruction :cmove :R12 (@ :RSP)) '(#x4c #x0f #x44 #x24 #x24))
+   (list (make-instruction :cmove :RSP (@ :R12 :RAX 8 31)) '(#x49 #x0f #x44 #x64 #xc4 #x1f))
+
+   (list (make-instruction :cmovne :RAX :RBX) '(#x48 #xF #x45 #xC3) )
+   (list (make-instruction :cmovne :R12 :RBX) '(#x4C #xF #x45 #xE3))
+   (list (make-instruction :cmovne :R12 (@ :RSP)) '(#x4C #xF #x45 #x24 #x24))
+   (list (make-instruction :cmovne :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x45 #x64 #xC4 #x1F))
+
+   (list (make-instruction :cmovna :RAX :RBX) '(#x48 #xF #x46 #xC3))
+   (list (make-instruction :cmovna :R12 :RBX) '(#x4C #xF #x46 #xE3))
+   (list (make-instruction :cmovna :R12 (@ :RSP)) '(#x4C #xF #x46 #x24 #x24))
+   (list (make-instruction :cmovna :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x46 #x64 #xC4 #x1F))
+
+
+   (list (make-instruction :cmova :RAX :RBX) '(#x48 #xF #x47 #xC3))
+   (list (make-instruction :cmova :R12 :RBX) '(#x4C #xF #x47 #xE3))
+   (list (make-instruction :cmova :R12 (@ :RSP)) '(#x4C #xF #x47 #x24 #x24))
+   (list (make-instruction :cmova :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x47 #x64 #xC4 #x1F))
+
+
+   (list (make-instruction :cmovs :RAX :RBX) '(#x48 #xF #x48 #xC3))
+   (list (make-instruction :cmovs :R12 :RBX) '(#x4C #xF #x48 #xE3))
+   (list (make-instruction :cmovs :R12 (@ :RSP)) '(#x4C #xF #x48 #x24 #x24))
+   (list (make-instruction :cmovs :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x48 #x64 #xC4 #x1F))
+
+   (list (make-instruction :cmovns :RAX :RBX) '(#x48 #xF #x49 #xC3))
+   (list (make-instruction :cmovns :R12 :RBX) '(#x4C #xF #x49 #xE3) )
+   (list (make-instruction :cmovns :R12 (@ :RSP)) '(#x4C #xF #x49 #x24 #x24) )
+   (list (make-instruction :cmovns :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x49 #x64 #xC4 #x1F))
+
+
+   (list (make-instruction :cmovpe :RAX :RBX) '(#x48 #xF #x4A #xC3))
+   (list (make-instruction :cmovpe :R12 :RBX) '(#x4C #xF #x4A #xE3))
+   (list (make-instruction :cmovpe :R12 (@ :RSP)) '(#x4C #xF #x4A #x24 #x24))
+   (list (make-instruction :cmovpe :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x4A #x64 #xC4 #x1F))
+
+
+   (list (make-instruction :cmovpo :RAX :RBX) '(#x48 #xF #x4B #xC3))
+   (list (make-instruction :cmovpo :R12 :RBX) '(#x4C #xF #x4B #xE3))
+   (list (make-instruction :cmovpo :R12 (@ :RSP)) '(#x4C #xF #x4B #x24 #x24))
+   (list (make-instruction :cmovpo :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x4B #x64 #xC4 #x1F))
+
+
+   (list (make-instruction :cmovnge :RAX :RBX) '(#x48 #xF #x4C #xC3))
+   (list (make-instruction :cmovnge :R12 :RBX) '(#x4C #xF #x4C #xE3))
+   (list (make-instruction :cmovnge :R12 (@ :RSP)) '(#x4C #xF #x4C #x24 #x24))
+   (list (make-instruction :cmovnge :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x4C #x64 #xC4 #x1F))
+
+   (list (make-instruction :cmovge :RAX :RBX) '(#x48 #xF #x4D #xC3))
+   (list (make-instruction :cmovge :R12 :RBX) '(#x4C #xF #x4D #xE3))
+   (list (make-instruction :cmovge :R12 (@ :RSP)) '(#x4C #xF #x4D #x24 #x24))
+   (list (make-instruction :cmovge :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x4D #x64 #xC4 #x1F))
+
+   (list (make-instruction :cmovng :RAX :RBX) '(#x48 #xF #x4E #xC3))
+   (list (make-instruction :cmovng :R12 :RBX) '(#x4C #xF #x4E #xE3))
+   (list (make-instruction :cmovng :R12 (@ :RSP)) '(#x4C #xF #x4E #x24 #x24))
+   (list (make-instruction :cmovng :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x4E #x64 #xC4 #x1F))
+
+
+   (list (make-instruction :cmovg :RAX :RBX) '(#x48 #xF #x4F #xC3))
+   (list (make-instruction :cmovg :R12 :RBX) '(#x4C #xF #x4F #xE3))
+   (list (make-instruction :cmovg :R12 (@ :RSP)) '(#x4C #xF #x4F #x24 #x24) )
+   (list (make-instruction :cmovg :RSP (@ :R12 :RAX 8 31)) '(#x49 #xF #x4F #x64 #xC4 #x1F))))
 
 (defun run-instruction-tests ()
   (let ((errors nil)

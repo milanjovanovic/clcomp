@@ -130,13 +130,60 @@
 
 
 ;;; CMOV
+(define-inst-template :cmove (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x44 nil)
+(define-inst-template :cmovz (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x44 nil)
+
+(define-inst-template :cmovnz (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x45 nil)
+(define-inst-template :cmovne (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x45 nil)
+
+(define-inst-template :cmovbe (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x46 nil)
+(define-inst-template :cmovna (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x46 nil)
+
+(define-inst-template :cmovnbe (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x47 nil)
+(define-inst-template :cmova (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x47 nil)
+
 (define-inst-template :cmovs (:reg64 (:reg64 :addr64)) ()
 		      nil #x0f #x48 nil)
 
+(define-inst-template :cmovns (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x49 nil)
+
+(define-inst-template :cmovp (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4a nil)
+(define-inst-template :cmovpe (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4a nil)
+
+(define-inst-template :cmovnp (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4b nil)
+(define-inst-template :cmovpo (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4b nil)
+
+(define-inst-template :cmovl (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4c nil)
+(define-inst-template :cmovnge (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4c nil)
+
+(define-inst-template :cmovnl (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4d nil)
+(define-inst-template :cmovge (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4d nil)
+
 (define-inst-template :cmovle (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4E nil)
+(define-inst-template :cmovng (:reg64 (:reg64 :addr64)) ()
 		      nil #x0f #x4E nil)
 
 (define-inst-template :cmovnle (:reg64 (:reg64 :addr64)) ()
+		      nil #x0f #x4F nil)
+(define-inst-template :cmovg (:reg64 (:reg64 :addr64)) ()
 		      nil #x0f #x4F nil)
 
 ;;; LEA
