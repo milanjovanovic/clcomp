@@ -1351,7 +1351,7 @@
 		      (dolist (place (nthcdr (length *fun-arguments-regs*) values-places))
 			(emit-simple-move place (make-operand-place :operand *tmp-reg-2*) block lambda-ssa)
 			(emit-simple-move (make-operand-place :operand *tmp-reg-2*)
-					  (make-operand-place :operand (@ *base-pointer-reg* displacement))
+					  (make-operand-place :operand (@ *base-pointer-reg* nil nil displacement))
 					  block lambda-ssa)
 			(decf displacement clcomp::*word-size*)))
 

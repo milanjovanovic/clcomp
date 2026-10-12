@@ -442,13 +442,13 @@
 	  (inst :cmp *fun-number-of-arguments-reg*  index)
 	  (inst :jump-fixup :je (car lbs))
 	  (if reg
-	      (inst :mov reg place)
+	      (inst :mov place reg)
 	      (if (is-register place)
-		  (inst :mov (@ *stack-pointer-reg* (mvb-value-stack-offset index places-count)) place)
+		  (inst :mov place (@ *stack-pointer-reg* nil nil (mvb-value-stack-offset index places-count)))
 		  (progn
-		    (inst :mov *tmp-reg* place)
-		    (inst :mov (@ *stack-pointer-reg* (mvb-value-stack-offset index places-count)) *tmp-reg*))))))
-      (inst :jump-fixup :jmp :end-label)
+		    (inst :mov *tmp-reg* (@ *stack-pointer-reg* nil nil (mvb-value-stack-offset index places-count)))
+		    (inst :mov place *tmp-reg*))))))
+      (inst :jump-fixup :jmp end-label)
       (do ((nil-labels nil-labels (cdr nil-labels))
 	   (places places (cdr places)))
 	  ((null nil-labels) nil)
