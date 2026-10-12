@@ -2,14 +2,20 @@
   (declare (inline fixnump))
   (fixnump x))
 
+;;; for now we only have fixnums
+(defun numberp (x)
+  (declare (inline fixnump))
+  (fixnump x))
+
 (defun two-args-+ (a b)
   (declare (inline two-args-+))
   (two-args-+ a b))
 
 (defun + (&rest rest)
+  (declare (inline two-args-+))
   (let ((sum 0))
     (dolist (i rest)
-      (setf sum (+ sum i)))
+      (setf sum (two-args-+ sum i)))
     sum))
 
 (defun two-args-- (a b)
@@ -21,10 +27,11 @@
   (%neg a))
 
 (defun - (num &rest rest)
+  (declare (inline two-args--))
   (if rest
       (let ((result num))
 	(dolist (i rest)
-	  (setf result (- result i)))
+	  (setf result (two-args-- result i)))
 	result)
       (%neg num)))
 
@@ -33,8 +40,9 @@
   (two-args-= a b))
 
 (defun = (num &rest rest)
+  (declare (inline two-args-=))
   (dolist (i rest)
-    (unless (= i num)
+    (unless (two-args-= i num)
       (return-from = nil)))
   t)
 
@@ -58,7 +66,6 @@
       (return-from < nil)))
   t)
 
-;; FIXME, use vop
 (defun two-args->= (a b)
   (declare (inline two-args->=))
   (two-args->= a b))
@@ -164,3 +171,30 @@
 (defun %signed-ovflw-* (a b)
   (declare (inline %imul))
   (%imul a b))
+
+
+;;;;;;;;;;;
+(defun 1+ (x)
+  (declare (inline two-args-+))
+  (two-args-+ x 1))
+
+(defun 1- (x)
+  (declare (inline two-args--))
+  (two-args-- x 1))
+
+(defun max (number &rest rest)
+  (declare (inline two-args->))
+  (dolist (r rest)
+    (when (two-args-> r number)
+      (setf number r)))
+  number)
+
+(defun min (number &rest rest)
+  (declare (inline two-args-<))
+  (dolist (r rest)
+    (when (two-args-< r number)
+      (setf number r)))
+  number)
+
+
+
