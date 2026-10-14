@@ -30,7 +30,8 @@
   (fourth (get-register register)))
 
 (defun is-register (what)
-  (get-register what))
+  (or (get-register what)
+      (eq what :rip)))
 
 (defun extended-register? (register)
   (let ((extend-bit (get-register-extend-bit register)))
