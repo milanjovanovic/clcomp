@@ -2864,6 +2864,12 @@
 (defun alloc-get-number-of-stack-slots (alloc)
   (- (alloc-stack-index alloc) -1))
 
+(defun alloc-maybe-align-stack (alloc)
+  (let* ((stack-slots (alloc-get-number-of-stack-slots alloc))
+	 (align (oddp (+ stack-slots (length *preserved-regs*)))))
+    (when align
+      (incf (alloc-stack-index alloc)))))
+
 (defun alloc-add-unhandled (alloc interval)
   (push interval (alloc-unhandled alloc))
   (setf (alloc-unhandled alloc)
@@ -3125,8 +3131,11 @@
       (alloc-add-handled alloc int))
     (make-interval-index alloc)))
 
+
 (defun lambda-linear-scan (lambda-ssa)
-  (setf (lambda-ssa-alloc lambda-ssa) (linear-scan (lambda-ssa-intervals lambda-ssa)))
+  (setf (lambda-ssa-alloc lambda-ssa)
+	(linear-scan (lambda-ssa-intervals lambda-ssa)))
+  (alloc-maybe-align-stack (lambda-ssa-alloc lambda-ssa))
   (dolist (ls (lambda-ssa-sub-lambdas lambda-ssa))
     (lambda-linear-scan (cdr ls))))
 
@@ -3449,17 +3458,6 @@
 (defun make-inst (&rest inst)
   inst)
 
-(defun calculate-full-function-frame-size (alloc)
-  (let* ((full-stack-slots (+ (alloc-get-number-of-stack-slots alloc)
-			      (length *preserved-regs*)
-			      ;; 1 for RBP
-			      1))
-	 (aligned (oddp full-stack-slots)))
-    ;; If it's even then it's not aligned, it should be odd because we still have RIP on the stack
-    (if aligned
-	full-stack-slots
-	(1+ full-stack-slots))))
-
 (defun get-fun-argument-storage (argument-place arguments-count)
   (let ((arg-reg-count (length *fun-arguments-regs*))
 	(place-index (+ 1 (argument-place-index argument-place))))
@@ -3562,17 +3560,14 @@
 (defun emit-adjust-function-stack-frame (translator alloc method)
   (unless (member method '(:sub :add))
     (error "Unknown method"))
-  (let* ((stack-slots (alloc-get-number-of-stack-slots alloc))
-	 (align (oddp (+ stack-slots (length *preserved-regs*)))))
+  (let* ((stack-slots (alloc-get-number-of-stack-slots alloc)))
     (when (> stack-slots 0)
       (emit-ir-assembly translator alloc
 			(make-inst method (make-reg-op *stack-pointer-reg*)
 				   (* clcomp::*word-size* 
 				      ;; FIXME reverse stack arguments
 				      ;; 16 byte aligment
-				      (if align
-					  (+ 1 stack-slots)
-					  stack-slots)))))))
+				      stack-slots))))))
 
 (defun translate-lambda-entry (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock lambda-ssa ir))

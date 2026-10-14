@@ -312,8 +312,6 @@
 ;;; FIXME, extract this to assembly stub, emiting this at every tail call is stupid, it will increase binary
 (defun maybe-copy-mv-stack-frame-and-return-generator (stack-slots)
   (let* ((*segment-instructions* nil)
-	 (is-aligned (evenp (+ stack-slots (length *preserved-regs*))))
-	 (aligned-stack-slots (if is-aligned stack-slots (1+ stack-slots)))
 	 (copy-loop (make-vop-label "stack-copy-loop-"))
 	 (skip-copy-loop (make-vop-label "skip-copy-loop-"))
 	 (skip-alignment (make-vop-label "skip-alignment-") )
@@ -324,8 +322,9 @@
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
     (inst :jump-fixup :jg copy-to-caller-frame)
 
+    ;; deallocate stack frame
     (when (> stack-slots 0)
-      (inst :add *stack-pointer-reg* (* aligned-stack-slots *word-size*)))
+      (inst :add *stack-pointer-reg* (* stack-slots *word-size*)))
 
     (add-instructions (generate-function-epilogue))
 
@@ -419,15 +418,10 @@
 
     (reverse *segment-instructions*)))
 
-(defun mvb-value-stack-offset (index places-count)
-  (let ((diff (- places-count (length *fun-arguments-regs*)))
-	(index-diff (1+ (- index (length *fun-arguments-regs*)))))
-    (* (- (- index-diff diff)) *word-size*)))
 
 (defun multiple-value-bind-generator (places)
   (let ((*segment-instructions* nil))
-    (let ((places-count (length places))
-	  (end-label (make-vop-label "end-label-"))
+    (let ((end-label (make-vop-label "end-label-"))
 	  (nil-labels (mapcar (lambda (p)
 				(declare (ignore p))
 				(make-vop-label "nil-label-"))
@@ -439,15 +433,25 @@
 	  ((null places))
 	(let ((place (car places))
 	      (reg (car regs)))
-	  (inst :cmp *fun-number-of-arguments-reg*  index)
-	  (inst :jump-fixup :je (car lbs))
 	  (if reg
-	      (inst :mov place reg)
-	      (if (is-register place)
-		  (inst :mov place (@ *stack-pointer-reg* nil nil (mvb-value-stack-offset index places-count)))
-		  (progn
-		    (inst :mov *tmp-reg* (@ *stack-pointer-reg* nil nil (mvb-value-stack-offset index places-count)))
-		    (inst :mov place *tmp-reg*))))))
+	      (progn
+		(inst :cmp *fun-number-of-arguments-reg*  index)
+		(inst :jump-fixup :je (car lbs))
+		(inst :mov place reg))
+	      (progn
+		(when (= index (length *fun-arguments-regs*))
+		  (inst :cmp *fun-number-of-arguments-reg* index)
+		  (inst :jump-fixup :je (car lbs))
+		  (inst :mov *tmp-reg-2* *fun-number-of-arguments-reg*)
+		  (inst :sub *tmp-reg-2* (length *fun-arguments-regs*))
+		  (inst :lea *tmp-reg-2* (@ nil *tmp-reg-2* 8 nil)))
+		(unless (= index (length *fun-arguments-regs*))
+		  (inst :test *tmp-reg-2* *tmp-reg-2*)
+		  (inst :jump-fixup :jz (car lbs)))
+		(inst :mov *tmp-reg* (@ *stack-pointer-reg* *tmp-reg-2* nil (- *word-size*)))
+		(inst :mov place *tmp-reg*)
+		(unless (null (cdr places))
+		  (inst :sub *tmp-reg-2* *word-size*))))))
       (inst :jump-fixup :jmp end-label)
       (do ((nil-labels nil-labels (cdr nil-labels))
 	   (places places (cdr places)))
