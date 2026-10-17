@@ -60,3 +60,41 @@
 (defun baz (a b &optional c (d *x*))
   (list a b c d))
 
+(defun mv-1 ()
+  (values 1))
+
+(defun mv-2 ()
+  (values 1 2))
+
+(defun mv-3 ()
+  (values 1 2 3))
+
+(defun mv-4 ()
+  (values 1 2 3 4))
+
+(defun mv-5 ()
+  (values 1 2 3 4 5))
+
+(defun mv-6 ()
+  (values 1 2 3 4 5 6))
+
+(defun mv-7 ()
+  (values 1 2 3 4 5 6 7))
+
+(defun mv-level-1-4 ()
+  (mv-4))
+
+(defun mv-level-2-4 ()
+  (mv-level-1-4))
+
+(defun mv-level-1-6 ()
+  (mv-6))
+
+(defun mv-level-2-6 ()
+  (mv-level-1-6))
+
+(defun mv-level-1-7 ()
+  (mv-7))
+
+(defun mv-level-2-7 ()
+  (mv-level-1-7))

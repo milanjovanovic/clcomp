@@ -1975,7 +1975,8 @@
 	       (format t "Skipping to remove block ~A, SUCC + UNCOND-JUMP case from ~A" (ssa-block-index sblock)
 		       (car pcons)))
 	      (error "This should not happen")
-	      (return t))
+	      ;; (return t)
+	      )
 	    (when (= (cdr pcons) (ssa-block-index sblock))
 	      ;; WHAT ?
 	      (debug-blocks-print (format t "Skipping to remove block ~A, jump to self" (ssa-block-index sblock)))
@@ -3450,6 +3451,9 @@
 (defun make-stack-op (displacement &optional (base *base-pointer-reg*))
   (@ base nil nil displacement))
 
+(defun make-ea-op (base index scale displacement)
+  (@ base index scale displacement))
+
 (defun make-reg-op (reg)
   reg)
 
@@ -3728,7 +3732,7 @@
 		      (make-inst :jump-fixup :jne true-label))
     (when false-label
       (emit-ir-assembly translator alloc
-			(make-inst :jump-fixup :jmp false-label)) )))
+			(make-inst :jump-fixup :jmp false-label)))))
 
 (defun translate-block (sblock lambda-ssa alloc translator)
   #.*fun-optimize-level*
@@ -3762,13 +3766,18 @@
        (translate-vop ir translator alloc sblock lambda-ssa))
       (ssa-unknown-values-fun-call 
        (translate-fun-call ir translator alloc sblock lambda-ssa))
-      (ssa-unknown-return (apply #'emit-ir-assembly translator alloc
-				 (clcomp::maybe-copy-mv-stack-frame-and-return-generator (alloc-get-number-of-stack-slots alloc))))
+      (ssa-unknown-return
+       (apply #'emit-ir-assembly translator alloc
+      	      (clcomp::unknown-return-generator (alloc-get-number-of-stack-slots alloc)))
+       ;; FIXME, need better way for this
+       (emit-ir-assembly translator alloc
+			 (make-inst :label :WRONG-ARG-COUNT-LABEL)
+			 (make-inst :ud2)))
       (ssa-multiple-return
        (translate-return ir translator alloc sblock lambda-ssa))
       (maybe-mv-adjust-stack (apply #'emit-ir-assembly translator alloc
 				    (clcomp::maybe-mv-adjust-stack-generator)))
-      (ssa-embedded-instr (emit-ir-assembly translator alloc  (ssa-embedded-instr-instruction ir))))))
+      (ssa-embedded-instr (emit-ir-assembly translator alloc (ssa-embedded-instr-instruction ir))))))
 
 (defun translate-to-asm (lambda-ssa alloc)
   (let ((translator (make-ir2asm-translator)))

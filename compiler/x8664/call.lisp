@@ -287,6 +287,19 @@
       (inst :label exit))
     (reverse *segment-instructions*)))
 
+(defun unknown-return-generator (stack-slots)
+  (let ((*segment-instructions* nil)
+	(stack-allocated-values-label (make-vop-label "stack-allocated-values-")))
+    (inst :cmp *fun-number-of-arguments-reg* (length *fun-arguments-regs*))
+    (inst :jump-fixup :jg stack-allocated-values-label)
+    (inst :add *STACK-POINTER-REG* (* stack-slots *WORD-SIZE*))
+    (add-instructions (generate-function-epilogue))
+    (inst :ret)
+    (inst :label stack-allocated-values-label)
+    (inst :jmp (@ *INSTRUCTION-POINTER-REG* nil nil 0))
+    (inst :stub 'maybe-copy-mv-stack-frame-and-return)
+    (reverse *segment-instructions*)))
+
 ;;; NOTE
 ;;; This is executed after every call and it does have branch
 ;;; but in 99.9% of cases onethe same branch is taken so predictor will always be right
@@ -306,6 +319,96 @@
     (inst :label skip)
     (reverse *segment-instructions*)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define-stub maybe-copy-mv-stack-frame-and-return
+  (let* ((copy-loop (make-vop-label "stack-copy-loop-"))
+	 (skip-copy-loop (make-vop-label "skip-copy-loop-"))
+	 (skip-alignment (make-vop-label "skip-alignment-")))
+
+    ;; this is almost the same sequence as in EMIT-VALUES-NODE-SSA
+    ;; first restore caller registers because we will overwrite it with value copying
+    (let ((index 1))
+      (dolist (reg (reverse *preserved-regs*))
+	(inst :mov reg (@ *base-pointer-reg* nil nil (- (* index clcomp::*word-size*))))
+	(incf index)))
+    ;; save caller RBP
+    (inst :mov *tmp-reg-2* (@ *base-pointer-reg*))
+    (inst :push *tmp-reg-2*)
+    ;; save RIP
+    (inst :mov *tmp-reg-2* (@ *base-pointer-reg*
+			      nil
+			      nil
+			      clcomp::*word-size*))
+    (inst :push *tmp-reg-2*)
+
+    ;; pfff, we need another two registers
+    (inst :push *fun-number-of-arguments-reg*)
+    (inst :push :R13)
+
+    ;; *tmp-reg* -> remaining number of stack values
+    ;; *tmp-reg-2* -> copy destination offset
+    ;; *fun-number-of-arguments-reg* -> copy source offset
+
+    ;; we are copying from last value
+    ;; source last value is now at rsp+32 (4 pushes),
+    ;; we need to calculate destination last value offset, first calculate first value offset
+    ;; need to include alignment into calculation of first value offset, align slot is always at the top
+    (inst :mov *tmp-reg-2* clcomp::*word-size*)
+    (inst :test *tmp-reg* 1)
+    (inst :jump-fixup :jz skip-alignment)
+    (inst :mov *tmp-reg-2* 0) ;; alignment slot is at [RBP+8] so our start is [RBP],
+    (inst :mov (@ *base-pointer-reg* nil nil clcomp::*word-size*) *nil*) ;; set alignment slot to NIL (GC friendly)
+
+    (inst :label skip-alignment)
+
+    ;; calculate source last value offset
+    (inst :lea *fun-number-of-arguments-reg* (@ *tmp-reg* nil nil -1))
+    (inst :shl *fun-number-of-arguments-reg* 3)
+    (inst :sub *tmp-reg-2* *fun-number-of-arguments-reg*) ;; slot where we start copying to
+
+    (inst :mov *fun-number-of-arguments-reg* 32) ;; start source slot (we did 4 pushes)
+    (inst :label copy-loop)
+    (inst :mov :R13 (@ *stack-pointer-reg* *fun-number-of-arguments-reg*))
+    (inst :mov (@ *base-pointer-reg* *tmp-reg-2*) :R13)
+    (inst :dec *tmp-reg*)
+    (inst :jump-fixup :jz skip-copy-loop)
+    ;; both source and destination slot goes upward the stack
+    (inst :add *tmp-reg-2* clcomp::*word-size*)
+    (inst :add *fun-number-of-arguments-reg* clcomp::*word-size*)
+    (inst :jump-fixup :jmp copy-loop)
+
+    (inst :label skip-copy-loop)
+
+    ;; restore caller RBP and RIP
+    ;; rewind stack and return
+    (inst :pop :R13)
+    (inst :pop *fun-number-of-arguments-reg*)
+
+    ;; calculate where is new RSP
+    ;; here we now that *tmp-reg-2* has the offset of first value (not the alignment slot)
+    ;; we just add number of values on stack  (minus one because we are on last)
+    ;; that is our new stack pointer (minus RIP) we will push later
+    (inst :lea *tmp-reg* (@ *fun-number-of-arguments-reg* nil nil (- (1+ (length *fun-arguments-regs*)))))
+    (inst :shl *tmp-reg* 3)
+    (inst :sub *tmp-reg-2* *tmp-reg*)
+    (inst :lea *tmp-reg* (@ *base-pointer-reg* *tmp-reg-2*))
+
+
+    ;; pop RIP
+    (inst :pop *tmp-reg-2*)
+
+    ;; set caller frame pointer, we don't need it anymore
+    (inst :pop *base-pointer-reg*)
+
+    ;; set new stack pointer
+    (inst :mov *stack-pointer-reg* *tmp-reg*)
+
+    ;; put back RIP at the end of stack pointer
+    (inst :push *tmp-reg-2*)
+    (inst :ret)
+
+    (reverse *segment-instructions*)))
 
 ;;; looks bloated
 ;;; anyway, we can optimize  most of leaf function calls to tail calls
@@ -371,6 +474,7 @@
     ;; calculate source last value offset
     (inst :lea *fun-number-of-arguments-reg* (@ *tmp-reg* nil nil -1))
     (inst :shl *fun-number-of-arguments-reg* 3)
+    ;; destination
     (inst :sub *tmp-reg-2* *fun-number-of-arguments-reg*) ;; slot where we start copying to
 
     (inst :mov *fun-number-of-arguments-reg* 32) ;; start source slot (we did 4 pushes)
@@ -411,10 +515,6 @@
     ;; put back RIP at the end of stack pointer
     (inst :push *tmp-reg-2*)
     (inst :ret)
-
-    ;; FIXME, insert this on some other place
-    (inst :label :WRONG-ARG-COUNT-LABEL)
-    (inst :ud2)
 
     (reverse *segment-instructions*)))
 

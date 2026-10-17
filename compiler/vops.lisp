@@ -129,3 +129,14 @@
 	(when (and (operand-types-match result vop-result)
 		   (operand-types-match arguments vop-args))
 	  vop)))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; code stubs
+(defparameter *stubs* (make-hash-table))
+
+(defmacro define-stub (name &body body)
+  `(let ((*segment-instructions* nil))
+     (progn ,@body)
+     (setf (gethash ',name *stubs*)
+	   (reverse *segment-instructions*))))

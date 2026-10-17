@@ -79,15 +79,19 @@
 	   0)
 	  ((numberp f)
 	   (length instruction))
+	  ((eq f :stub)
+	   8)
 	  (t (length (assemble-instruction
 		      (maybe-fix-unresolved-offset-instruction instruction)))))))
 
-(defun code-size (instructions)
-  (let ((size 0))
-    (dolist (inst instructions)
-      (setf size
-	    (+ size (instruction-size inst))))
-    size))
+(defun assembled-instruction-size (code)
+  (if (every #'numberp code)
+      (length code )
+      (ecase (first code)
+	(:stub 8))))
+
+(defun code-size (assembled-instructions)
+  (reduce #'+ (mapcar #'assembled-instruction-size assembled-instructions)))
 
 (defun assembly-pass-1 (instructions)
   (let (code)
@@ -96,8 +100,24 @@
 	(cond ((instruction-has-unresolved-memory-operand inst)
 	       (push inst code))
 	      ((eq mnemonic :label))
+	      ((eq mnemonic :stub)
+	       (push inst code))
+	      ((every #'numberp inst)
+	       (push inst code))
 	      (t (push (assemble-instruction inst) code)))))
     (reverse code)))
 
 (defun resolve-assembly-jumps (instructions)
   (set-jump-offsets (set-jump-offsets instructions :normal) :reverse))
+
+
+(defun assemble-instructions (instructions)
+  (assembly-pass-1 (peephole (resolve-assembly-jumps instructions))))
+
+(defun assemble-and-align (instructions)
+  (let* ((bytecode (assembly-pass-1 (peephole (resolve-assembly-jumps instructions))))
+	 (len (reduce #'+ (mapcar #'length bytecode)))
+	 (m (mod len *allocation-size*)))
+    (if (> m 0)
+	(append bytecode (list (make-list (- *allocation-size* m) :initial-element #x90)))
+	bytecode)))
