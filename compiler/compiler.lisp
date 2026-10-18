@@ -984,29 +984,3 @@
 
 (defun %compiler-defun (f)
   (declare (ignore f)))
-
-;; (defun clcomp-compile (name exp &key (eval-at-load nil))
-;;   (let* ((expanded (clcomp-macroexpand exp))
-;; 	 (nodes (create-node expanded))
-;; 	 (ir (make-ir nodes))
-;; 	 (ir-blocks (component-blocks-phase ir))
-;; 	 (assembly (make-compile-unit-and-compile-pass-1 ir-blocks))
-;; 	 (assembled-compile-unit (assemble-and-link-compilation-unit assembly 0)))
-;;     (when (and eval-at-load
-;; 	       (not name))
-;;       (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
-;;     (rt-add-to-compilation assembled-compile-unit)
-;;     (maybe-rt-%defun name assembled-compile-unit)
-;;     assembled-compile-unit))
-
-#+nil
-(defun clcomp-compile (name exp &key (eval-at-load nil))
-  (declare (optimize debug))
-  (let* ((compilation-unit (clcomp.translator::translate-to-compilation-unit (clcomp.ssa::clcomp-compile name exp)))
-	 (assembled-compile-unit (assemble-and-link-compilation-unit compilation-unit 0)))
-    (when (and eval-at-load
-	       (not name))
-      (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
-    (rt-add-to-compilation assembled-compile-unit)
-    (maybe-rt-%defun name assembled-compile-unit)
-    assembled-compile-unit))

@@ -1,5 +1,16 @@
 (in-package #:clcomp)
 
+(defun clcomp-compile (name exp &key (eval-at-load nil))
+  (declare (optimize debug))
+  (let* ((compilation-unit (clcomp.translator::translate-to-compilation-unit (clcomp.ssa::clcomp-compile name exp)))
+	 (assembled-compile-unit (assemble-and-link-compilation-unit compilation-unit 0)))
+    (when (and eval-at-load
+	       (not name))
+      (setf (compilation-unit-eval-at-load assembled-compile-unit) t))
+    (rt-add-to-compilation assembled-compile-unit)
+    (maybe-rt-%defun name assembled-compile-unit)
+    assembled-compile-unit))
+
 (defun %compiler-load-time-eval (exp)
   (let ((f (first exp)))
     (case f
