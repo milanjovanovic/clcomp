@@ -3318,13 +3318,31 @@
 	(append stack-moves (parallel-move non-stack-moves scratch-storage)))))
 
 (defun resolve-indexed-data-moves-order (moves scratch-storage)
-  (let ((moves (sort moves #'< :key #'car))
+  (let ((moves (sort moves #'< :key #'first))
 	(res nil))
     (dolist (move moves)
-      (let* ((index (car move))
-	     (loads (cdr move))
+      (let* ((index (first move))
+	     (loads (second move))
 	     (ordered-moves (resolve-data-moves-order loads scratch-storage)))
 	(push (list index ordered-moves) res)))
+    (reverse res)))
+
+(defun group-indexed-spill-moves (moves)
+  (let ((moves (sort moves #'< :key #'car))
+	(res nil)
+	(current nil))
+    (dolist (move moves)
+      (let* ((index (first move))
+	     (spill (second move)))
+	(if (null current)
+	    (setf current (list index (list spill)))
+	    (if (= (first current) index)
+		(push spill (second current))
+		(progn
+		  (push current res)
+		  (setf current (list index (list spill))))))))
+    (when current
+      (push current res))
     (reverse res)))
 
 (defun resolve-lambda-moves-order (lambda-ssa scratch-storage)
@@ -3338,7 +3356,7 @@
 	  (resolve-data-moves-order (ssa-block-succ-moves b) scratch-storage))
     ;; spill moves are all write to stack slot + are indexed, no need for any order
     (setf (ssa-block-spill-moves b)
-	  (resolve-indexed-data-moves-order (ssa-block-spill-moves b) scratch-storage))))
+	  (resolve-indexed-data-moves-order (group-indexed-spill-moves (ssa-block-spill-moves b)) scratch-storage))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Merging PHI moves and spill moves
@@ -3401,6 +3419,7 @@
       (block-merge-moves lambda-ssa sblock))))
 
 (defun lambda-merge-spill-moves (lambda-ssa)
+  #.*fun-optimize-level*
   (dolist (sblock (lambda-ssa-blocks lambda-ssa))
     (let ((new-insts nil)
 	  (spills (ssa-block-spill-moves sblock )))
