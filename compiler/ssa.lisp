@@ -61,31 +61,30 @@
   exit cond-jump-moves uncond-jump-moves succ-moves spill-moves)
 
 (defstruct ssa-form index)
-(defstruct (lambda-entry (:include ssa-form)))
+;; This means that this form can clobber arguments passing/return values registers
+(defstruct (ssa-kill-form (:include ssa-form)))
+(defstruct (lambda-entry (:include ssa-kill-form)))
 (defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
 (defstruct (deallocate-function-frame (:include ssa-form)) count)
 (defstruct (allocate-stack (:include ssa-form)) count)
 (defstruct (deallocate-stack (:include ssa-form)) count)
-(defstruct (ssa-function-epilogue (:include ssa-form)))
+(defstruct (ssa-function-epilogue (:include ssa-kill-form)))
 
 (defstruct (maybe-mv-adjust-stack (:include ssa-form)))
-(defstruct (ssa-embedded-instr (:include ssa-form)) instruction)
+(defstruct (ssa-embedded-instr (:include ssa-kill-form)) instruction)
 
 (defstruct (ssa-form-rw (:include ssa-form)))
 
 (defstruct (ssa-load (:include ssa-form-rw)) to from)
-(defstruct (ssa-box-and-load (:include ssa-load)))
 
 (defstruct (ssa-jump (:include ssa-form)) label)
 (defstruct (ssa-go (:include ssa-jump)))
-(defstruct (ssa-non-local-go (:include ssa-jump)))
 (defstruct (ssa-label (:include ssa-form)) label)
 
 ;;; Do we need SSA-VALUE ??
 (defstruct (ssa-value (:include ssa-form-rw)) value)
 
-
-(defstruct (ssa-return (:include ssa-form)))
+(defstruct (ssa-return (:include ssa-kill-form)))
 (defstruct (ssa-unknown-return (:include ssa-return)))
 (defstruct (ssa-multiple-return (:include ssa-return)) count)
 
@@ -93,10 +92,9 @@
 ;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
 (defstruct (ssa-vop (:include ssa-form-rw)) name return-values args )
 
-(defstruct (ssa-rest-listify (:include ssa-form)) count)
+(defstruct (ssa-rest-listify (:include ssa-kill-form)) count)
 
-;;; FIXME, still not sure when to use which one
-(defstruct (ssa-fun-call (:include ssa-form)) fun)
+(defstruct (ssa-fun-call (:include ssa-kill-form)) fun)
 (defstruct (ssa-unknown-values-fun-call (:include ssa-fun-call)))
 
 (defstruct (ssa-if (:include ssa-form-rw)) test true-block true-block-label false-block-label)
@@ -105,8 +103,6 @@
 
 
 (defparameter *break-block* -1)
-
-
 
 ;;; NOTE, all the Closures/BCELL stuff, maybe transformation (NODES) is better place for this ?
 

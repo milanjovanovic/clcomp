@@ -128,9 +128,23 @@
   (inst :imul res arg2)
   (inst :shl res *fixnum-tag-size*))
 
+(define-mv-vop fixnum-truncate
 
+    ((quotient :register :stack)
+     (remainder :register :stack))
 
-;;; FIXME, 
+    ((arg1 :register :stack)
+     (arg2 :register))
+
+    ((:clobber (:rax :rdx))
+     (:alias-regs (*tmp-reg* *tmp-reg-2*)))
+
+  (inst :mov :rax arg1)
+  (inst :cqo)
+  (inst :idiv :rax arg2)
+  (inst :mov quotient :rax)
+  (inst :mov remainder :rdx))
+
 (define-vop %fixnum-fixnum-remainder (res :register) ((arg1 :register :stack) (arg2 :register))
   (inst :push :rax)
   (inst :push :rdx)

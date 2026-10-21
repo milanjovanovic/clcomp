@@ -18,7 +18,7 @@
 (defparameter *c-call-save-registers* '(:rax :rbx :rcx :rdx :rsi :rdi :r8
 					:r9 :r10 :r11 :r12 :r13 :r14 :r15))
 
-(defstruct vop name arguments arguments-metadata res fun)
+(defstruct vop name arguments arguments-metadata res clobber alias-regs fun version)
 
 (defun get-vop (name)
   (gethash name *known-vops*))
@@ -46,6 +46,27 @@
 					    *tmp-reg-2*)
 					  ,(first arg))))
      (progn ,@body)))
+
+(defun generate-alias-proof-vop-body-mv (body arguments res alias-regs)
+  (declare (optimize debug))
+  (let ((args (mapcar #'first arguments))
+	(res (mapcar #'first res))
+	(res-list (gensym "res-list-"))
+	(aregs (gensym "alias-regs-"))
+	(ar (gensym "alias-register-")))
+    `(let ((,res-list (list ,@res))
+	   (,aregs ,alias-regs))
+       (let ,(loop for arg in args
+		   collect `(,arg (if (find ,arg ,res-list)
+				      (progn
+					(let ((,ar (first ,aregs)))
+					  (when (null ,ar)
+					    (error "Missing alias reg"))
+					  (setf ,aregs (cdr ,aregs))
+					  (inst :mov ,ar ,arg)
+					  ,ar))
+				      ,arg)))
+	 (progn ,@body)))))
 
 (defun operand-argument (operand)
   (let ((res (list (first operand))))
@@ -80,6 +101,7 @@
 		      &body body)
   `(setf (gethash ',name *known-vops*)
 	 (make-vop :name ',name
+		   :version :v1
 		   :res ,(when res `'(,res))
 		   :arguments ',(operands-arguments-storage arguments)
 		   :arguments-metadata ',(operands-arguments-metadata arguments)
@@ -91,14 +113,20 @@
 (defmacro define-mv-vop (name
 			 (&rest res)
 			 (&rest arguments)
+			 (&rest info)
 			 &body body)
   `(setf (gethash ',name *known-vops*)
 	 (make-vop :name ',name
+		   :version :v2
 		   :res ',res
-		   :arguments ',arguments
+		   :arguments ',(operands-arguments-storage arguments)
+		   :arguments-metadata ',(operands-arguments-metadata arguments)
+		   :clobber ',(second (assoc :clobber info))
+		   :alias-regs (list ,@(second (assoc :alias-regs info)))
 		   :fun (lambda ,(append (mapcar 'car res) (append (mapcar 'car arguments) (list '$stack-top-operand$)))
 			  (declare (ignorable $stack-top-operand$))
-			  ,(generate-alias-proof-vop-body body arguments res)))))
+			  ,(generate-alias-proof-vop-body-mv body arguments res (cons 'list (second (assoc :alias-regs info))))))))
+
 
 (defun make-vop-label (name)
   (gensym name))
