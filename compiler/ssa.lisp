@@ -31,7 +31,7 @@
 (defstruct (phi-place
 	    (:print-function (lambda (struct stream depth)
 			       (declare (ignore depth))
-			       (format stream "#S(PHI-PLACE :NAME ~A :REDUCED ~A"
+			       (format stream "#S(PHI-PLACE :NAME ~A :REDUCED ~A)"
 				       (named-place-name struct)
 				       (funcall (phi-place-reduced struct)))))
 	    (:include named-place)) reduced)
@@ -1576,6 +1576,7 @@
     same))
 
 (defun phi-add-operands (place phi predecessors block lambda-ssa)
+  #.*fun-optimize-level*
   (dolist (pblock predecessors)
     (let* ((pred-block (ssa-find-block-by-index lambda-ssa pblock))
 	   (operand (ssa-read-variable place pred-block lambda-ssa)))
@@ -1613,6 +1614,43 @@
 		(phi-add-operands place phi predecessors block lambda-ssa)
 		phi-place))))))
 
+(defun ssa-form-rw-reads-writes (ir)
+  (typecase ir
+    (ssa-form-rw
+     (etypecase ir
+       ;; with every IR we first need to transform read place
+       (ssa-load
+	(list (list (ssa-load-from ir))
+	      (list (ssa-load-to ir))))
+       (ssa-value
+	(list (list (ssa-value-value ir)) nil))
+       (ssa-if
+	(list (list (ssa-if-test ir)) nil))
+       (ssa-mvb-bind
+	(list nil  (ssa-mvb-bind-places ir)))
+       (ssa-vop
+	(list (ssa-vop-args ir)
+	      (ssa-vop-return-values ir)))))
+    (t ir)))
+
+(defun ssa-form-rw-replace-reads (ir old-virt new-virt)
+  (etypecase ir
+    (ssa-load
+     (when (eq old-virt (ssa-load-from ir))
+       (setf (ssa-load-from ir) new-virt)))
+    (ssa-value
+     (when (eq old-virt (ssa-value-value ir))
+       (setf (ssa-value-value ir) new-virt)))
+    (ssa-if
+     (when (eq old-virt (ssa-if-test ir))
+       (setf (ssa-if-test ir) new-virt)))
+    (ssa-mvb-bind
+     t)
+    (ssa-vop
+     (let ((pos (position old-virt (ssa-vop-args ir))))
+       (when pos
+	 (setf (nth pos (ssa-vop-args ir)) new-virt))))))
+
 (defun ssa-read-variable (place block lambda-ssa)
   #.*fun-optimize-level*
   (or (get-block-def block (named-place-name place)) 
@@ -1636,34 +1674,36 @@
   #.*fun-optimize-level*
   (let ((ssa-ir nil))
     (dolist (ir (ssa-block-ir b))
-      (let ((irssa (etypecase ir
-		     ;; with every IR we first need to transform read place
-		     (ssa-load (let ((read (transform-read (ssa-load-from ir) b lambda-ssa) ))
-				 (make-ssa-load :index (ssa-load-index ir)
-						:to (transform-write (ssa-load-to ir) b lambda-ssa)
-						:from read)))
-		     (ssa-value (make-ssa-value :index (ssa-value-index ir)
-						:value (transform-read (ssa-value-value ir) b lambda-ssa)))
-		     (ssa-if (make-ssa-if :index (ssa-if-index ir)
-					  :test (transform-read (ssa-if-test ir) b lambda-ssa)
-					  :true-block (ssa-if-true-block ir)
-					  :true-block-label (ssa-if-true-block-label ir)
-					  :false-block-label (ssa-if-false-block-label ir)))
-		     (ssa-mvb-bind (make-ssa-mvb-bind
-				    :index (ssa-mvb-bind-index ir)
-				    :places (mapcar (lambda (p)
-						      (transform-write p b lambda-ssa))
-						    (ssa-mvb-bind-places ir))))
-		     (ssa-vop (let ((args (mapcar (lambda (p)
-						    (transform-read p b lambda-ssa))
-						  (ssa-vop-args ir))))
-				(make-ssa-vop
-				 :index (ssa-vop-index ir)
-				 :name (ssa-vop-name ir)
-				 :args args
-				 :return-values (mapcar (lambda (p)
-							  (transform-write p b lambda-ssa))
-							(ssa-vop-return-values ir)))))
+      (let ((irssa (typecase ir
+		     (ssa-form-rw
+		      (etypecase ir
+			;; with every IR we first need to transform read place
+			(ssa-load (let ((read (transform-read (ssa-load-from ir) b lambda-ssa) ))
+				    (make-ssa-load :index (ssa-load-index ir)
+						   :to (transform-write (ssa-load-to ir) b lambda-ssa)
+						   :from read)))
+			(ssa-value (make-ssa-value :index (ssa-value-index ir)
+						   :value (transform-read (ssa-value-value ir) b lambda-ssa)))
+			(ssa-if (make-ssa-if :index (ssa-if-index ir)
+					     :test (transform-read (ssa-if-test ir) b lambda-ssa)
+					     :true-block (ssa-if-true-block ir)
+					     :true-block-label (ssa-if-true-block-label ir)
+					     :false-block-label (ssa-if-false-block-label ir)))
+			(ssa-mvb-bind (make-ssa-mvb-bind
+				       :index (ssa-mvb-bind-index ir)
+				       :places (mapcar (lambda (p)
+							 (transform-write p b lambda-ssa))
+						       (ssa-mvb-bind-places ir))))
+			(ssa-vop (let ((args (mapcar (lambda (p)
+						       (transform-read p b lambda-ssa))
+						     (ssa-vop-args ir))))
+				   (make-ssa-vop
+				    :index (ssa-vop-index ir)
+				    :name (ssa-vop-name ir)
+				    :args args
+				    :return-values (mapcar (lambda (p)
+							     (transform-write p b lambda-ssa))
+							   (ssa-vop-return-values ir)))))))
 		     (t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
@@ -2216,6 +2256,10 @@
 	(error "We have error in predecessors field")))))
 
 
+(defparameter *copy-prop-1* nil)
+
+(declaim (ftype (function (t)) clcomp.ssa.opt::do-copy-prop-1))
+
 ;;; FIXME, insert (GO TAG) at the end of instruction list in blocks that have UNCOND-JUMP
 ;;; FIXME, in SSA-IF form our JUMP is econded as INDEX, replace INDEX with BLOCK LABEL
 (defun lambda-construct-ssa (lambda-node &optional ssa-env)
@@ -2258,6 +2302,8 @@
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
     (setf *error-on-ir-touch* t)
+    (when *copy-prop-1*
+      (clcomp.ssa.opt::do-copy-prop-1 lambda-ssa))
     (set-block-virtuals lambda-ssa)
     (when *optimize-redundant-phis*
       (optimize-redundant-phis lambda-ssa))

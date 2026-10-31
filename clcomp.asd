@@ -29,6 +29,7 @@
 	       (:file "runtime/runtime-support")
 	       (:file "code/macros")
 	       (:file "compiler/ssa")
+	       (:file "compiler/opt")
 	       (:file "compiler/translator")
 	       (:file "runtime/rt")
 	       (:file "compiler/eval")

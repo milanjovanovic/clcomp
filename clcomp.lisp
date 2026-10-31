@@ -14,3 +14,6 @@
    #:*tmp-reg-2*
    #:*preserved-regs*
    #:*heap-header-reg*))
+
+(defpackage #:clcomp.ssa.opt
+  (:use #:cl))
