@@ -3710,6 +3710,7 @@
 	   (or (find ir-type vop-type)
 	       (and (eq ir-type :memory)
 		    (find :stack vop-type)))))
+    (assert (clcomp::get-vop (ssa-vop-name ir)))
     (let* ((ir-index (ssa-form-index ir))
 	   (name (ssa-vop-name ir))
 	   (args-storage (mapcar #'(lambda (p)
@@ -3769,18 +3770,16 @@
 				  (make-inst :mov (first available-regs) ia))
 		(push (first available-regs) final-args-storage)
 		(setf available-regs (cdr available-regs))))))
-      (if vop
-	  (progn
-	    (apply #'emit-ir-assembly translator alloc
-		   (clcomp::get-vop-code vop
-					 (append (reverse final-ret-storages) (reverse final-args-storage)
-						 (list (make-stack-op
-							;; FIXME (alloc-get-number-of-stack-slots alloc) is this good ?
-							(calculate-local-var-stack (alloc-get-number-of-stack-slots alloc))))) ))
-	    (when ret-storage-moves
-	      (dolist (inst (reverse ret-storage-moves))
-		(emit-ir-assembly translator alloc inst))))
-	  (error "Unknown VOP")))))
+      (progn
+	(apply #'emit-ir-assembly translator alloc
+	       (clcomp::get-vop-code vop
+				     (append (reverse final-ret-storages) (reverse final-args-storage)
+					     (list (make-stack-op
+						    ;; FIXME (alloc-get-number-of-stack-slots alloc) is this good ?
+						    (calculate-local-var-stack (alloc-get-number-of-stack-slots alloc))))) ))
+	(when ret-storage-moves
+	  (dolist (inst (reverse ret-storage-moves))
+	    (emit-ir-assembly translator alloc inst)))))))
 
 (defun translate-if (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock)
