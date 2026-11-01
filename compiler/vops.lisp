@@ -27,13 +27,13 @@
   (length (vop-arguments vop)))
 
 (defun get-args-types (vop)
-  (mapcar 'second (vop-arguments vop)))
+  (mapcar 'rest (vop-arguments vop)))
 
 (defun get-res-type (vop)
   (second (vop-res vop)))
 
 (defun get-res-types (vop)
-  (mapcar #'second (vop-res vop)))
+  (mapcar #'rest (vop-res vop)))
 
 (defun vop-argument-metadata-bcell (metadata)
   (find :bcell metadata))

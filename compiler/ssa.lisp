@@ -2256,7 +2256,8 @@
 	(error "We have error in predecessors field")))))
 
 
-(defparameter *copy-prop-1* nil)
+(defparameter *copy-prop-1* t)
+(defparameter *copy-prop-2* nil)
 
 (declaim (ftype (function (t)) clcomp.ssa.opt::do-copy-prop-1))
 
@@ -2311,7 +2312,6 @@
     (compute-block-order lambda-ssa)
     (lambda-ssa-fix-instruction-indexes lambda-ssa #'ssa-block-ssa)
     lambda-ssa))
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; block order
@@ -3706,12 +3706,10 @@
 (defun translate-vop (ir translator alloc sblock lambda-ssa)
   (declare (ignore sblock))
   #.*fun-optimize-level*
-  (flet ((storage-type-match (s1 s2)
-	   (or (equal s1 s2)
-	       (and (or (equal s1 :stack)
-			(equal s1 :memory))
-		    (or (equal s2 :stack)
-			(equal s2 :memory))))))
+  (flet ((storage-type-match (vop-type ir-type)
+	   (or (find ir-type vop-type)
+	       (and (eq ir-type :memory)
+		    (find :stack vop-type)))))
     (let* ((ir-index (ssa-form-index ir))
 	   (name (ssa-vop-name ir))
 	   (args-storage (mapcar #'(lambda (p)
@@ -3723,6 +3721,7 @@
 	   (vop (clcomp::get-vop name))
 	   (vop-ret-types (clcomp::get-res-types vop))
 	   (vop-args-types (clcomp::get-args-types vop))
+	   (vop-clobber-regs (clcomp::vop-clobber vop))
 	   ;; for now we will use argument/return passing registers
 	   (available-regs *fun-arguments-regs*)
 	   (final-ret-storages nil)
@@ -3730,6 +3729,9 @@
 	   (ret-storage-moves nil))
       (assert (= (length args-storage) (length vop-args-types)))
       (assert (= (length ret-vals-storage) (length vop-ret-types)))
+      ;; FIXME, currently we  know that we can clobber onlu RDX and RAX so we handle only those (we don't save RAX for now)
+      ;; check all the other regs and push them to stack if needed
+      (setf available-regs (set-difference available-regs vop-clobber-regs :test #'eq))
       ;; not smart but fastest way to do this for now
       ;; return values (currently we can have only one)
       (do ((vrts vop-ret-types (cdr vrts))

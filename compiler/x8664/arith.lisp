@@ -145,23 +145,27 @@
   (inst :mov quotient :rax)
   (inst :mov remainder :rdx))
 
-(define-vop %fixnum-fixnum-remainder (res :register) ((arg1 :register :stack) (arg2 :register))
-  (inst :push :rax)
-  (inst :push :rdx)
-  (inst :mov :rax arg1)
-  (inst :cqo)
-  (inst :idiv :rax arg2)
-  (inst :mov res :rdx)
-  (inst :pop :rdx)
-  (inst :pop :rax))
+(define-mv-vop %fixnum-fixnum-remainder
 
-(define-vop %fixnum-fixnum-quotient (res :register) ((arg1 :register :stack) (arg2 :register))
-  (inst :push :rax)
-  (inst :push :rdx)
+    ((remainder :register :stack))
+
+    ((arg1 :register :stack)
+     (arg2 :register))
+
+    ((:clobber (:rax :rdx))
+     (:alias-regs (*tmp-reg*)))
+
   (inst :mov :rax arg1)
   (inst :cqo)
   (inst :idiv :rax arg2)
-  (inst :mov res :rax)
-  (inst :shl res *fixnum-tag-size*)
-  (inst :pop :rdx)
-  (inst :pop :rax))
+  (inst :mov remainder :rdx))
+
+;; (define-vop %fixnum-fixnum-remainder (res :register) ((arg1 :register :stack) (arg2 :register))
+;;   (inst :push :rax)
+;;   (inst :push :rdx)
+;;   (inst :mov :rax arg1)
+;;   (inst :cqo)
+;;   (inst :idiv :rax arg2)
+;;   (inst :mov res :rdx)
+;;   (inst :pop :rdx)
+;;   (inst :pop :rax))
