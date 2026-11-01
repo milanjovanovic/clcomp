@@ -177,9 +177,6 @@
                                                  (= 9 9 9 9 9 9 9))))
 
 
-
-;; FIXME, this doesn't work
-#+nil
 (define-compiler-test "arith-rem" t (lambda ()
                                       (and (= 1 (rem 7 3))
                                            (= -1 (rem -7 3))

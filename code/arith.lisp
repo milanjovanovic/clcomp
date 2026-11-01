@@ -165,6 +165,12 @@
   (declare (inline %fixnum-fixnum-remainder))
   (%fixnum-fixnum-remainder n1 n2))
 
+(defun truncate (n1 &optional n2)
+  (declare (inline %fixnum-truncate))
+  (if n2
+      (%fixnum-truncate n1 n2)
+      (values n1 0)))
+
 ;; (defun dpb (newbyte bytespec integer)
 ;;   (logior (ash newbyte (cdr bytespec) integer)))
 
@@ -195,6 +201,3 @@
     (when (two-args-< r number)
       (setf number r)))
   number)
-
-
-

@@ -962,7 +962,6 @@
 	 (args-metadata (clcomp::vop-arguments-metadata vop))
 	 (args-places nil))
     ;; for now we only allow one return place
-    (assert (= 1 ret-vals))
     (do ((args arguments (cdr args))
 	 (amds args-metadata (cdr amds)))
 	((null args))
