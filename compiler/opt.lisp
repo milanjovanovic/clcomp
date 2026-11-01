@@ -21,22 +21,28 @@
 	  (otherwise t))))
     (values loads ir-indexes)))
 
-(defun copy-prop-replace-defined (lambda-ssa loads)
-  (let ((replacable (clcomp::hash-keys loads)))
-    (dolist (b (clcomp.ssa::lambda-ssa-blocks lambda-ssa))
-      (let* ((defined (clcomp.ssa::ssa-block-defined b))
-	     (defined-places (mapcar #'cdr defined))
-	     (olds (intersection replacable defined-places)))
-	(when olds
-	  ;; we want to delete all old references
-	  (dolist  (old olds)
-	    (setf defined (remove old defined :key #'cdr)))
-	  (dolist (old olds)
-	    (let ((new (gethash  old loads)))
-	      (assert new)
-	      (unless (position new defined :key #'cdr)
-		(push (cons (clcomp.ssa::virtual-place-variable new) new) defined)))))
-	(setf (clcomp.ssa::ssa-block-defined b) defined)))))
+(defun get-final-replace (loads v1 &optional current)
+  (let ((v2 (gethash v1 loads)))
+    (if v2
+	(get-final-replace loads v2 v2)
+	current)))
+
+;; (defun copy-prop-replace-defined (lambda-ssa loads)
+;;   (let ((replacable (clcomp::hash-keys loads)))
+;;     (dolist (b (clcomp.ssa::lambda-ssa-blocks lambda-ssa))
+;;       (let* ((defined (clcomp.ssa::ssa-block-defined b))
+;; 	     (defined-places (mapcar #'cdr defined))
+;; 	     (olds (intersection replacable defined-places)))
+;; 	(when olds
+;; 	  ;; we want to delete all old references
+;; 	  (dolist  (old olds)
+;; 	    (setf defined (remove old defined :key #'cdr)))
+;; 	  (dolist (old olds)
+;; 	    (let ((new (gethash  old loads)))
+;; 	      (assert new)
+;; 	      (unless (position new defined :key #'cdr)
+;; 		(push (cons (clcomp.ssa::virtual-place-variable new) new) defined)))))
+;; 	(setf (clcomp.ssa::ssa-block-defined b) defined)))))
 
 (defun copy-prop-replace-phi-operands (lambda-ssa loads)
   (declare (optimize debug))
@@ -47,8 +53,10 @@
 	(let ((old-places (intersection replacable (clcomp.ssa::phi-operands phi))))
 	  (when old-places
 	    (dolist (old old-places)
-	      (let ((index (position old (clcomp.ssa::phi-operands phi))))
-		(setf (nth index (clcomp.ssa::phi-operands phi)) (gethash old loads))))))))
+	      (let ((index (position old (clcomp.ssa::phi-operands phi)))
+		    (replace (get-final-replace loads old)))
+		(assert replace)
+		(setf (nth index (clcomp.ssa::phi-operands phi)) replace)))))))
     ;; patch live-phi-operands
     (dolist (b (clcomp.ssa::lambda-ssa-blocks lambda-ssa))
       (let* ((live-phi-operands (clcomp.ssa::ssa-block-live-phi-operands b))
@@ -57,8 +65,10 @@
 	(when olds
 	  (dolist (old olds)
 	    ;; PLACES jave the same order as LIVE-PHI-OPERANDS
-	    (let ((index (position old places)))
-	      (setf (cdr (nth index live-phi-operands)) (gethash old loads)))))))))
+	    (let ((index (position old places))
+		  (replace (get-final-replace loads old)))
+	      (assert replace)
+	      (setf (cdr (nth index live-phi-operands)) replace))))))))
 
 (defun copy-prop-1-patch-lambda (lambda-ssa loads ir-indexes)
   (let ((replacable (clcomp::hash-keys loads))
@@ -66,8 +76,6 @@
     (dolist (b (clcomp.ssa::lambda-ssa-blocks lambda-ssa))
       (let ((filtered-irs nil))
 	(dolist (ir (clcomp.ssa::ssa-block-ssa b))
-	  (when (find (clcomp.ssa::ssa-form-index ir) remove-indexes)
-	    (print (list 'removing-ir ir)))
 	  (unless (find (clcomp.ssa::ssa-form-index ir) remove-indexes)
 	    (typecase ir
 	      (clcomp.ssa::ssa-form-rw
@@ -75,18 +83,28 @@
 		 (let ((old-places (intersection replacable (first reads-write))))
 		   (when old-places
 		     (dolist (old old-places)
-		       (clcomp.ssa::ssa-form-rw-replace-reads ir old (gethash old loads))))))))
+		       (let ((replace (get-final-replace loads old)))
+			 (assert replace)
+			 (clcomp.ssa::ssa-form-rw-replace-reads ir old replace))))))))
 	    (push ir filtered-irs)))
 	(setf (clcomp.ssa::ssa-block-ssa b) (reverse filtered-irs))))))
 
+;; TODO, we should actually re-run process of PHI simplifying
+(defun copy-prop-fix-redundant-phis (lambda-ssa loads)
+  (let* ((rphis (clcomp.ssa::lambda-ssa-redundant-phis lambda-ssa))
+	 (keys (clcomp::hash-keys rphis)))
+    (dolist (k keys)
+      (let ((replace-value (gethash k rphis)))
+	(when (gethash replace-value loads)
+	  (setf (gethash k rphis) (get-final-replace loads replace-value)))))))
+
 (defun do-copy-prop-1 (lambda-ssa)
+  (declare (optimize debug))
   (multiple-value-bind (loads ir-indexes) (copy-prop-1 lambda-ssa)
     (when loads
       (copy-prop-1-patch-lambda lambda-ssa loads ir-indexes)
       (copy-prop-replace-phi-operands lambda-ssa loads)
-      ;; we don't actually need this, SSA-BLOCK-DEFINED is not used after SSA construction
-      ;; (copy-prop-replace-defined lambda-ssa loads)
-      )))
+      (copy-prop-fix-redundant-phis lambda-ssa loads))))
 
 
 ;; (defun add-copy (from to loads)
