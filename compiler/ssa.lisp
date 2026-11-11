@@ -769,12 +769,15 @@
   (assert (not (binding-place-p from)))
   (etypecase to
     (env-captured-place
-     (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value-in-closure-env
-			    :return-values ()
-			    :args (list (lambda-ssa-env-place lambda-ssa)
-					(env-captured-place-env-index to)
-					from))
-	      block))
+     (emit-ir
+      (progn
+	(error "FIXME")
+	(make-ssa-vop :name 'clcomp::set-bcell-value-in-closure-env ;; FIXME
+		      :return-values ()
+		      :args (list (lambda-ssa-env-place lambda-ssa)
+				  (make-immediate-constant :constant (env-captured-place-env-index to))
+				  from)))
+      block))
     (var-place
      (if (var-place-closure-captured to)
 	 (emit-ir (make-ssa-vop :name 'clcomp::make-bcell :return-values (list to)
@@ -801,6 +804,24 @@
     (unless (eq temp-to-place to)
       (move-from-simple-to-place temp-to-place to block lambda-ssa))))
 
+(defun set-place-from-simple-place (from to block lambda-ssa)
+  (assert (not (binding-place-p from)))
+  (etypecase to
+    (env-captured-place
+     (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value-in-closure-env
+			    :return-values ()
+			    :args (list (lambda-ssa-env-place lambda-ssa)
+					(make-immediate-constant :constant (env-captured-place-env-index to))
+					from))
+	      block))
+    (var-place
+     (if (var-place-closure-captured to)
+	 (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value :return-values (list)
+				:args (list to from))
+		  block)
+	 (emit-simple-move from to block lambda-ssa)))
+    (virtual-place
+     (emit-simple-move from to block lambda-ssa))))
 
 (defun emit-binding-move  (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
@@ -1100,12 +1121,16 @@
 
 (defun emit-setq-node-ssa (node lambda-ssa leaf place block)
   (declare (optimize debug))
-  (let ((new-block (maybe-emit-direct-load (clcomp::setq-node-form node)
-					   lambda-ssa leaf
-					   (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa t)
-					   block)))
+  (let* ((var-place (create-or-get-cached-var-place (clcomp::setq-node-var node) lambda-ssa t))
+	 (direct-place (make-direct-place-or-nil (clcomp::setq-node-form node) lambda-ssa))
+	 (tmp-place (unless direct-place (generate-virtual-place "TEMP-SETQ-")))
+	 (new-block (if direct-place block
+			(maybe-emit-direct-load (clcomp::setq-node-form node)
+						lambda-ssa leaf tmp-place
+						block))))
+    (set-place-from-simple-place (or direct-place tmp-place) var-place new-block lambda-ssa)
     (if place
-	(maybe-emit-direct-load (clcomp::setq-node-var node) lambda-ssa leaf place new-block))
+	(move-from-to-place (or direct-place tmp-place) place new-block lambda-ssa))
     new-block))
 
 (defun get-minimum-number-of-args (args)

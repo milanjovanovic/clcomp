@@ -303,11 +303,18 @@
 
 (defun create-setq-node (form environment)
   (let* ((var (second form))
-	 (binding (lexical-binding-exist environment var)))
+	 (binding (lexical-binding-exist environment var))
+	 (current-lambda (get-current-lambda-node environment))
+	 (current-lambda-id (lambda-node-id current-lambda)))
+    (assert current-lambda)
     (if (find var *dynamic-variables*)
 	(create-node (list '%set-symbol-value (list 'quote var) (third form)) environment)
 	(if binding
-	    (make-setq-node :var (get-lexical-node binding) :form (create-node (third form) environment))
+	    (progn
+	      (when (/= current-lambda-id (binding-lambda-id binding))
+		(set-binding-to-closed-over binding)
+		(pushnew (get-lexical-node binding) (lambda-node-closed-over-vars current-lambda)))
+	      (make-setq-node :var (get-lexical-node binding) :form (create-node (third form) environment)))
 	    ;; SETF/SETQ without DEFPARAMETER do sets SYMBOL-VALUE to the value
 	    ;; but variable is not proclaimed as SPECIAL so no special binding will be established
 	    ;; TODO, inspect how to implement DEFPARAMETER
