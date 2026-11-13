@@ -56,6 +56,8 @@
 	(ar (gensym "alias-register-")))
     `(let ((,res-list (list ,@res))
 	   (,aregs ,alias-regs))
+       (declare (ignorable ,res-list)
+		(ignorable ,aregs))
        (let ,(loop for arg in args
 		   collect `(,arg (if (find ,arg ,res-list)
 				      (progn

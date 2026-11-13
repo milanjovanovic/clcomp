@@ -619,6 +619,43 @@
   (error-if-touch-ssa)
   (setf (ssa-block-ssa block) (butlast (ssa-block-ssa block))))
 
+(defun emit-unwrap-bcell (from block lambda-ssa &optional to want-bcell)
+  #.*fun-optimize-level*
+  (assert (or (not to)
+	      (not (binding-place-p to))))
+  (cond ((and (var-place-p from)
+	      (var-place-closure-captured from))
+	 (let ((to (or to (generate-virtual-place "TMP-UNWRAP-PLACE-"))))
+	   (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list to)
+				  :args (list from))
+		    block)
+	   to))
+	((env-captured-place-p from)
+	 (let ((tmp-place (generate-virtual-place "TEMP-ENV-BCELL-"))
+	       (to (or to (generate-virtual-place "TMP-UNWRAP-PLACE-"))))
+	   (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-from-closure-env
+				  :return-values (list tmp-place)
+				  :args (list (lambda-ssa-env-place lambda-ssa)
+					      (make-immediate-constant :constant (env-captured-place-env-index from))))
+		    block)
+	   (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list to)
+				  :args (list tmp-place))
+		    block)
+	   to))
+	;; if there is TO place than we need to move FROM even if it's CONSTANT
+	((and (not want-bcell)
+	      to)
+	 (emit-simple-move from to block lambda-ssa))
+	((virtual-place-p from)
+	 from)
+	;; FIXUP ?
+	((and
+	  (not want-bcell)
+	  (immediate-constant-p from))
+	 from)
+	(t
+	 (error "BUG"))))
+
 (defun emit-single-return-sequence (place block lambda-ssa &optional (return-values 1))
   #.*fun-optimize-level*
   (move-from-to-simple-place place (make-return-value-place :index 0) block lambda-ssa)
@@ -717,22 +754,7 @@
 							   (make-immediate-constant :constant (env-captured-place-env-index place))))
 				 block)
 			(push tmp-place new-arg-places)))))
-	      (cond ((and (var-place-p place)
-			  (var-place-closure-captured place))
-		     (let ((tmp-place (generate-virtual-place "TEMP-UNBOXED-BCELL-")))
-		       (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list tmp-place)
-					      :args (list place))
-				block)
-		       (push tmp-place new-arg-places)))
-		    ((env-captured-place-p place)
-		     (let ((tmp-place (generate-virtual-place "TEMP-ENV-VAR-VALUE-")))
-		       (emit-ir (make-ssa-vop :name 'clcomp::get-from-closure-env :return-values (list tmp-place)
-					      :args (list (lambda-ssa-env-place lambda-ssa)
-							  (make-immediate-constant :constant (env-captured-place-env-index place))))
-				block)
-		       (push tmp-place new-arg-places)))
-		    (t
-		     (push place new-arg-places)))))))
+	      (push (emit-unwrap-bcell place block lambda-ssa) new-arg-places)))))
     (emit-ir (make-ssa-vop :name vop-name :return-values return-places :args (reverse new-arg-places)) block )))
 
 (defun make-simple-move (from to)
@@ -749,17 +771,8 @@
 (defun move-from-to-simple-place (from to block lambda-ssa)
   (assert (not (binding-place-p to)))
   (etypecase from
-    (env-captured-place
-     (emit-ir (make-ssa-vop :name 'clcomp::get-from-closure-env :return-values (list to)
-			    :args (list (lambda-ssa-env-place lambda-ssa)
-					(make-immediate-constant :constant (env-captured-place-env-index from))))
-	      block))
-    (var-place
-     (if (var-place-closure-captured from)
-	 (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-value :return-values (list to)
-				:args (list from))
-		  block)
-	 (emit-simple-move from to block lambda-ssa)))
+    ((or env-captured-place var-place)
+     (emit-unwrap-bcell from block lambda-ssa to))
     (virtual-place
      (emit-simple-move from to block lambda-ssa))
     ((or immediate-constant fixup)
@@ -769,15 +782,7 @@
   (assert (not (binding-place-p from)))
   (etypecase to
     (env-captured-place
-     (emit-ir
-      (progn
-	(error "FIXME")
-	(make-ssa-vop :name 'clcomp::set-bcell-value-in-closure-env ;; FIXME
-		      :return-values ()
-		      :args (list (lambda-ssa-env-place lambda-ssa)
-				  (make-immediate-constant :constant (env-captured-place-env-index to))
-				  from)))
-      block))
+     (error "Bug"))
     (var-place
      (if (var-place-closure-captured to)
 	 (emit-ir (make-ssa-vop :name 'clcomp::make-bcell :return-values (list to)
@@ -808,12 +813,15 @@
   (assert (not (binding-place-p from)))
   (etypecase to
     (env-captured-place
-     (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value-in-closure-env
-			    :return-values ()
-			    :args (list (lambda-ssa-env-place lambda-ssa)
-					(make-immediate-constant :constant (env-captured-place-env-index to))
-					from))
-	      block))
+     (let ((tmp-place (generate-virtual-place "ENV-VAR-BCELL-")))
+       (emit-ir (make-ssa-vop :name 'clcomp::get-bcell-from-closure-env
+			      :return-values (list tmp-place)
+			      :args (list (lambda-ssa-env-place lambda-ssa)
+					  (make-immediate-constant :constant (env-captured-place-env-index to))))
+		block)
+       (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value :return-values (list)
+			      :args (list tmp-place from))
+		block)))
     (var-place
      (if (var-place-closure-captured to)
 	 (emit-ir (make-ssa-vop :name 'clcomp::set-bcell-value :return-values (list)
@@ -967,10 +975,7 @@
 				var-place)))
 	       (env-captured-place
 		(let ((tmp-place (generate-virtual-place "TEMP-ENV-VAR-VALUE-")))
-		  (emit-ir (make-ssa-vop :name 'clcomp::get-from-closure-env :return-values (list tmp-place)
-					 :args (list (lambda-ssa-env-place lambda-ssa)
-						     (make-immediate-constant :constant (env-captured-place-env-index var-place))))
-			   block)
+		  (emit-unwrap-bcell var-place block lambda-ssa tmp-place)
 		  tmp-place))))))
     (t (let ((tmp-place (generate-virtual-place "TMP-FORM-PLACE-")))
 	 (list (emit-ssa node lambda-ssa nil tmp-place block) tmp-place)))))
@@ -1129,8 +1134,10 @@
 						lambda-ssa leaf tmp-place
 						block))))
     (set-place-from-simple-place (or direct-place tmp-place) var-place new-block lambda-ssa)
-    (if place
-	(move-from-to-place (or direct-place tmp-place) place new-block lambda-ssa))
+    (when place
+      (move-from-to-place (or direct-place tmp-place) place new-block lambda-ssa))
+    (when leaf
+      (emit-single-return-sequence (or direct-place tmp-place) block lambda-ssa ))
     new-block))
 
 (defun get-minimum-number-of-args (args)
@@ -1166,13 +1173,6 @@
 			      t))
 		       (list (make-rcv-argument-place :index index :min-count min-args-count))
 		       block lambda-ssa)
-	     ;; (emit-ir (make-ssa-vop :name 'clcomp::make-bcell
-	     ;; 			    :return-values (list (create-binding-var-place 
-	     ;; 						  (clcomp::lexical-binding-node-bin-node argument)
-	     ;; 						  lambda-ssa
-	     ;; 						  t))
-	     ;; 			    :args (list (make-rcv-argument-place :index index :min-count min-args-count)))
-	     ;; 	      block)
 	     (emit-simple-move  (make-rcv-argument-place :index index :min-count min-args-count)
 				(create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
 							  lambda-ssa nil)
@@ -1250,8 +1250,7 @@
 			    (emit-closure-boxing-sequence
 			     (clcomp::lambda-node-closed-over-vars node) block fixup lambda-ssa))))
       (if place
-	  ;; FIXME, PLACE can be BINDING CELL
-	  ;; (emit-simple-move (or closure-place fixup) place block lambda-ssa)
+	  ;; FIXME, PLACE can be BINDING CELL ??
 	  (move-from-simple-to-place (or closure-place fixup) place block lambda-ssa)
 	  (if leaf
 	      (emit-single-return-sequence (or closure-place fixup) block lambda-ssa)
@@ -2305,9 +2304,7 @@
     (when (clcomp::lambda-node-closed-over-vars lambda-node)
       (let* ((env-name (gensym "CLOSURE-ENV-"))
 	     (env-place (make-virtual-place :name env-name :variable env-name :allocation :register)))
-	(emit-vop 'clcomp::get-closure-env-from-fun-ptr  (list env-place)
-		  (list (make-operand-place :operand clcomp::*fun-address-reg*))
-		  entry-block lambda-ssa)
+	(emit-vop 'clcomp::get-closure-env-from-fun-ptr  (list env-place) (list) entry-block lambda-ssa)
 	(setf (lambda-ssa-env-place lambda-ssa)
 	      env-place)
 	(setf (lambda-ssa-closed-over-vars lambda-ssa)
