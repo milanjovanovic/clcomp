@@ -60,7 +60,7 @@
   defined phis live-in virtuals live-gen live-kill live-out live-phi-operands
   exit cond-jump-moves uncond-jump-moves succ-moves spill-moves)
 
-(defstruct ssa-form index)
+(defstruct ssa-form index group)
 ;; This means that this form can clobber arguments passing/return values registers
 (defstruct (ssa-kill-form (:include ssa-form)))
 (defstruct (lambda-entry (:include ssa-kill-form)))
@@ -102,10 +102,24 @@
 (defstruct (ssa-mvb-bind (:include ssa-form-rw)) places)
 
 
-(defparameter *break-block* -1)
+(defstruct (ir1-ssa-form (:include ssa-form)))
+(defstruct (ir1-ssa-form-rw (:include ssa-form-rw)))
+(defstruct (ir1-ssa-receive-arguments (:include ir1-ssa-form-rw)) min-args restify binding)
+(defstruct (ir1-ssa-fun-call (:include ir1-ssa-form-rw)) fun return-values args tail)
+(defstruct (ir1-ssa-return (:include ir1-ssa-form-rw)))
+(defstruct (ir1-ssa-mv-return (:include ir1-ssa-form-rw)) return-value)
+;; (defstruct (ir1-ssa-make-closure (:include ir1-ssa-form-rw)) return-value args fixup)
 
-;;; NOTE, all the Closures/BCELL stuff, maybe transformation (NODES) is better place for this ?
+(defun ir1-ssa-mv-return-ret-places (ir)
+  (let ((ret-place (ir1-ssa-mv-return-return-value ir)))
+    (etypecase ret-place
+      (mvb-place
+       (mvb-place-var-places ret-place))
+      (t (list ret-place)))))
 
+(defparameter *ir1-group-counter* 0)
+(defun make-ir1-group-counter ()
+  (incf *ir1-group-counter*))
 
 (eval-when (:load-toplevel :compile-toplevel :execute)
   (defparameter *fun-optimize-level* '(declare (optimize debug))))
@@ -566,6 +580,17 @@
   (when (typep ssa 'ssa-return)
     (setf (ssa-block-exit block) t)))
 
+(defun emit-ir2-ssa (ssa block)
+  (push ssa (ssa-block-ssa block)))
+
+(defun emit-ir2-group-ssa (ssas block)
+  (dolist (ir ssas)
+    (emit-lowered-ssa ir block)))
+
+(defun finish-block-ir2 (block)
+  (setf (ssa-block-ssa block)
+	(reverse (ssa-block-ssa block))))
+
 (defun emit-ir-first (ssa block)
   (error-if-touch-ir)
   ;; if there is no IR we must use EMIT-IR  because how we operate with IR code
@@ -656,12 +681,254 @@
 	(t
 	 (error "BUG"))))
 
+;;; -----------------------------------------------------------------------------------------------------------
+;;; IR1 LOWERING
+;;; NOTE, here we have GROUP-IR beside main IR1, this are instructions that are connected with main IR1 instruction
+;;; currently this are just BCELL boxing instructions which we handle at the time of variable binding
+;;; so when lowering IR1 we need to know where we want to insert lowered IR1 instructions
+;;; not very proud of this
+
+(defun lower-ir1-receive-arguments (ir1 group-ir block lambda-ssa)
+  #.*fun-optimize-level*
+  (let ((min-args-count (ir1-ssa-receive-arguments-min-args ir1))
+	(restify (ir1-ssa-receive-arguments-restify ir1))
+	(binding-places (ir1-ssa-receive-arguments-binding ir1))
+	(arg-index 0))
+    (emit-ir2-ssa (make-arg-check :min-arg-count min-args-count) block)
+    (when restify
+      (emit-ir2-ssa (make-ssa-rest-listify :count min-args-count) block))
+    (dolist (argument binding-places)
+      (when (and restify (> arg-index 0) (> arg-index min-args-count))
+	(return))
+      (emit-ir2-ssa (make-simple-move argument (make-rcv-argument-place :index arg-index :min-count min-args-count))
+		    block)
+      (incf arg-index))
+    (emit-ir2-group-ssa group-ir block)))
+
+(defun lower-ir1-mv-return (ir1 group-ir block lambda-ssa)
+  #.*fun-optimize-level*
+  (assert (null group-ir))
+  (let ((ret-value (ir1-ssa-mv-return-return-value ir1)))
+    (typecase ret-value
+      (mvb-place  (lower-i1-values ret-value lambda-ssa block))
+      (t
+       (emit-ir2-ssa (make-simple-move ret-value (make-return-value-place :index 0)) block)
+       (emit-ir2-ssa (make-deallocate-function-frame) block)
+       (emit-ir2-ssa (make-ssa-function-epilogue) block)
+       (emit-ir2-ssa (make-ssa-multiple-return :count 1) block)))))
+
+(defun lower-ir1-fun-call (ir1 group-ir block lambda-ssa)
+  (let* ((fun (ir1-ssa-fun-call-fun ir1))
+	 (return-value (ir1-ssa-fun-call-return-values ir1))
+	 (args (ir1-ssa-fun-call-args ir1))
+	 (args-count (length args))
+	 (arg-diff (- args-count (length *fun-arguments-regs*)))
+	 (stack-arguments (if (evenp arg-diff)
+			      arg-diff
+			      (1+ arg-diff))))
+    ;; maybe allocate stack for arguments
+    (when (> stack-arguments 0)
+      (emit-ir2-ssa (make-allocate-stack :count stack-arguments) block))
+    ;; move arguments to function argument physical places
+    (let ((arg-index 0))
+      (dolist (p (reverse args))
+	(emit-ir2-ssa (make-simple-move p (make-argument-place :index arg-index :count args-count)) block)
+	(incf arg-index)))
+    ;; set number of arguments register
+    (emit-ir2-ssa (make-simple-move (make-immediate-constant :constant args-count) (make-argument-count-place))
+		  block)
+    ;; set function-address-register
+    (emit-ir2-ssa (make-simple-move (get-or-create-compile-function-fixup fun lambda-ssa) (make-function-value-place))
+		  block)
+    ;; if we have return value places move return values
+    (if (null return-value)
+	(progn
+	  (emit-ir2-ssa (make-ssa-unknown-values-fun-call :fun fun)
+			block)
+	  (unless (ir1-ssa-fun-call-tail ir1)
+	    (emit-ir2-ssa (make-maybe-mv-adjust-stack) block))
+	  (when (> stack-arguments 0)
+	    (emit-ir2-ssa (make-deallocate-stack :count stack-arguments) block)))
+	(progn
+	  (emit-ir2-ssa (make-ssa-unknown-values-fun-call :fun fun) block)
+	  (typecase return-value
+	    (mvb-place
+	     (emit-ir2-ssa (make-ssa-mvb-bind :places (mvb-place-var-places return-value)) block))
+	    (otherwise
+	     (emit-ir2-ssa (make-simple-move (make-return-value-place :index 0) return-value ) block)))
+	  ;; here we can have bcell boxing instructions
+	  (emit-ir2-group-ssa group-ir block)
+	  (emit-ir2-ssa (make-maybe-mv-adjust-stack) block)
+	  (when (> stack-arguments 0)
+	    (emit-ir2-ssa (make-deallocate-stack :count stack-arguments) block))))))
+
+;;;MULTIPLE VALUE CALLING CONVENTION
+;;;If we have more values than registers extra values are put in the extended caller stack frame
+;;;we are extending caller stack frame just bellow caller original stack pointer
+;;;compiler first evaluate every VALUES form and puts result in the variables that are marked to be allocated on the stack
+;;;stack allocation of forms result is important because before we start copying it to caller stack frame we need
+;;;to restore calle-saved-register because copy process will overwrite those slots
+;;;so we first need to restore those registers and that means that result of VALUES forms evaluation can't be saved in those registers
+;;;second important thing that this stack-allocated variables need to be allocated in the order of copying to caller stack
+;;;if they are not there is danger of overwrite during copy process
+;;; original   stack frame           stack just before return
+;;; RBP+8          RIP                      EMPTY (alignmen slot)
+;;; RBP            RBP                     VALUE-5
+;;; RBP-8     calle-saved-reg-1            VALUE-6
+;;; RBP-16    calle-saved-reg-2            VALUE-7
+;;; RBP-24    calle-saved-reg-3              RIP  (RSP points here before return)
+;;; RBP-32    calle-saved-reg-4
+;;; RBP-40      calle stack
+;;;
+;;; For caller it's required in *regular function call* to adjust it's own stack
+;;; after copying stack-allocated-values to it's own stack frame
+(defun lower-i1-values (mvb lambda-ssa block)
+  #.*fun-optimize-level*
+  (declare (ignore lambda-ssa))
+  (let* ((vals (mvb-place-var-places mvb))
+	 (vals-count (length vals)))
+    (if (zerop  vals-count)
+	;; empty (VALUES) form, just load NIL to first return value register
+	(progn
+	  (emit-ir2-ssa (make-simple-move (make-immediate-constant :constant clcomp::*nil*)
+					  (make-return-value-place :index 0))
+			block)
+	  (emit-ir2-ssa (make-deallocate-function-frame) block)
+	  (emit-ir2-ssa (make-ssa-function-epilogue) block)
+	  (emit-ir2-ssa (make-ssa-multiple-return :count 0)
+			block))
+	;; we have VALUES
+	(progn
+	  ;; handle values that goes to registers
+	  (dotimes (index (length *fun-arguments-regs*))
+	    (let ((value-place (nth index vals)))
+	      (if value-place
+		  (emit-ir2-ssa (make-simple-move value-place (make-return-value-place :index index)) block)
+		  (return))))
+	  ;; return early if we don't have more values than registers
+	  (unless (> (length vals)
+		     (length *fun-arguments-regs*))
+	    (emit-ir2-ssa (make-deallocate-function-frame) block)
+	    (emit-ir2-ssa (make-ssa-function-epilogue) block)
+	    (emit-ir2-ssa (make-ssa-multiple-return :count vals-count) block)
+	    (return-from lower-i1-values))
+
+	  ;; process stack values
+	  ;; NOTE, mine, in next sequence we need to guarantee that Allocator will not assign or use any of the temp registers
+	  ;; so when loading values from stack to stack we already use *tmp-reg-2* so that Allocator doesn't use any temp reg
+	  ;; later optimizations should remove not needed itermediate moves (peephole optimizer ?)
+	  (let* ((stack-vals (- vals-count (length *fun-arguments-regs*))))
+	    (when (> stack-vals 0)
+	      ;; calculate alignment, this part need to be align, when we push RIP back on stack it should not be
+	      (let* ((align-slot-needed (not (evenp stack-vals)))
+		     (stack-alloc-count (if align-slot-needed
+					    (1+ stack-vals)
+					    stack-vals)))
+
+		(assert (> stack-alloc-count 1))
+		;; restore caller registers
+		(let ((index 1))
+		  (dolist (reg (reverse *preserved-regs*))
+		    (emit-ir2-ssa (make-ssa-embedded-instr
+				   :instruction (list :mov reg (@ *base-pointer-reg* nil nil (- (* index clcomp::*word-size*)))))
+				  block)
+		    (incf index)))
+
+		;; save caller RBP
+		(emit-ir2-ssa (make-ssa-embedded-instr :instruction (list :mov *tmp-reg* (@ *base-pointer-reg*))) block)
+		;; save RIP to RCX, we don't need RCX at this point
+		(emit-ir2-ssa (make-ssa-embedded-instr
+			       :instruction (list :mov *fun-number-of-arguments-reg* (@ *base-pointer-reg*
+											nil
+											nil
+											clcomp::*word-size*)))
+			      block)
+		;; Next sequence will use temporary reg if it's move between two memory locations
+		;; in this case we don't actually want this, because we are using temp regs in this asm sequence
+		;; possible solution, leave it like this and peephole optimizer will remove unnecessary moves to temp reg
+		;; this means that we can't leave this allocation to allocation process
+		;; if we have alignment first slot is empty, values starts from [RBP]
+
+		;; FIXME - BUG, here we already restored caller RBP but we are using it in next sequence
+		;; (print (list 'align-slot-needed align-slot-needed))
+		(let ((displacement (if align-slot-needed
+					0
+					clcomp::*word-size*)))
+		  (dolist (place (nthcdr (length *fun-arguments-regs*) vals))
+		    (emit-ir2-ssa (make-simple-move place (make-operand-place :operand *tmp-reg-2*)) block)
+		    (emit-ir2-ssa (make-simple-move (make-operand-place :operand *tmp-reg-2*)
+						    (make-operand-place :operand (@ *base-pointer-reg* nil nil displacement)))
+				  block)
+		    (decf displacement clcomp::*word-size*)))
+
+		;; resize stack
+		;; NOTE, double check this
+		(emit-ir2-ssa
+		 (make-ssa-embedded-instr
+		  :instruction (list :lea *stack-pointer-reg*
+				     (@ *base-pointer-reg* nil nil (* clcomp::*word-size* (- 2 stack-alloc-count)))))
+		 block)
+		;; restore RBP
+		(emit-ir2-ssa
+		 (make-ssa-embedded-instr
+		  :instruction (list :mov  *base-pointer-reg* *tmp-reg*))
+		 block)
+		;; push RIP
+		(emit-ir2-ssa
+		 (make-ssa-embedded-instr
+		  :instruction (list :push *fun-number-of-arguments-reg*))
+		 block)
+		(emit-ir2-ssa (make-ssa-multiple-return :count vals-count)
+			      block))))))))
+
+(defun lower-ir1-group (ir ir-group block lambda-ssa)
+  #.*fun-optimize-level*
+  (when ir-group (break))
+  (etypecase ir
+    (ir1-ssa-receive-arguments (lower-ir1-receive-arguments ir ir-group block lambda-ssa))
+    (ir1-ssa-fun-call (lower-ir1-fun-call ir ir-group block lambda-ssa))
+    (ir1-ssa-mv-return (lower-ir1-mv-return ir ir-group block lambda-ssa))
+    (t (emit-ir2-ssa ir block))))
+
+(defun lower-ir1-block (block lambda-ssa)
+  #.*fun-optimize-level*
+  (let ((instructions (ssa-block-ssa block)))
+    (setf (ssa-block-ssa block) nil)
+    (let ((main-ir nil)
+	  (group-irs nil))
+      (do ((ssa instructions (cdr ssa)))
+	  ((null ssa)
+	   (when main-ir
+	     (lower-ir1-group main-ir group-irs block lambda-ssa)))
+	(if main-ir
+	    (let* ((ir (first ssa))
+		   (mg (ssa-form-group main-ir))
+		   (cg (ssa-form-group ir)))
+	      (if (and cg (= mg cg))
+		  (push ir group-irs)
+		  (progn
+		    (lower-ir1-group main-ir group-irs block lambda-ssa)
+		    (setf main-ir ir)
+		    (setf group-irs nil))))
+	    (progn
+	      (assert (null group-irs))
+	      (setf main-ir (first ssa))))))
+    (finish-block-ir2 block)))
+
+(defun lower-ir1-lambda (lambda-ssa)
+  (dolist (block (lambda-ssa-blocks lambda-ssa))
+    (lower-ir1-block block lambda-ssa)))
+
+;;; -----------------------------------------------------------------------------------------------------------
+
 (defun emit-single-return-sequence (place block lambda-ssa &optional (return-values 1))
   #.*fun-optimize-level*
-  (move-from-to-simple-place place (make-return-value-place :index 0) block lambda-ssa)
-  (emit-ir (make-deallocate-function-frame) block)
-  (emit-ir (make-ssa-function-epilogue) block)
-  (emit-ir (make-ssa-multiple-return :count return-values) block))
+  (declare (ignore return-values))
+  (when (binding-place-p place)
+    (let ((tmp-place (generate-virtual-place "TEMP-UNWRAP-PLACE-")))
+      (move-from-to-simple-place place tmp-place block lambda-ssa)
+      (setf place tmp-place)))
+  (emit-ir (make-ir1-ssa-mv-return :return-value place) block))
 
 ;;; FIXME, set block LABEL fieds
 ;;; FIXME, we are allways moving value to specific place, we can omit that and use existing place (and force it to register)
@@ -893,62 +1160,74 @@
 	      (push place result-places)))))
     (cons (reverse result-places) block)))
 
-;;; FIXME, fun can be CLOSURE or LAMBDA
+(defun maybe-make-bcell-boxing-binding (place)
+  (typecase place
+    (mvb-place (let ((binding (mapcar (lambda (p)
+					(if (binding-place-p p)
+					    (list p (generate-virtual-place "TEMP-RET-VAL-"))
+					    (list p nil)))
+				      (mvb-place-var-places place))))
+		 (list (make-mvb-place :var-places (mapcar (lambda (b)
+							     (or (second b)
+								 (first b)))
+							   binding))
+		       binding)))
+    (otherwise (if (binding-place-p place)
+		   (let ((tmp-place (generate-virtual-place "TEMP-RET-VAL-") ))
+		     (list tmp-place (list place tmp-place)))
+		   (list place nil)))))
+
+;;; Does this FIXME stand ?
 ;;; FIXME, we don't need to fill all return places, if we need only one supply NIL for rest of VOP return values
-(defun emit-call-node-ssa (node lambda-ssa leaf place block)
+(defun emit-call-node-ssa (node lambda-ssa tail place block)
   #.*fun-optimize-level*
+  (print (list tail place))
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
-	 (arguments-count (length arguments))
-	 ;; alignment
-	 (arg-diff (- arguments-count (length *fun-arguments-regs*)))
-	 (stack-arguments (if (evenp arg-diff)
-			      arg-diff
-			      (1+ arg-diff)))
-	 (args-places nil))
+	 (temp-args-places nil)
+	 (args-places nil)
+	 (ir1-group (make-ir1-group-counter)))
     (dolist (arg arguments)
       (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
 	(if direct-place
-	    (push direct-place args-places)
+	    (push direct-place temp-args-places)
 	    (let* ((place (generate-virtual-place))
 		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
 	      (setf block new-block)
-	      (push place args-places)))))
-    (when (> stack-arguments 0)
-      (emit-ir (make-allocate-stack :count stack-arguments) block))
-    (let ((arg-index 0))
-      (dolist (p (reverse args-places))
-	(move-from-to-simple-place p (make-argument-place :index arg-index :count arguments-count) block lambda-ssa)
-	(incf arg-index)))
-    (emit-simple-move (make-immediate-constant :constant arguments-count)
-		      (make-argument-count-place) block lambda-ssa)
-    (let ((fixup (get-or-create-compile-function-fixup fun lambda-ssa)))
-      (emit-simple-move fixup (make-function-value-place) block lambda-ssa))
-    (if (null place)
-	(progn
-	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun)
-		   block)
-	  (unless leaf
-	    (emit-ir (make-maybe-mv-adjust-stack) block))
-	  (when (> stack-arguments 0)
-	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
-	  (when leaf
-	    (emit-ir (make-ssa-unknown-return) block))
-	  block)
-	(progn
-	  ;; FIXME, where to insert deallocate stack ???
-	  (emit-ir (make-ssa-unknown-values-fun-call :fun fun) block)
-	  (typecase place
-	    (mvb-place
-	     (emit-ir (make-ssa-mvb-bind :places (mvb-place-var-places place)) block)
-	     ;; if binding is captured we need to box var to bcell
-	     (maybe-box-bindings (mvb-place-var-places place) block lambda-ssa))
-	    (otherwise
-	     (move-from-simple-to-place (make-return-value-place :index 0) place block lambda-ssa)))
-	  (emit-ir (make-maybe-mv-adjust-stack) block)
-	  (when (> stack-arguments 0)
-	    (emit-ir (make-deallocate-stack :count stack-arguments) block))
-	  block))))
+	      (push place temp-args-places)))))
+    ;; Here we maybe need to unpack BCELLS or CLOSURE-ENV variables
+    (dolist (p (reverse temp-args-places))
+      (if (binding-place-p p)
+	  (let ((tmp-place (generate-virtual-place "TEMP-FUN-ARG-PLACE-")))
+	    (move-from-to-simple-place p tmp-place block lambda-ssa)
+	    (push tmp-place args-places))
+	  (push p args-places)))
+    ;; maybe we need to box return value to BCELL
+    (let* ((maybe-bcell-binding (maybe-make-bcell-boxing-binding place))
+	   (new-place (first maybe-bcell-binding))
+	   (tmp-binding (second maybe-bcell-binding)))
+      (emit-ir (make-ir1-ssa-fun-call :fun fun
+				      :return-values new-place
+				      :args (reverse args-places)
+				      :group ir1-group
+				      :tail tail)
+	       block)
+      (typecase new-place
+	(mvb-place
+	 (dolist (bin tmp-binding)
+	   (when (second bin)
+	     (emit-ir (make-ssa-vop :name 'clcomp::make-bcell :return-values (list (first bin))
+				    :group ir1-group
+				    :args (list (second bin)))
+		      block))))
+	(otherwise (when tmp-binding
+		     (emit-ir (make-ssa-vop :name 'clcomp::make-bcell :return-values (list (first tmp-binding))
+					    :group ir1-group
+					    :args (list (second tmp-binding)))
+			      block))))
+      (when tail
+	(emit-ir (make-ssa-unknown-return) block)))
+    block))
 
 ;;; VOP that work on BCELL need's BCELL as argument instead of unboxed BCELL (which is default behavior)
 ;;; FIX to work W
@@ -980,51 +1259,38 @@
     (t (let ((tmp-place (generate-virtual-place "TMP-FORM-PLACE-")))
 	 (list (emit-ssa node lambda-ssa nil tmp-place block) tmp-place)))))
 
+(defun make-n-virtual-mvb-place (places-count)
+  (let ((places nil))
+    (dotimes (i places-count)
+      (push (generate-virtual-place) places))
+    (make-mvb-place :var-places places)))
+
 (defun emit-vop-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
-  (let* ((vop (clcomp::get-vop (clcomp::vop-node-vop node)))
+  (let* ((arguments (clcomp::vop-node-arguments node))
+	 (vop (clcomp::get-vop (clcomp::vop-node-vop node)))
 	 (ret-vals (length (clcomp::vop-res vop)))
-	 (arguments (clcomp::vop-node-arguments node))
-	 (args-metadata (clcomp::vop-arguments-metadata vop))
 	 (args-places nil))
-    ;; for now we only allow one return place
-    (do ((args arguments (cdr args))
-	 (amds args-metadata (cdr amds)))
-	((null args))
-      (assert (and args amds))
-      (let* ((arg (first args))
-	     (amd (first amds))
-	     ;; FIX this to work with EMIT-VOP instead od VOP-EVALUATE-FORM
-	     (block-place (vop-evaluate-form arg amd lambda-ssa block))
-	     (new-block (first block-place))
-	     (place (second block-place)))
-	(push place args-places)
-	(setf block new-block)))
-    (setf args-places (reverse args-places))
-    (cond (leaf
-	   ;; FIXME, this will not work if we have more return places than registers
-	   (assert (<=  ret-vals (length clcomp::*fun-arguments-regs*)))
-	   (emit-ir (make-ssa-vop
-		     :name (clcomp::vop-node-vop node)
-		     :return-values (generate-return-places ret-vals)
-		     :args args-places)
-		    block)
-	   (emit-ir (make-deallocate-function-frame) block)
-	   (emit-ir (make-ssa-function-epilogue) block)
-	   (emit-ir (make-ssa-multiple-return :count ret-vals) block))
-	  (place
-	   (etypecase place
-	     (mvb-place
-	      (error "Not implented"))
-	     ((or fixed-place named-place)
-	      (emit-ir (make-ssa-vop :name (clcomp::vop-node-vop node) :return-values (list place) :args args-places) block))))
-	  (t
-	   ;; FIXME, this is issue when caller of the VOP don't expect that VOP returns anything
-	   ;; we should have option when VOP doesn't require any return places, so side-effect only VOP
-	   (emit-ir (make-ssa-vop :name (clcomp::vop-node-vop node)
-				  :return-values (generate-return-places ret-vals)
-				  :args args-places)
-		    block)))
+    (when (and (null place)
+	       (> ret-vals 0))
+      (setf place (if (> ret-vals 1)
+		      (make-n-virtual-mvb-place ret-vals)
+		      (generate-virtual-place))))
+    (dolist (arg arguments)
+      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
+	(if direct-place
+	    (push direct-place args-places)
+	    (let* ((place (generate-virtual-place))
+		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
+	      (setf block new-block)
+	      (push place args-places)))))
+    (emit-ir (make-ssa-vop
+	      :name (clcomp::vop-node-vop node)
+	      :return-values place
+	      :args args-places)
+	     block)
+    (when leaf
+      (emit-ir (make-ir1-ssa-mv-return :return-value place) block))
     block))
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
@@ -1149,35 +1415,35 @@
 
 (defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
   #.*fun-optimize-level*
-  (if (some (lambda (bn)
-	      (clcomp::lexical-binding-node-rest bn))
-	    arguments)
-      (let ((min-args-count (get-minimum-number-of-args arguments)))
-	(setf (lambda-ssa-contains-rest-arg lambda-ssa) t)
-	(emit-ir (make-arg-check :min-arg-count min-args-count) block)
-	(emit-ir (make-ssa-rest-listify :count min-args-count) block))
-      (emit-ir (make-arg-check :arg-count (length arguments)) block))
-  (let ((min-args-count (get-minimum-number-of-args arguments))
-	(index 0))
-    (dolist (argument arguments)
-      (when (and (clcomp::lexical-binding-node-rest argument)
-		 (> index 0))
-	(return))
-      (etypecase argument
-	(clcomp::lexical-binding-node
-	 (if (clcomp::lexical-binding-node-closed-over argument)
-	     (emit-vop 'clcomp::make-bcell
-		       (list (create-binding-var-place 
-			      (clcomp::lexical-binding-node-bin-node argument)
-			      lambda-ssa
-			      t))
-		       (list (make-rcv-argument-place :index index :min-count min-args-count))
-		       block lambda-ssa)
-	     (emit-simple-move  (make-rcv-argument-place :index index :min-count min-args-count)
-				(create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
-							  lambda-ssa nil)
-				block lambda-ssa))))
-      (incf index))))
+  (let ((restify (some (lambda (bn)
+			 (clcomp::lexical-binding-node-rest bn))
+		       arguments))
+	(min-args (get-minimum-number-of-args arguments))
+	(bindings (mapcar (lambda (argument)
+			    (list (create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
+							    lambda-ssa (clcomp::lexical-binding-node-closed-over argument))
+				  (when (clcomp::lexical-binding-node-closed-over argument)
+				    (generate-virtual-place "TEMP-RECV-ARG-"))))
+			  arguments))
+	(ir1-group (make-ir1-group-counter)))
+    (when restify
+      (setf (lambda-ssa-contains-rest-arg lambda-ssa) t))
+    (emit-ir (make-ir1-ssa-receive-arguments :min-args min-args
+					     :restify restify
+					     :group ir1-group
+					     :binding (mapcar (lambda (b)
+								(or (second b)
+								    (first b)))
+							      bindings))
+	     block)
+    (dolist (bin bindings)
+      (when (second bin)
+	(emit-ir (make-ssa-vop :name 'clcomp::make-bcell
+			       :group ir1-group
+			       :return-values (list (first bin))
+			       :args (list (second bin)))
+		 block)))
+    block))
 
 (defun get-or-create-compile-function-fixup (function lambda-ssa)
   #.*fun-optimize-level*
@@ -1231,6 +1497,16 @@
 	      block lambda-ssa) 
     ret-place))
 
+#+nil
+(defun emit-closure-boxing-sequence (closed-over-vars-nodes block fixup lambda-ssa)
+  #.*fun-optimize-level*
+  (let ((ret-place (generate-virtual-place "CLOSURE-PLACE-"))
+	(closed-over-args (mapcar (lambda (n)
+				    (create-or-get-cached-var-place n lambda-ssa t))
+				  closed-over-vars-nodes)))
+    (emit-ir (make-ir1-ssa-make-closure :return-value ret-place :args closed-over-args :fixup fixup) block)
+    ret-place))
+
 (defun emit-rip-relative-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
   (let ((fixup (rip-relative-node-to-fixup node lambda-ssa)))
@@ -1250,10 +1526,11 @@
 			    (emit-closure-boxing-sequence
 			     (clcomp::lambda-node-closed-over-vars node) block fixup lambda-ssa))))
       (if place
-	  ;; FIXME, PLACE can be BINDING CELL ??
+	  ;; FIXME, PLACE can be BINDING CELL
+	  ;; (emit-simple-move (or closure-place fixup) place block lambda-ssa)
 	  (move-from-simple-to-place (or closure-place fixup) place block lambda-ssa)
 	  (if leaf
-	      (emit-single-return-sequence (or closure-place fixup) block lambda-ssa)
+	      (emit-ir (make-ir1-ssa-mv-return :return-value (or closure-place fixup)) block)
 	      ;; FIXME, we can omit SSA-VALUE node here ???
 	      (emit-ir (make-ssa-value :value (or closure-place fixup)) block))))
     block))
@@ -1268,132 +1545,18 @@
     (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
 
-;;;MULTIPLE VALUE CALLING CONVENTION
-;;;If we have more values than registers extra values are put in the extended caller stack frame
-;;;we are extending caller stack frame just bellow caller original stack pointer
-;;;compiler first evaluate every VALUES form and puts result in the variables that are marked to be allocated on the stack
-;;;stack allocation of forms result is important because before we start copying it to caller stack frame we need
-;;;to restore calle-saved-register because copy process will overwrite those slots
-;;;so we first need to restore those registers and that means that result of VALUES forms evaluation can't be saved in those registers
-;;;second important thing that this stack-allocated variables need to be allocated in the order of copying to caller stack
-;;;if they are not there is danger of overwrite during copy process
-;;; original   stack frame           stack just before return
-;;; RBP+8          RIP                      EMPTY (alignmen slot)
-;;; RBP            RBP                     VALUE-5
-;;; RBP-8     calle-saved-reg-1            VALUE-6
-;;; RBP-16    calle-saved-reg-2            VALUE-7
-;;; RBP-24    calle-saved-reg-3              RIP  (RSP points here before return)
-;;; RBP-32    calle-saved-reg-4
-;;; RBP-40      calle stack
-;;;
-;;; For caller it's required in *regular function call* to adjust it's own stack
-;;; after copying stack-allocated-values to it's own stack frame
+
 (defun emit-values-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
   ;; can this happen ?
   (assert (not (and leaf place)))
   (if leaf
-      (if (zerop (length (clcomp::values-node-forms node)))
-	  ;; empty (VALUES) form, just load NIL to first return value register
-	  (progn
-	    (emit-simple-move (make-immediate-constant :constant clcomp::*nil*)
-			      (make-return-value-place :index 0)
-			      block lambda-ssa)
-	    (emit-ir (make-deallocate-function-frame) block)
-	    (emit-ir (make-ssa-function-epilogue) block)
-	    (emit-ir (make-ssa-multiple-return :count 0)
-		     block))
-	  ;; we have VALUES
-	  (progn
-	    (assert (not (mvb-place-p place)))
-	    (let* ((result (emit-evaluate-forms-to-stack lambda-ssa block (clcomp::values-node-forms node)))
-		   (values-places (car result))
-		   (new-block (cdr result)))
-	      (setf block new-block)
-	      ;; handle values that goes to registers
-	      (dotimes (index (length *fun-arguments-regs*))
-		(let ((value-place (nth index values-places)))
-		  (if value-place
-		      (emit-simple-move value-place (make-return-value-place :index index) block lambda-ssa)
-		      (return))))
-	      ;; return early if we don't have more values than registers
-	      (unless (> (length values-places)
-			 (length *fun-arguments-regs*))
-		(emit-ir (make-deallocate-function-frame) block)
-		(emit-ir (make-ssa-function-epilogue) block)
-		(emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
-			 block)
-		(return-from emit-values-node-ssa))
-
-	      ;; process stack values
-	      ;; NOTE, mine, in next sequence we need to guarantee that Allocator will not assign or use any of the temp registers
-	      ;; so when loading values from stack to stack we already use *tmp-reg-2* so that Allocator doesn't use any temp reg
-	      ;; later optimizations should remove not needed itermediate moves (peephole optimizer ?)
-	      (let* ((vals-count (length values-places))
-		     (stack-vals (- vals-count (length *fun-arguments-regs*))))
-		(when (> stack-vals 0)
-		  ;; calculate alignment, this part need to be align, when we push RIP back on stack it should not be
-		  (let* ((align-slot-needed (not (evenp stack-vals)))
-			 (stack-alloc-count (if align-slot-needed
-						(1+ stack-vals)
-						stack-vals)))
-
-		    (assert (> stack-alloc-count 1))
-		    ;; restore caller registers
-		    (let ((index 1))
-		      (dolist (reg (reverse *preserved-regs*))
-			(emit-ir (make-ssa-embedded-instr
-				  :instruction (list :mov reg (@ *base-pointer-reg* nil nil (- (* index clcomp::*word-size*)))))
-				 block)
-			(incf index)))
-
-		    ;; save caller RBP
-		    (emit-ir (make-ssa-embedded-instr :instruction (list :mov *tmp-reg* (@ *base-pointer-reg*))) block)
-		    ;; save RIP to RCX, we don't need RCX at this point
-		    (emit-ir (make-ssa-embedded-instr
-			      :instruction (list :mov *fun-number-of-arguments-reg* (@ *base-pointer-reg*
-										       nil
-										       nil
-										       clcomp::*word-size*)))
-			     block)
-		    ;; Next sequence will use temporary reg if it's move between two memory locations
-		    ;; in this case we don't actually want this, because we are using temp regs in this asm sequence
-		    ;; possible solution, leave it like this and peephole optimizer will remove unnecessary moves to temp reg
-		    ;; this means that we can't leave this allocation to allocation process
-		    ;; if we have alignment first slot is empty, values starts from [RBP]
-		    
-		    ;; FIXME - BUG, here we already restored caller RBP but we are using it in next sequence
-		    ;; (print (list 'align-slot-needed align-slot-needed))
-		    (let ((displacement (if align-slot-needed
-					    0
-					    clcomp::*word-size*)))
-		      (dolist (place (nthcdr (length *fun-arguments-regs*) values-places))
-			(emit-simple-move place (make-operand-place :operand *tmp-reg-2*) block lambda-ssa)
-			(emit-simple-move (make-operand-place :operand *tmp-reg-2*)
-					  (make-operand-place :operand (@ *base-pointer-reg* nil nil displacement))
-					  block lambda-ssa)
-			(decf displacement clcomp::*word-size*)))
-
-		    ;; resize stack
-		    ;; NOTE, double check this
-		    (emit-ir
-		     (make-ssa-embedded-instr
-		      :instruction (list :lea *stack-pointer-reg*
-					 (@ *base-pointer-reg* nil nil (* clcomp::*word-size* (- 2 stack-alloc-count)))))
-		     block)
-		    ;; restore RBP
-		    (emit-ir
-		     (make-ssa-embedded-instr
-		      :instruction (list :mov  *base-pointer-reg* *tmp-reg*))
-		     block)
-		    ;; push RIP
-		    (emit-ir
-		     (make-ssa-embedded-instr
-		      :instruction (list :push *fun-number-of-arguments-reg*))
-		     block)
-		    (emit-ir (make-ssa-multiple-return :count (length (clcomp::values-node-forms node)))
-			     block)))))))
-      
+      (let* ((result (emit-evaluate-forms-to-stack lambda-ssa block (clcomp::values-node-forms node)))
+	     (values-places (car result))
+	     (new-block (cdr result)))
+	(setf block new-block)
+	(emit-ir (make-ir1-ssa-mv-return :return-value (make-mvb-place :var-places values-places))
+		 block))
       ;; not a leaf form
       (progn
 	(let ((ret-index 0))
@@ -1641,7 +1804,6 @@
   (typecase ir
     (ssa-form-rw
      (etypecase ir
-       ;; with every IR we first need to transform read place
        (ssa-load
 	(list (list (ssa-load-from ir))
 	      (list (ssa-load-to ir))))
@@ -1653,26 +1815,59 @@
 	(list nil  (ssa-mvb-bind-places ir)))
        (ssa-vop
 	(list (ssa-vop-args ir)
-	      (ssa-vop-return-values ir)))))
+	      (ssa-vop-return-values ir)))
+       (ir1-ssa-receive-arguments
+	(list nil (ir1-ssa-receive-arguments-binding ir)))
+       (ir1-ssa-fun-call
+	(list (ir1-ssa-fun-call-args ir)
+	      (typecase (ir1-ssa-fun-call-return-values ir)
+		(mvb-place (list (mvb-place-var-places (ir1-ssa-fun-call-return-values ir))))
+		(t (list (ir1-ssa-fun-call-return-values ir))))))
+       (ir1-ssa-mv-return
+	(list (typecase (ir1-ssa-mv-return-return-value ir)
+		(mvb-place (mvb-place-var-places (ir1-ssa-mv-return-return-value ir)))
+		(t (list (ir1-ssa-mv-return-return-value ir))))
+	      nil))
+       ;; (ir1-ssa-make-closure
+       ;; 	(list (ir1-ssa-make-closure-args ir) (list (ir1-ssa-make-closure-return-value ir))))
+       ))
     (t ir)))
 
 (defun ssa-form-rw-replace-reads (ir old-virt new-virt)
-  (etypecase ir
-    (ssa-load
-     (when (eq old-virt (ssa-load-from ir))
-       (setf (ssa-load-from ir) new-virt)))
-    (ssa-value
-     (when (eq old-virt (ssa-value-value ir))
-       (setf (ssa-value-value ir) new-virt)))
-    (ssa-if
-     (when (eq old-virt (ssa-if-test ir))
-       (setf (ssa-if-test ir) new-virt)))
-    (ssa-mvb-bind
-     t)
-    (ssa-vop
-     (let ((pos (position old-virt (ssa-vop-args ir))))
-       (when pos
-	 (setf (nth pos (ssa-vop-args ir)) new-virt))))))
+  (flet ((replace-in-list (l old new)
+	   (let ((pos (position old l)))
+	     (when pos
+	       (setf (nth pos l) new)))))
+    (etypecase ir
+      (ssa-load
+       (when (eq old-virt (ssa-load-from ir))
+	 (setf (ssa-load-from ir) new-virt)))
+      (ssa-value
+       (when (eq old-virt (ssa-value-value ir))
+	 (setf (ssa-value-value ir) new-virt)))
+      (ssa-if
+       (when (eq old-virt (ssa-if-test ir))
+	 (setf (ssa-if-test ir) new-virt)))
+      (ssa-mvb-bind
+       t)
+      (ssa-vop
+       (let ((pos (position old-virt (ssa-vop-args ir))))
+	 (when pos
+	   (setf (nth pos (ssa-vop-args ir)) new-virt))))
+      (ir1-ssa-receive-arguments
+       (break))
+      (ir1-ssa-fun-call
+       (replace-in-list (ir1-ssa-fun-call-args ir) old-virt new-virt))
+      (ir1-ssa-mv-return
+       (typecase (ir1-ssa-mv-return-return-value ir)
+	 (mvb-place
+	  (replace-in-list (mvb-place-var-places (ir1-ssa-mv-return-return-value ir)) old-virt new-virt))
+	 (t
+	  (when (eq old-virt (ir1-ssa-mv-return-return-value ir))
+	    (setf (ir1-ssa-mv-return-return-value ir) new-virt)))))
+      ;; (ir1-ssa-make-closure
+      ;;  (replace-in-list (ir1-ssa-make-closure-args ir) old-virt new-virt))
+      )))
 
 (defun ssa-read-variable (place block lambda-ssa)
   #.*fun-optimize-level*
@@ -1697,37 +1892,84 @@
   #.*fun-optimize-level*
   (let ((ssa-ir nil))
     (dolist (ir (ssa-block-ir b))
-      (let ((irssa (typecase ir
-		     (ssa-form-rw
-		      (etypecase ir
-			;; with every IR we first need to transform read place
-			(ssa-load (let ((read (transform-read (ssa-load-from ir) b lambda-ssa) ))
-				    (make-ssa-load :index (ssa-load-index ir)
-						   :to (transform-write (ssa-load-to ir) b lambda-ssa)
-						   :from read)))
-			(ssa-value (make-ssa-value :index (ssa-value-index ir)
-						   :value (transform-read (ssa-value-value ir) b lambda-ssa)))
-			(ssa-if (make-ssa-if :index (ssa-if-index ir)
-					     :test (transform-read (ssa-if-test ir) b lambda-ssa)
-					     :true-block (ssa-if-true-block ir)
-					     :true-block-label (ssa-if-true-block-label ir)
-					     :false-block-label (ssa-if-false-block-label ir)))
-			(ssa-mvb-bind (make-ssa-mvb-bind
-				       :index (ssa-mvb-bind-index ir)
-				       :places (mapcar (lambda (p)
-							 (transform-write p b lambda-ssa))
-						       (ssa-mvb-bind-places ir))))
-			(ssa-vop (let ((args (mapcar (lambda (p)
-						       (transform-read p b lambda-ssa))
-						     (ssa-vop-args ir))))
-				   (make-ssa-vop
-				    :index (ssa-vop-index ir)
-				    :name (ssa-vop-name ir)
-				    :args args
-				    :return-values (mapcar (lambda (p)
-							     (transform-write p b lambda-ssa))
-							   (ssa-vop-return-values ir)))))))
-		     (t ir))))
+      (let ((irssa
+	      (typecase ir
+		(ssa-form-rw
+		 (etypecase ir
+		   ;; NOTE NOTE
+		   ;; with every IR we first need to transform read place
+		   (ssa-load (let ((read (transform-read (ssa-load-from ir) b lambda-ssa) ))
+			       (make-ssa-load :index (ssa-load-index ir)
+					      :to (transform-write (ssa-load-to ir) b lambda-ssa)
+					      :from read)))
+		   (ssa-value (make-ssa-value :index (ssa-value-index ir)
+					      :value (transform-read (ssa-value-value ir) b lambda-ssa)))
+		   (ssa-if (make-ssa-if :index (ssa-if-index ir)
+					:test (transform-read (ssa-if-test ir) b lambda-ssa)
+					:true-block (ssa-if-true-block ir)
+					:true-block-label (ssa-if-true-block-label ir)
+					:false-block-label (ssa-if-false-block-label ir)))
+		   (ssa-mvb-bind (make-ssa-mvb-bind
+				  :index (ssa-mvb-bind-index ir)
+				  :places (mapcar (lambda (p)
+						    (transform-write p b lambda-ssa))
+						  (ssa-mvb-bind-places ir))))
+		   (ssa-vop (let ((args (mapcar (lambda (p)
+						  (transform-read p b lambda-ssa))
+						(ssa-vop-args ir))))
+			      (make-ssa-vop
+			       :index (ssa-vop-index ir)
+			       :name (ssa-vop-name ir)
+			       :args args
+			       :return-values (mapcar (lambda (p)
+							(transform-write p b lambda-ssa))
+						      (ssa-vop-return-values ir)))))
+
+		   (ir1-ssa-receive-arguments
+		    (make-ir1-ssa-receive-arguments :index (ssa-form-index ir)
+						    :min-args (ir1-ssa-receive-arguments-min-args ir)
+						    :restify (ir1-ssa-receive-arguments-restify ir)
+						    :binding (mapcar (lambda (p)
+								       (transform-write p b lambda-ssa))
+								     (ir1-ssa-receive-arguments-binding ir))))
+		   (ir1-ssa-fun-call
+		    (let ((args (mapcar (lambda (p)
+					  (transform-read p b lambda-ssa))
+					(ir1-ssa-fun-call-args ir))))
+		      (make-ir1-ssa-fun-call :index (ssa-form-index ir)
+					     :fun (ir1-ssa-fun-call-fun ir)
+					     :args args
+					     :tail (ir1-ssa-fun-call-tail ir)
+					     :return-values (typecase (ir1-ssa-fun-call-return-values ir)
+							      (mvb-place
+							       (make-mvb-place
+								:var-places (mapcar (lambda (p)
+										      (transform-write p b lambda-ssa))
+										    (mvb-place-var-places
+										     (ir1-ssa-fun-call-return-values ir)))))
+							      (t (transform-write
+								  (ir1-ssa-fun-call-return-values ir) b lambda-ssa))))))
+		   (ir1-ssa-mv-return
+		    (make-ir1-ssa-mv-return :index (ssa-form-index ir)
+					    :return-value
+					    (typecase (ir1-ssa-mv-return-return-value ir)
+					      (mvb-place
+					       (make-mvb-place
+						:var-places (mapcar (lambda (p)
+								      (transform-read p b lambda-ssa))
+								    (mvb-place-var-places (ir1-ssa-mv-return-return-value ir)))))
+					      (t (transform-read (ir1-ssa-mv-return-return-value ir) b lambda-ssa)))))
+		   ;; (ir1-ssa-make-closure
+		   ;;  (let ((args (mapcar (lambda (p)
+		   ;; 			  (transform-read p b lambda-ssa))
+		   ;; 			(ir1-ssa-make-closure-args ir))))
+		   ;;    (make-ir1-ssa-make-closure :index (ssa-form-index ir)
+		   ;; 				 :args args
+		   ;; 				 :return-value (transform-write
+		   ;; 						(ir1-ssa-make-closure-return-value ir)
+		   ;; 						b lambda-ssa))))
+		   ))
+		(t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
 
@@ -2326,6 +2568,7 @@
     (setf *error-on-ir-touch* t)
     (when *copy-prop-1*
       (clcomp.ssa.opt::do-copy-prop-1 lambda-ssa))
+    (lower-ir1-lambda lambda-ssa)
     (set-block-virtuals lambda-ssa)
     (when *optimize-redundant-phis*
       (optimize-redundant-phis lambda-ssa))
@@ -2375,8 +2618,6 @@
 	 (successors (ssa-block-successors block lambda-ssa)))
     (unless b-visited
       (setf (gethash index visited) t))
-    (when (= *break-block* (ssa-block-index block))
-      (break))
     (if (> b-active 0)
 	(progn
 	  (debug-print "SSA-BLOCK-IS-HEADER " (ssa-block-index block) "END BLOCK " (ssa-block-index previous-block))
@@ -2502,7 +2743,12 @@
        (ssa-value nil)
        (ssa-if nil)
        (ssa-mvb-bind (ssa-mvb-bind-places ssa-form))
-       (ssa-vop (ssa-vop-return-values ssa-form))))
+       (ssa-vop (ssa-vop-return-values ssa-form))
+       (ir1-ssa-receive-arguments (ir1-ssa-receive-arguments-binding ssa-form))
+       (ir1-ssa-fun-call nil)
+       (ir1-ssa-mv-return nil)
+       ;; (ir1-ssa-make-closure (ir1-ssa-make-closure-return-value ssa-form))
+       ))
     (t nil)))
 
 (defun ssa-form-read-place (ssa-form)
@@ -2513,7 +2759,12 @@
        (ssa-value (ssa-value-value ssa-form))
        (ssa-if (ssa-if-test ssa-form))
        (ssa-mvb-bind nil)
-       (ssa-vop (ssa-vop-args ssa-form))))
+       (ssa-vop (ssa-vop-args ssa-form))
+       (ir1-ssa-receive-arguments nil)
+       (ir1-ssa-fun-call (ir1-ssa-fun-call-args ssa-form))
+       (ir1-ssa-mv-return (ir1-ssa-mv-return-ret-places ssa-form))
+       ;; (ir1-ssa-make-closure (ir1-ssa-make-closure-args ssa-form))
+       ))
     (t nil)))
 
 (defun collect-block-virtuals (block lambda-ssa)
@@ -3152,6 +3403,7 @@
 			 (alloc-add-handled alloc old)
 			 (spill-interval alloc new))))))))))))
 
+;;; FIXME, recheck if we spill variable that has :allocation register
 (defun linear-scan (intervals)
   #.*fun-optimize-level*
   (let ((alloc (make-alloc :unhandled intervals :stack-index -1)))
