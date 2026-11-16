@@ -104,7 +104,7 @@
 
 (defstruct (ir1-ssa-form (:include ssa-form)))
 (defstruct (ir1-ssa-form-rw (:include ssa-form-rw)))
-(defstruct (ir1-ssa-receive-arguments (:include ir1-ssa-form-rw)) min-args restify binding)
+(defstruct (ir1-ssa-receive-arguments (:include ir1-ssa-form-rw)) arg-count min-args restify binding)
 (defstruct (ir1-ssa-fun-call (:include ir1-ssa-form-rw)) fun return-values args tail)
 (defstruct (ir1-ssa-return (:include ir1-ssa-form-rw)))
 (defstruct (ir1-ssa-mv-return (:include ir1-ssa-form-rw)) return-value)
@@ -694,11 +694,13 @@
 
 (defun lower-ir1-receive-arguments (ir1 group-ir block lambda-ssa)
   #.*fun-optimize-level*
-  (let ((min-args-count (ir1-ssa-receive-arguments-min-args ir1))
+  (declare (ignore lambda-ssa))
+  (let ((arg-count (ir1-ssa-receive-arguments-arg-count ir1))
+	(min-args-count (ir1-ssa-receive-arguments-min-args ir1))
 	(restify (ir1-ssa-receive-arguments-restify ir1))
 	(binding-places (ir1-ssa-receive-arguments-binding ir1))
 	(arg-index 0))
-    (emit-ir2-ssa (make-arg-check :min-arg-count min-args-count) block)
+    (emit-ir2-ssa (make-arg-check :arg-count arg-count :min-arg-count min-args-count) block)
     (when restify
       (emit-ir2-ssa (make-ssa-rest-listify :count min-args-count) block))
     (dolist (argument binding-places)
@@ -1434,7 +1436,8 @@
 	(ir1-group (make-ir1-group-counter)))
     (when restify
       (setf (lambda-ssa-contains-rest-arg lambda-ssa) t))
-    (emit-ir (make-ir1-ssa-receive-arguments :min-args min-args
+    (emit-ir (make-ir1-ssa-receive-arguments :min-args (when restify min-args)
+					     :arg-count (unless restify (length arguments))
 					     :restify restify
 					     :group ir1-group
 					     :binding (mapcar (lambda (b)
@@ -1934,6 +1937,7 @@
 		   (ir1-ssa-receive-arguments
 		    (make-ir1-ssa-receive-arguments :index (ssa-form-index ir)
 						    :min-args (ir1-ssa-receive-arguments-min-args ir)
+						    :arg-count (ir1-ssa-receive-arguments-arg-count ir)
 						    :restify (ir1-ssa-receive-arguments-restify ir)
 						    :binding (mapcar (lambda (p)
 								       (transform-write p b lambda-ssa))
