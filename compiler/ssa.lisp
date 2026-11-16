@@ -110,12 +110,16 @@
 (defstruct (ir1-ssa-mv-return (:include ir1-ssa-form-rw)) return-value)
 ;; (defstruct (ir1-ssa-make-closure (:include ir1-ssa-form-rw)) return-value args fixup)
 
+
+(defun ret-places-as-list (place)
+  (etypecase place
+    (mvb-place
+     (mvb-place-var-places place))
+    (t (list place))))
+
 (defun ir1-ssa-mv-return-ret-places (ir)
   (let ((ret-place (ir1-ssa-mv-return-return-value ir)))
-    (etypecase ret-place
-      (mvb-place
-       (mvb-place-var-places ret-place))
-      (t (list ret-place)))))
+    (ret-places-as-list ret-place)))
 
 (defparameter *ir1-group-counter* 0)
 (defun make-ir1-group-counter ()
@@ -700,7 +704,7 @@
     (dolist (argument binding-places)
       (when (and restify (> arg-index 0) (> arg-index min-args-count))
 	(return))
-      (emit-ir2-ssa (make-simple-move argument (make-rcv-argument-place :index arg-index :min-count min-args-count))
+      (emit-ir2-ssa (make-simple-move (make-rcv-argument-place :index arg-index :min-count min-args-count)  argument)
 		    block)
       (incf arg-index))
     (emit-ir2-group-ssa group-ir block)))
@@ -731,7 +735,7 @@
       (emit-ir2-ssa (make-allocate-stack :count stack-arguments) block))
     ;; move arguments to function argument physical places
     (let ((arg-index 0))
-      (dolist (p (reverse args))
+      (dolist (p args)
 	(emit-ir2-ssa (make-simple-move p (make-argument-place :index arg-index :count args-count)) block)
 	(incf arg-index)))
     ;; set number of arguments register
@@ -1181,7 +1185,6 @@
 ;;; FIXME, we don't need to fill all return places, if we need only one supply NIL for rest of VOP return values
 (defun emit-call-node-ssa (node lambda-ssa tail place block)
   #.*fun-optimize-level*
-  (print (list tail place))
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
 	 (temp-args-places nil)
@@ -1284,11 +1287,14 @@
 		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
 	      (setf block new-block)
 	      (push place args-places)))))
-    (emit-ir (make-ssa-vop
-	      :name (clcomp::vop-node-vop node)
-	      :return-values place
-	      :args args-places)
-	     block)
+    (let ((return-places (ret-places-as-list place)))
+      (unless (= (length return-places) ret-vals)
+	(error "VOP return places mismatch"))
+      (emit-ir (make-ssa-vop
+		:name (clcomp::vop-node-vop node)
+		:return-values return-places
+		:args args-places)
+	       block))
     (when leaf
       (emit-ir (make-ir1-ssa-mv-return :return-value place) block))
     block))
