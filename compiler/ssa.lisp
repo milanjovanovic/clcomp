@@ -700,11 +700,16 @@
 	(restify (ir1-ssa-receive-arguments-restify ir1))
 	(binding-places (ir1-ssa-receive-arguments-binding ir1))
 	(arg-index 0))
-    (emit-ir2-ssa (make-arg-check :arg-count arg-count :min-arg-count min-args-count) block)
+    (emit-ir2-ssa (make-arg-check :arg-count (unless restify arg-count)
+				  :min-arg-count (when restify min-args-count))
+		  block)
     (when restify
       (emit-ir2-ssa (make-ssa-rest-listify :count min-args-count) block))
     (dolist (argument binding-places)
-      (when (and restify (> arg-index 0) (> arg-index min-args-count))
+      (when (if restify
+		(and (> arg-index 0)
+		     (>= arg-index min-args-count))
+		(= arg-index arg-count))
 	(return))
       (emit-ir2-ssa (make-simple-move (make-rcv-argument-place :index arg-index :min-count min-args-count)  argument)
 		    block)
@@ -1436,8 +1441,8 @@
 	(ir1-group (make-ir1-group-counter)))
     (when restify
       (setf (lambda-ssa-contains-rest-arg lambda-ssa) t))
-    (emit-ir (make-ir1-ssa-receive-arguments :min-args (when restify min-args)
-					     :arg-count (unless restify (length arguments))
+    (emit-ir (make-ir1-ssa-receive-arguments :min-args min-args
+					     :arg-count (length arguments)
 					     :restify restify
 					     :group ir1-group
 					     :binding (mapcar (lambda (b)
