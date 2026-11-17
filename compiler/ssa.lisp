@@ -1300,7 +1300,7 @@
       (emit-ir (make-ssa-vop
 		:name (clcomp::vop-node-vop node)
 		:return-values return-places
-		:args args-places)
+		:args (reverse args-places))
 	       block))
     (when leaf
       (emit-ir (make-ir1-ssa-mv-return :return-value place) block))
