@@ -60,7 +60,7 @@
   defined phis live-in virtuals live-gen live-kill live-out live-phi-operands
   exit cond-jump-moves uncond-jump-moves succ-moves spill-moves)
 
-(defstruct ssa-form index group)
+(defstruct ssa-form index)
 ;; This means that this form can clobber arguments passing/return values registers
 (defstruct (ssa-kill-form (:include ssa-form)))
 (defstruct (lambda-entry (:include ssa-kill-form)))
@@ -120,10 +120,6 @@
 (defun ir1-ssa-mv-return-ret-places (ir)
   (let ((ret-place (ir1-ssa-mv-return-return-value ir)))
     (ret-places-as-list ret-place)))
-
-(defparameter *ir1-group-counter* 0)
-(defun make-ir1-group-counter ()
-  (incf *ir1-group-counter*))
 
 (eval-when (:load-toplevel :compile-toplevel :execute)
   (defparameter *fun-optimize-level* '(declare (optimize debug))))
@@ -587,10 +583,6 @@
 (defun emit-ir2-ssa (ssa block)
   (push ssa (ssa-block-ssa block)))
 
-(defun emit-ir2-group-ssa (ssas block)
-  (dolist (ir ssas)
-    (emit-lowered-ssa ir block)))
-
 (defun finish-block-ir2 (block)
   (setf (ssa-block-ssa block)
 	(reverse (ssa-block-ssa block))))
@@ -692,7 +684,7 @@
 ;;; so when lowering IR1 we need to know where we want to insert lowered IR1 instructions
 ;;; not very proud of this
 
-(defun lower-ir1-receive-arguments (ir1 group-ir block lambda-ssa)
+(defun lower-ir1-receive-arguments (ir1 block lambda-ssa)
   #.*fun-optimize-level*
   (declare (ignore lambda-ssa))
   (let ((arg-count (ir1-ssa-receive-arguments-arg-count ir1))
@@ -713,12 +705,10 @@
 	(return))
       (emit-ir2-ssa (make-simple-move (make-rcv-argument-place :index arg-index :min-count min-args-count)  argument)
 		    block)
-      (incf arg-index))
-    (emit-ir2-group-ssa group-ir block)))
+      (incf arg-index))))
 
-(defun lower-ir1-mv-return (ir1 group-ir block lambda-ssa)
+(defun lower-ir1-mv-return (ir1 block lambda-ssa)
   #.*fun-optimize-level*
-  (assert (null group-ir))
   (let ((ret-value (ir1-ssa-mv-return-return-value ir1)))
     (typecase ret-value
       (mvb-place  (lower-i1-values ret-value lambda-ssa block))
@@ -728,7 +718,7 @@
        (emit-ir2-ssa (make-ssa-function-epilogue) block)
        (emit-ir2-ssa (make-ssa-multiple-return :count 1) block)))))
 
-(defun lower-ir1-fun-call (ir1 group-ir block lambda-ssa)
+(defun lower-ir1-fun-call (ir1  block lambda-ssa)
   (let* ((fun (ir1-ssa-fun-call-fun ir1))
 	 (return-value (ir1-ssa-fun-call-return-values ir1))
 	 (args (ir1-ssa-fun-call-args ir1))
@@ -768,7 +758,6 @@
 	    (otherwise
 	     (emit-ir2-ssa (make-simple-move (make-return-value-place :index 0) return-value ) block)))
 	  ;; here we can have bcell boxing instructions
-	  (emit-ir2-group-ssa group-ir block)
 	  (emit-ir2-ssa (make-maybe-mv-adjust-stack) block)
 	  (when (> stack-arguments 0)
 	    (emit-ir2-ssa (make-deallocate-stack :count stack-arguments) block))))))
@@ -892,38 +881,20 @@
 		(emit-ir2-ssa (make-ssa-multiple-return :count vals-count)
 			      block))))))))
 
-(defun lower-ir1-group (ir ir-group block lambda-ssa)
+(defun lower-ir1-instruction (ir block lambda-ssa)
   #.*fun-optimize-level*
-  (when ir-group (break))
   (etypecase ir
-    (ir1-ssa-receive-arguments (lower-ir1-receive-arguments ir ir-group block lambda-ssa))
-    (ir1-ssa-fun-call (lower-ir1-fun-call ir ir-group block lambda-ssa))
-    (ir1-ssa-mv-return (lower-ir1-mv-return ir ir-group block lambda-ssa))
+    (ir1-ssa-receive-arguments (lower-ir1-receive-arguments ir block lambda-ssa))
+    (ir1-ssa-fun-call (lower-ir1-fun-call ir block lambda-ssa))
+    (ir1-ssa-mv-return (lower-ir1-mv-return ir block lambda-ssa))
     (t (emit-ir2-ssa ir block))))
 
 (defun lower-ir1-block (block lambda-ssa)
   #.*fun-optimize-level*
   (let ((instructions (ssa-block-ssa block)))
     (setf (ssa-block-ssa block) nil)
-    (let ((main-ir nil)
-	  (group-irs nil))
-      (do ((ssa instructions (cdr ssa)))
-	  ((null ssa)
-	   (when main-ir
-	     (lower-ir1-group main-ir group-irs block lambda-ssa)))
-	(if main-ir
-	    (let* ((ir (first ssa))
-		   (mg (ssa-form-group main-ir))
-		   (cg (ssa-form-group ir)))
-	      (if (and cg (= mg cg))
-		  (push ir group-irs)
-		  (progn
-		    (lower-ir1-group main-ir group-irs block lambda-ssa)
-		    (setf main-ir ir)
-		    (setf group-irs nil))))
-	    (progn
-	      (assert (null group-irs))
-	      (setf main-ir (first ssa))))))
+    (dolist (inst instructions)
+      (lower-ir1-instruction inst block lambda-ssa))
     (finish-block-ir2 block)))
 
 (defun lower-ir1-lambda (lambda-ssa)
@@ -1195,8 +1166,7 @@
   (let* ((fun (clcomp::call-node-function node))
 	 (arguments (clcomp::call-node-arguments node))
 	 (temp-args-places nil)
-	 (args-places nil)
-	 (ir1-group (make-ir1-group-counter)))
+	 (args-places nil))
     (dolist (arg arguments)
       (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
 	(if direct-place
@@ -1219,7 +1189,6 @@
       (emit-ir (make-ir1-ssa-fun-call :fun fun
 				      :return-values new-place
 				      :args (reverse args-places)
-				      :group ir1-group
 				      :tail tail)
 	       block)
       (typecase new-place
@@ -1227,12 +1196,10 @@
 	 (dolist (bin tmp-binding)
 	   (when (second bin)
 	     (emit-ir (make-ssa-vop :name 'clcomp::make-bcell :return-values (list (first bin))
-				    :group ir1-group
 				    :args (list (second bin)))
 		      block))))
 	(otherwise (when tmp-binding
 		     (emit-ir (make-ssa-vop :name 'clcomp::make-bcell :return-values (list (first tmp-binding))
-					    :group ir1-group
 					    :args (list (second tmp-binding)))
 			      block))))
       (when tail
@@ -1437,14 +1404,12 @@
 							    lambda-ssa (clcomp::lexical-binding-node-closed-over argument))
 				  (when (clcomp::lexical-binding-node-closed-over argument)
 				    (generate-virtual-place "TEMP-RECV-ARG-"))))
-			  arguments))
-	(ir1-group (make-ir1-group-counter)))
+			  arguments)))
     (when restify
       (setf (lambda-ssa-contains-rest-arg lambda-ssa) t))
     (emit-ir (make-ir1-ssa-receive-arguments :min-args min-args
 					     :arg-count (length arguments)
 					     :restify restify
-					     :group ir1-group
 					     :binding (mapcar (lambda (b)
 								(or (second b)
 								    (first b)))
@@ -1453,7 +1418,6 @@
     (dolist (bin bindings)
       (when (second bin)
 	(emit-ir (make-ssa-vop :name 'clcomp::make-bcell
-			       :group ir1-group
 			       :return-values (list (first bin))
 			       :args (list (second bin)))
 		 block)))
