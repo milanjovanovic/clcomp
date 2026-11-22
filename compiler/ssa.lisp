@@ -1,5 +1,6 @@
 (defpackage #:clcomp.ssa
-  (:use #:cl #:clcomp))
+  (:use #:cl #:clcomp)
+  (:nicknames #:cssa))
 
 (in-package #:clcomp.ssa)
 
@@ -1674,14 +1675,15 @@
 ;;; value numbering
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defstruct phi operands incomplete variable place block-index)
+(defstruct phi operands operands-blocks incomplete variable place block-index)
 
-(defun phi-add-operand (phi operand lambda-ssa)
+(defun phi-add-operand (phi operand lambda-ssa block-index)
   (when (phi-place-p operand)
     (add-phi-connections phi operand lambda-ssa))
   (etypecase operand
     ((or virtual-place phi-place)
-     (push operand (phi-operands phi)))))
+     (push operand (phi-operands phi))
+     (push block-index (phi-operands-blocks phi)))))
 
 (defun get-block-def (block symbol)
   (cdr (assoc symbol (ssa-block-defined block))))
@@ -1701,7 +1703,7 @@
 	  (push new newops)
 	  (push op newops)))
     (setf (phi-operands phi)
-	  newops)))
+	  (reverse newops))))
 
 (defun ssa-write-variable (place block env)
   (declare (ignore env)
@@ -1744,7 +1746,7 @@
   (dolist (pblock predecessors)
     (let* ((pred-block (ssa-find-block-by-index lambda-ssa pblock))
 	   (operand (ssa-read-variable place pred-block lambda-ssa)))
-      (phi-add-operand phi operand lambda-ssa)
+      (phi-add-operand phi operand lambda-ssa pblock)
       (push (cons phi operand) (ssa-block-live-phi-operands pred-block))))
   (try-remove-trivial-phi phi block lambda-ssa))
 
@@ -1799,12 +1801,14 @@
        (ir1-ssa-fun-call
 	(list (ir1-ssa-fun-call-args ir)
 	      (typecase (ir1-ssa-fun-call-return-values ir)
-		(mvb-place (list (mvb-place-var-places (ir1-ssa-fun-call-return-values ir))))
-		(t (list (ir1-ssa-fun-call-return-values ir))))))
+		(mvb-place (mvb-place-var-places (ir1-ssa-fun-call-return-values ir)))
+		(t (when (ir1-ssa-fun-call-return-values ir)
+		     (list (ir1-ssa-fun-call-return-values ir)))))))
        (ir1-ssa-mv-return
 	(list (typecase (ir1-ssa-mv-return-return-value ir)
 		(mvb-place (mvb-place-var-places (ir1-ssa-mv-return-return-value ir)))
-		(t (list (ir1-ssa-mv-return-return-value ir))))
+		(t (when (ir1-ssa-mv-return-return-value ir)
+		     (list (ir1-ssa-mv-return-return-value ir)))))
 	      nil))
        ;; (ir1-ssa-make-closure
        ;; 	(list (ir1-ssa-make-closure-args ir) (list (ir1-ssa-make-closure-return-value ir))))
@@ -2500,10 +2504,12 @@
 	(error "We have error in predecessors field")))))
 
 
-(defparameter *copy-prop-1* t)
+(defparameter *copy-prop-1* nil)
 (defparameter *copy-prop-2* nil)
+(defparameter *sccp* nil)
 
 (declaim (ftype (function (t)) clcomp.ssa.opt::do-copy-prop-1))
+(declaim (ftype (function (t)) clcomp.ssa.opt::do-sccp))
 
 ;;; FIXME, insert (GO TAG) at the end of instruction list in blocks that have UNCOND-JUMP
 ;;; FIXME, in SSA-IF form our JUMP is econded as INDEX, replace INDEX with BLOCK LABEL
@@ -2547,6 +2553,8 @@
     (setf *error-on-ir-touch* t)
     (when *copy-prop-1*
       (clcomp.ssa.opt::do-copy-prop-1 lambda-ssa))
+    (when *sccp*
+      (clcomp.ssa.opt::do-sccp lambda-ssa))
     (lower-ir1-lambda lambda-ssa)
     (set-block-virtuals lambda-ssa)
     (when *optimize-redundant-phis*

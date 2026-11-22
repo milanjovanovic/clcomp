@@ -80,6 +80,7 @@
 	(when (gethash replace-value loads)
 	  (setf (gethash k rphis) (get-final-replace loads replace-value)))))))
 
+;; FIXME, revisit this whole thing in the light of reduced PHI's
 (defun do-copy-prop-1 (lambda-ssa)
   (declare (optimize debug))
   (multiple-value-bind (loads ir-indexes) (copy-prop-1 lambda-ssa)
@@ -89,6 +90,7 @@
       (copy-prop-fix-redundant-phis lambda-ssa loads))))
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Constant Propagation with Conditional
 ;; Branches
 ;; MARK N. WEGMAN and F. KENNETH ZADECK
@@ -97,150 +99,150 @@
 ;;; Our lattice symbols
 ;;; TOP -> not yet evaluated
 ;;; BOTTOM - > not a constant
-;;; CONSTANT
+;;; CONSTANT = literal value (CSSA::IMMEDIATE-CONSTANT)
+;;; FIXME, should FIXUP be a constant ? Any other type ?
 
-;;; ANY merge TOP = ANY
-;;; ANY merge BOTTOM = BOTTOM
-;;; CONSTANT merge CONSTANT = CONSTANT  IF L = J
-;;; CONSTANT merge CONSTANT = BOTTOM  IF L /= J
-
-;;; NOTE, currentlu we don't have constant-folding info for functions or VOP's
+;;; NOTE, currently we don't have constant-folding info for functions or VOP's
 ;;; so we are not doing constant propagation across function calls and VOP calls
 ;;; but implementation will support that though
 
-(defstruct ssa-estate def uses index-block)
-(defun make-ssa-edges-state ()
-  (make-ssa-estate :def (make-hash-table)
-		   :uses (make-hash-table)
-		   :index-block (make-hash-table)))
+(defun get-place (place)
+  (etypecase place
+    (cssa::phi (cssa::get-maybe-reduced-place (cssa::phi-place place)))
+    (cssa::phi-place (cssa::get-maybe-reduced-place place))
+    (cssa::named-place place)))
 
-(defstruct ssa-funcall args returns fun)
+(defstruct ssa-graph def uses index-block flow-edges blocks reachable-blocks successors)
 
-(defun ssa-estate-clear-fun-args (state)
-  (setf (ssa-estate-fun-args state) nil))
+(defun make-default-graph (lambda-ssa)
+  (let ((blocks (make-hash-table)))
+    (dolist (b (cssa::lambda-ssa-blocks lambda-ssa))
+      (setf (gethash (cssa::ssa-block-index b) blocks) b))
+    (make-ssa-graph :def (make-hash-table)
+		    :uses (make-hash-table)
+		    :index-block (make-hash-table)
+		    :flow-edges (make-hash-table :test 'equal)
+		    :blocks blocks
+		    :reachable-blocks (make-hash-table)
+		    :successors (make-hash-table))))
 
-(defun ssa-state-add-use (state v use)
-  (push (cons use (gethash v (ssa-estate-uses state)))
-	(gethash v (ssa-estate-uses state))))
+(defun ssa-graph-get-use (graph v)
+  (gethash v (ssa-graph-uses graph)))
 
-(defun ssa-state-add-def (state v def-form)
-  (push (cons def-form (gethash v (ssa-estate-def state)))
-	(gethash v (ssa-estate-def state))))
+(defun ssa-graph-add-use (graph v use)
+  (push use
+	(gethash v (ssa-graph-uses graph))))
 
-(defun ssa-estate-connect-ir-block (state index block-index)
-  (setf (gethash index (ssa-estate-index-block state)) block-index))
+(defun ssa-graph-add-def (graph v def-form)
+  (push def-form
+	(gethash v (ssa-graph-def graph))))
+
+(defun ssa-graph-connect-ir-block (graph index block-index)
+  (setf (gethash index (ssa-graph-index-block graph)) block-index))
+
+(defun ssa-graph-get-ir-block-index (graph ir)
+  (gethash (cssa::ssa-form-index ir) (ssa-graph-index-block graph)))
+
+(defun ssa-graph-get-flow-edge-executable (graph edge)
+  (gethash edge (ssa-graph-flow-edges graph)))
+
+(defun ssa-graph-update-flow-edge-executable (graph edge)
+  (let ((current-edge-value (gethash edge (ssa-graph-flow-edges graph))))
+    (if current-edge-value
+	(setf (gethash edge (ssa-graph-flow-edges graph)) (1+ current-edge-value))
+	(setf (gethash edge (ssa-graph-flow-edges graph)) 1))))
+
+(defun ssa-graph-get-block (graph block-index)
+  (gethash block-index (ssa-graph-blocks graph)))
+
+(defun ssa-graph-is-block-reachable (graph block-index)
+  (gethash block-index (ssa-graph-reachable-blocks graph)))
+
+(defun ssa-graph-set-block-reachable (graph block-index)
+  (setf (gethash block-index (ssa-graph-reachable-blocks graph)) t))
+
+(defun ssa-graph-add-block-successors (graph block-index successors)
+  (setf (gethash block-index (ssa-graph-successors graph)) successors))
+
+(defun ssa-graph-get-block-successors (graph block-index)
+  (let ((successors (gethash block-index (ssa-graph-successors graph))))
+    successors))
+
+(defun ssa-graph-get-block-cond-succ (graph block-index)
+  (getf (ssa-graph-get-block-successors graph block-index) :cond))
+
+(defun ssa-graph-get-block-uncond-succ (graph block-index)
+  (getf (ssa-graph-get-block-successors graph block-index) :uncond))
+
+(defun ssa-graph-get-block-fall-trough-succ (graph block-index)
+  (getf (ssa-graph-get-block-successors graph block-index) :fall-trough))
 
 
-;;; NOTE, I'm not happy with this, 
-;;; here we are trying to reconstruct function call arguments places and return values
-;;; in our current SSA IR we don't have this information in one instruction
-;;; however we should do this on IR level, create instruction that will no affect register allocation and live intervals
-;;; NOTE current implementation will maybe clash with future copy-propagation-2
-(defun collect-function-call-data (instructions)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; TODO, we should use the same SCCP pass for inferring types
+(defstruct lattice-value constant type)
+
+(defun default-lattice-value ()
+  (make-lattice-value :constant 'TOP))
+
+(defun lattice-meet (l1 l2)
+  (error "TODO"))
+
+(defun lattice-value-equal (l1 l2)
+  (if (or (lattice-value-p l1)
+	  (lattice-value-p l2))
+      (error "Still don't suport LATTICE-VALUE")
+      (equalp l1 l2)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun add-block-successors (graph b)
+  (let ((cond-succ (cssa::ssa-block-cond-jump b))
+	(uncond-succ (cssa::ssa-block-uncond-jump b))
+	(fall-trough-succ (cssa::ssa-block-succ b)))
+    (ssa-graph-add-block-successors graph (cssa::ssa-block-index b)
+				    (list :cond cond-succ
+					  :uncond uncond-succ
+					  :fall-trough fall-trough-succ))))
+
+(defun collect-ssa-edges-from-block (graph block)
   (declare (optimize debug))
-  (let ((fun-call-arguments nil)
-	(fun-call-ir nil)
-	(fun-call-returns nil))
-    (tagbody loop
-       (let ((ir (first instructions))
-	     (rest (rest instructions)))
-	 (typecase ir
-	   (cssa::ssa-load
-	    (let ((to (cssa::ssa-load-to ir))
-		  (from (cssa::ssa-load-from ir)))
-	      (cond ((cssa::argument-place-p to)
-		     (push from fun-call-arguments))
-		    ((cssa::return-value-place-p from)
-		     (push to fun-call-returns))
-		    ((or (cssa::function-value-place-p to)
-			 (cssa::argument-count-place-p to)))
-		    (t
-		     (return-from collect-function-call-data
-		       (list rest
-			     (make-ssa-funcall :args fun-call-arguments
-					       :fun fun-call-ir
-					       :returns fun-call-returns)))))))
-	   (cssa::ssa-mvb-bind
-	    (let ((returns (cssa::ssa-mvb-bind-places ir)))
-	      (return-from collect-function-call-data
-		(list rest
-		      (make-ssa-funcall :args fun-call-arguments
-					:fun fun-call-ir
-					:returns returns)))))
-	   (cssa::ssa-fun-call
-	    (assert (null fun-call-ir))
-	    (setf fun-call-ir ir))
-	   (otherwise  (return-from collect-function-call-data
-			 (list instructions
-			       (make-ssa-funcall :args fun-call-arguments
-						 :fun fun-call-ir
-						 :returns fun-call-returns)))))
-	 (setf instructions rest)
-	 (go loop)))))
-
-;;; FIXME, we need to handlee SSA-RETURN as we do wwith SSA-FUN-CALL
-
-(defun maybe-fun-call-istructions (ir)
-  (typecase ir
-    (cssa::ssa-load
-     (let ((to (cssa::ssa-load-to ir))
-	   (from (cssa::ssa-load-from ir)))
-       (or (cssa::argument-place-p to)
-	   (cssa::return-value-place-p from)
-	   (cssa::function-value-place-p to)
-	   (cssa::argument-count-place-p to)))) 
-    (cssa::ssa-fun-call
-     t)))
-
-;;; there is complication here because how our SSA IR handles function call arguments and return values
-(defun process-ssa-edges-from-block (state block)
-  (declare (optimize debug))
-  ;; process PHI's first
   (dolist (phi (cssa::ssa-block-phis block))
     (unless (cssa::get-phi-place-reduced-value (cssa::phi-place phi))
-      (ssa-state-add-def state (cssa::phi-place phi) phi)
+      (ssa-graph-add-def graph (cssa::phi-place phi) phi)
       (dolist (operand (cssa::phi-operands phi))
-	(ssa-state-add-use state operand phi))))
+	(ssa-graph-add-use graph operand phi))))
   (let ((instructions (cssa::ssa-block-ssa block))
 	(block-index (cssa::ssa-block-index block)))
-    (tagbody loop
-       (let ((ir (first instructions))
-	     (rest (rest instructions)))
-	 (when (null ir)
-	   (go end))
-	 (ssa-estate-connect-ir-block state (cssa::ssa-form-index ir) block-index)
-	 (if (maybe-fun-call-istructions ir)
-	     (let* ((fun-call (collect-function-call-data instructions))
-		    (next-instructions (first fun-call))
-		    (fun-call (second fun-call)))
-	       (setf instructions next-instructions)
-	       (dolist (r (ssa-funcall-returns fun-call))
-		 (ssa-state-add-def state r fun-call))
-	       (dolist (a (ssa-funcall-args fun-call))
-		 (ssa-state-add-use state a fun-call))
-	       (go loop))
-	     (typecase ir
-	       (cssa::ssa-form-rw
-		(let* ((rw (cssa::ssa-form-rw-reads-writes ir))
-		       (reads (first rw))
-		       (writes (second rw)))
-		  (dolist (write writes)
-		    (typecase write
-		      (cssa::named-place
-		       (ssa-state-add-def state write ir))))
-		  (dolist (read reads)
-		    (typecase read
-		      (cssa::named-place
-		       (ssa-state-add-use state read ir))))))))
-	 (setf instructions rest)
-	 (go loop))
-     end)))
+    (dolist (ir instructions)
+      (if (cssa::ssa-form-rw-p ir)
+	  (let* ((rws (cssa::ssa-form-rw-reads-writes ir))
+		 (reads (first rws))
+		 (writes (second rws)))
+	    ;; we want IR that has READ and WRITE places but also we want SSA-IF
+	    (when (and reads (or writes
+				 (cssa::ssa-if-p ir)))
+	      (print (list 'adding-edges ir))
+	      (dolist (write writes)
+		(typecase write
+		  (cssa::named-place
+		   (ssa-graph-add-def graph write ir))))
+	      (dolist (read reads)
+		(typecase read
+		  (cssa::named-place
+		   (ssa-graph-add-use graph read ir)))))
+	    ;; set block index for instruction
+	    (ssa-graph-connect-ir-block graph (cssa::ssa-form-index ir) block-index))
+	  (print (list 'collect-ssa-edges-from-block 'skip ir))))))
 
-;; FIXME, we should initialize with BOTTOM (for example for VALUE from RCV-ARGUMENT-PLACE) and other
 (defun init-lattice-map (lambda-ssa)
   (declare (optimize debug))
   (let ((lattice-map (make-hash-table)))
     (dolist (b (clcomp.ssa::lambda-ssa-blocks lambda-ssa))
+      (dolist (phi (cssa::ssa-block-phis b))
+	(unless (cssa::get-phi-place-reduced-value (cssa::phi-place phi))
+	  (set-lattice-value (cssa::phi-place phi) 'TOP lattice-map)))
       (dolist (ir (clcomp.ssa::ssa-block-ssa b))
 	(typecase ir
 	  (cssa::ssa-form-rw 
@@ -249,103 +251,263 @@
 	     (dolist (write writes)
 	       (when (or (clcomp.ssa::virtual-place-p write)
 			 (clcomp.ssa::phi-place-p  write))
-		 (assert (null (gethash write lattice-map)))
-		 (setf (gethash write lattice-map) 'TOP))))))))
+		 (assert (null (gethash (get-place write) lattice-map)))
+		 (set-lattice-value (get-place write) 'TOP lattice-map))))))))
     lattice-map))
 
-(defun init-ssa-edges (lambda-ssa)
+(defun set-lattice-value (place value lattice-map)
+  (setf (gethash place lattice-map) value))
+
+(defun maybe-change-lattice (p lattice-value lattice-map)
+  (let ((old (gethash p lattice-map)))
+    (when (not (lattice-value-equal old lattice-value))
+      (set-lattice-value p lattice-value lattice-map))))
+
+(defun is-constant (p)
+  (cssa::immediate-constant-p p))
+
+(defun is-nil-constant (p)
+  (and (cssa::immediate-constant-p p)
+       (= clcomp::*nil* (cssa::immediate-constant-constant p))))
+
+(defun get-lattice-value (p lattice-map)
+  (typecase p
+    (cssa::immediate-constant p)
+    (t
+     (gethash p lattice-map))))
+
+(defun init-ssa-graph (lambda-ssa)
   (declare (optimize debug))
-  (let ((state (make-ssa-edges-state)))
+  (let ((graph (make-default-graph lambda-ssa)))
     (dolist (b (clcomp.ssa::lambda-ssa-blocks lambda-ssa))
-      (process-ssa-edges-from-block state b))
-    state))
+      (collect-ssa-edges-from-block graph b)
+      (add-block-successors graph b))
+    graph))
 
-(defun visit-phi (b)
-  (declare (ignore b)))
+(defun meet (a b)
+  (if (eq a b)
+      a
+      (cond ((or (eq 'BOTTOM a)
+		 (eq 'BOTTOM b))
+	     'BOTTOM)
+	    ((or (eq 'TOP a)
+		 (eq 'TOP b))
+	     (if (eq 'TOP a)
+		 b
+		 a))
+	    ((lattice-value-equal a b) a)
+	    (t 'BOTTOM))))
 
-(defun visit-expressions (b lattice-map ssa-edges exec-flags)
-  (dolist (ir (cssa::ssa-block-ssa b))
-    (etypecase ir
-      ((or cssa::lambda-entry cssa::arg-check
-	   cssa::deallocate-function-frame cssa::allocate-stack
-	   cssa::ssa-function-epilogue cssa::maybe-mv-adjust-stack cssa::ssa-label))
+(defun meet-all-values (vals)
+  (reduce #'meet vals :initial-value 'TOP))
+
+(defun meet-all (lattice-map places)
+  (declare (optimize debug))
+  (let ((start 'TOP))
+    (dolist (p places)
+      (let ((lv (get-lattice-value p lattice-map)))
+	(assert lv)
+	(setf start (meet start lv))))
+    start))
+
+(defun visit-phi (phi ssa-graph lattice-map)
+  (declare (optimize debug))
+  (let ((phi-block (cssa::phi-block-index phi))
+	(current-lattice-value (get-lattice-value (get-place phi) lattice-map))
+	(lattice-values nil))
+    (assert current-lattice-value)
+    (do ((operands (cssa::phi-operands phi) (cdr operands))
+	 (pred-blocks (cssa::phi-operands-blocks phi) (cdr pred-blocks)))
+	((null operands))
+      (let ((operand (first operands))
+	    (pred-block (first pred-blocks)))
+	(assert (and operand pred-block))
+	(let ((edge (cons pred-block phi-block)))
+	  ;; only evaluate operand if flow edge is active
+	  (if (ssa-graph-get-flow-edge-executable ssa-graph edge)
+	      (let ((operand-lattice-value (get-lattice-value (get-place operand) lattice-map)))
+		(assert operand-lattice-value)
+		(push operand-lattice-value lattice-values))
+	      ;; If EDGE is not active lattice value is TOP
+	      (push 'TOP lattice-values)))))
+    (let ((meet (meet-all-values lattice-values)))
+      (if (lattice-value-equal current-lattice-value meet)
+	  (values nil nil)
+	  (progn
+	    (set-lattice-value (get-place phi) meet lattice-map)
+	    (values nil
+		    (ssa-graph-get-use ssa-graph (get-place phi))))))))
+
+;; FIXME, we need more thinking about this
+(defun ir-produce-bottom (ir)
+  (typecase ir
+    (cssa::ssa-load nil)
+    ;; ((or cssa::ir1-ssa-receive-arguments
+    ;; 	 cssa::ir1-ssa-fun-call)
+    ;;  t)
+    (t t)))
+
+(defun visit-expression (ir lattice-map ssa-graph block-index)
+  (declare (optimize debug))
+  (let ((ssa-work-list nil)
+	(flow-edges nil))
+    (typecase ir
+      (cssa::phi
+       (visit-phi ir ssa-graph lattice-map))
+      ;; FIXME, we can have SSA-IF but flow-trough will not have SSA-GO after this IF
+      (cssa::ssa-if
+       (let* ((test-place (cssa::ssa-if-test ir))
+	      (test-lattice (get-lattice-value test-place lattice-map)))
+	 (assert test-lattice)
+	 (let ((cond-succ (ssa-graph-get-block-cond-succ ssa-graph block-index))
+	       (uncond-succ (ssa-graph-get-block-uncond-succ ssa-graph block-index))
+	       (fall-trough-succ (ssa-graph-get-block-fall-trough-succ ssa-graph block-index)))
+	   (setf uncond-succ (or uncond-succ fall-trough-succ))
+	   (case test-lattice
+	     (TOP
+	      ;; do nothing
+	      ) 
+	     (BOTTOM
+	      (when cond-succ
+		(push (cons block-index cond-succ) flow-edges))
+	      (when uncond-succ
+		(push (cons block-index uncond-succ ) flow-edges))) 
+	     (otherwise
+	      (if (is-nil-constant test-lattice)
+		  (when uncond-succ
+		    (push (cons block-index uncond-succ ) flow-edges))
+		  (when cond-succ
+		    (push (cons block-index cond-succ) flow-edges))))))))
+      (cssa::ssa-go 
+       (let ((uncond-succ (ssa-graph-get-block-uncond-succ ssa-graph block-index))
+	     (fall-trough-succ (ssa-graph-get-block-fall-trough-succ ssa-graph block-index)))
+	 (assert (not (equal uncond-succ fall-trough-succ)))
+	 (push  (cons block-index uncond-succ) flow-edges)))
       (cssa::ssa-form-rw
-       (etypecase ir
-	 (cssa::ssa-load (let ((to (cssa::ssa-load-to ir))
-			       (from (cssa::ssa-load-from ir)))
-			   ())))))))
+       (let* ((rws (cssa::ssa-form-rw-reads-writes ir))
+	      (reads (first rws))
+	      (writes (second rws))
+	      (fixed-place-read (some #'cssa::fixed-place-p reads))
+	      (produce-bottom (ir-produce-bottom ir))
+	      (reads-meet (when reads (meet-all lattice-map reads))))
+	 (assert (not fixed-place-read))
+	 (dolist (w writes)
+	   (assert (cssa::named-place-p w))
+	   (if produce-bottom
+	       ;; NOTE, we currently don't have any constant-folding metadata for our functions and VOP's
+	       ;; so currently all forms beside LOAD will produce BOTTOM
+	       (when (maybe-change-lattice w 'BOTTOM lattice-map)
+		 (let ((uses (ssa-graph-get-use ssa-graph w)))
+		   (setf ssa-work-list uses)))
+	       (when (and reads-meet
+			  (not (eq reads-meet (get-lattice-value w lattice-map))))
+		 (set-lattice-value w reads-meet lattice-map)
+		 (let ((uses (ssa-graph-get-use ssa-graph w)))
+		   (setf ssa-work-list (append ssa-work-list uses))))))))
+      (t (print (list 'visit-expression 'skip ir))))
+    (values flow-edges ssa-work-list)))
 
-(defun sparse-conditional-constant-propagation (lambda-ssa)
-  (let* ((flow-work-list nil)
-	 (ssa-work-list nil)
-	 (exec-flags (make-hash-table))
-	 (ssa-edges (init-ssa-edges lambda-ssa))
+(defun visit-expression-if-block-reachable (ir lattice-map ssa-graph)
+  (declare (optimize debug))
+  (let ((block-index (ssa-graph-get-ir-block-index ssa-graph ir)))
+    (assert block-index)
+    (when (ssa-graph-is-block-reachable ssa-graph block-index)
+      (visit-expression ir lattice-map ssa-graph block-index)))) ;; FIXME
+
+(defun maybe-visit-expression (expr lattice-map ssa-graph)
+  (etypecase expr
+    (cssa::phi (visit-phi expr ssa-graph lattice-map))
+    (cssa::ssa-form-rw (visit-expression-if-block-reachable expr lattice-map ssa-graph))))
+
+;; VISIT block will handle creating new FLOW EDGES
+(defun visit-block (b lattice-map ssa-graph)
+  (declare (optimize debug))
+  (let ((block-index (cssa::ssa-block-index b))
+	(ssa-work-list nil)
+	(flow-edges))
+    (ssa-graph-set-block-reachable ssa-graph block-index)
+    (dolist (ir (cssa::ssa-block-ssa b))
+      (multiple-value-bind (new-edges new-ssa-work-list) (visit-expression ir lattice-map ssa-graph block-index)
+	(setf ssa-work-list (append ssa-work-list new-ssa-work-list))
+	(setf flow-edges (append flow-edges new-edges))))
+    (values flow-edges ssa-work-list)))
+
+;; FIXME, this need to return new SSA-WORK-LIST and FLOW-WORK-LIST
+(defun process-flow-edge (edge lattice-map graph)
+  (declare (optimize debug))
+  (let ((exec-flag (ssa-graph-get-flow-edge-executable graph edge))
+	(ssa-work-list nil)
+	(flow-work-list nil))
+    (unless exec-flag
+      (ssa-graph-update-flow-edge-executable graph edge)
+      (let ((b (ssa-graph-get-block graph (cdr edge))))
+	;; process PHI's
+	(dolist (phi (cssa::ssa-block-phis b))
+	  (unless (cssa::get-phi-place-reduced-value (cssa::phi-place phi))
+	    (multiple-value-bind (_ new-ssa-work-list) (visit-phi phi graph lattice-map)
+	      (declare (ignore _))
+	      (setf ssa-work-list (append ssa-work-list new-ssa-work-list)))))
+	;; process block only if this is first time we arrived to this edge (block)
+	(when (= 1 (ssa-graph-get-flow-edge-executable graph edge))
+	  (multiple-value-bind (new-edges new-ssa-work-list) (visit-block b lattice-map graph)
+	    (setf flow-work-list (append flow-work-list new-edges))
+	    (setf ssa-work-list (append ssa-work-list new-ssa-work-list))))))
+    (values flow-work-list ssa-work-list)))
+
+(defun do-sccp (lambda-ssa)
+  (declare (optimize debug))
+  (let* ((ssa-graph (init-ssa-graph lambda-ssa))
 	 (lattice-map (init-lattice-map lambda-ssa))
 	 (block1 (first (clcomp.ssa::lambda-ssa-blocks lambda-ssa))))
 
-    (multiple-value-bind (fwl swl) (visit-expressions block1 lattice-map ssa-edges exec-flags)
-      )))
+    (multiple-value-bind (flow-work-list ssa-work-list) (visit-block block1 lattice-map ssa-graph)
+      (let ((new-flow-work-list nil)
+	    (new-ssa-work-list nil))
 
-;;; NOTE after some hours working on SCCP
-;;; My current SSA IR format is not friendly for SCCP, it is more low level than SCCP would like
-;;; not just SCCP, I assume that other optimization passed would like more high level concise format
-;;; TODO, create more high level SSA format for this phase
+	(tagbody start
+	   (unless (or flow-work-list ssa-work-list)
+	     (go end))
+
+	   (dolist (ir ssa-work-list)
+	     (multiple-value-bind (edges ssas) (maybe-visit-expression ir lattice-map ssa-graph)
+	       (setf new-flow-work-list (append new-flow-work-list edges))
+	       (setf new-ssa-work-list (append new-ssa-work-list ssas))))
+
+	   (dolist (flow-edge flow-work-list)
+	     (multiple-value-bind (edges ssas) (process-flow-edge flow-edge lattice-map ssa-graph)
+	       (setf new-flow-work-list (append new-flow-work-list edges))
+	       (setf new-ssa-work-list (append new-ssa-work-list ssas))))
+
+	   (setf flow-work-list new-flow-work-list)
+	   (setf new-flow-work-list nil)
+
+	   (setf ssa-work-list new-ssa-work-list)
+	   (setf new-ssa-work-list nil)
+
+	   (go start)
+
+	 end)))
+    ;; (maphash (lambda (k v)
+    ;; 	       (print (list k v)))
+    ;; 	     lattice-map)
+    ;; (maphash (lambda (k v)
+    ;; 	       (print (list 'flow-edges k v)))
+    ;; 	     (ssa-graph-flow-edges ssa-graph))
+    ;; (maphash (lambda (k v)
+    ;; 	       (print (list 'reachable-blocks k v)))
+    ;; 	     (ssa-graph-reachable-blocks ssa-graph))
+    ))
 
 
+#+nil
+(clcomp-compile nil '(lambda (a)
+		      (let ((x 1)
+			    (y 1)
+			    (r nil))
+			(if a
+			    (setf r x)
+			    (setf r y))
+			r
+			)))
 
-;; (defun add-copy (from to loads)
-;;   (declare (optimize debug))
-;;   (let ((chains (second loads)))
-;;     (dolist (chain chains)
-;;       (when (eq from (first (second chain)))
-;; 	(push to (second chain))
-;; 	(return-from add-copy)))
-;;     (setf (second loads)
-;; 	  (append (list (list nil (list to from)))
-;; 		  (second loads)))))
-
-;; (defun add-write (write loads)
-;;   (print (list 'write write)))
-
-;; (defun kill-chains (loads)
-;;   (declare (optimize debug))
-;;   (let ((chains (second loads)))
-;;     (dolist (chain chains)
-;;       (unless (eq 'kill (first (second chain)))
-;; 	(push 'kill (second chain))))))
-
-;; (defun copy-propagation (lambda-ssa)
-;;   (let ((visited (make-hash-table))
-;; 	(loads (list 'loads nil)))
-;;     (dolist (b (lambda-ssa-blocks lambda-ssa))
-;;       (unless (gethash (ssa-block-index b) visited)
-;; 	(block-copy-propagation b visited loads lambda-ssa)))
-;;     (break)
-;;     loads))
-
-;; (defun block-copy-propagation (b visited loads lambda-ssa)
-;;   (declare (optimize debug))
-;;   (setf (gethash (ssa-block-index b) visited) t)
-;;   (dolist (ir (ssa-block-ssa b))
-;;     (typecase ir
-;;       (ssa-load (add-copy (ssa-load-from ir)
-;; 			  (ssa-load-to ir)
-;; 			  loads))
-;;       (ssa-kill-form (kill-chains loads))
-;;       (ssa-form-rw
-;;        (let* ((rw (ssa-form-rw-reads-writes ir))
-;; 	      (reads (first rw))
-;; 	      (writes (second rw)))
-;; 	 (declare (ignore reads))
-;; 	 (dolist (w writes)
-;; 	   (add-write w loads))))))
-;;   (let ((successors-blocks (ssa-block-successors b lambda-ssa)))
-;;     (if (< (length successors-blocks) 2)
-;; 	(when (= 1 (length successors-blocks))
-;; 	  (block-copy-propagation (first successors-blocks) visited loads lambda-ssa))
-;; 	(progn
-;; 	  (kill-chains loads)
-;; 	  (dolist (bl successors-blocks)
-;; 	    (unless (gethash (ssa-block-index b) visited)
-;; 	      (block-copy-propagation bl visited loads lambda-ssa)))))))
-
+;; FIXME, we don't follow successor blocks
