@@ -39,10 +39,10 @@
     (inst :pop *base-pointer-reg*)
     (reverse *segment-instructions*)))
 
-;;; FIXME, APPLY will not work with MULTIPLE VALUES
+;;; FIXME, APPLY will not work with FUN that returns MULTIPLE VALUES
 (define-vop %apply (res :register :stack)
-  ((fun :register :stack)
-   (arguments :register :stack))
+    ((fun :register :stack)
+     (arguments :register :stack))
   (let* ((loopl (make-vop-label "loop-"))
 	 (startl (make-vop-label "startl-"))
 	 (end-label (make-vop-label "end-label-"))
@@ -54,19 +54,20 @@
 	 (exit-label (make-vop-label "exit-label"))
 	 (fun-stack-ptr (bump-stack-operand $stack-top-operand$ 1))
 	 (fun-is-reg (find fun *fun-arguments-regs*))
-	 (new-stack-top (if fun-is-reg
-			    (bump-stack-operand fun-stack-ptr 1)
-			    fun-stack-ptr)))
+	 (current-stack-top (if fun-is-reg
+				(bump-stack-operand fun-stack-ptr 1)
+				fun-stack-ptr))
+	 (spill-slot-1 (bump-stack-operand current-stack-top 1))
+	 (new-stack-top spill-slot-1))
 
     (inst :mov *tmp-reg* arguments)
     (inst :mov *fun-number-of-arguments-reg* 0)
 
-    ;; make space to save RCX
-    ;; save two words if we need to save fun on stack
-    (inst :sub *stack-pointer-reg*
-	  (if fun-is-reg
-	      (* 2 *word-size*)
-	      *word-size*))
+    ;; make space to save RCX, r12, fun, align to 16 bytes
+    (inst :sub *stack-pointer-reg* (* 4 *word-size*))
+
+    ;; we need one more register here
+    (inst :mov spill-slot-1 :r12)
 
     (when fun-is-reg
       (inst :mov fun-stack-ptr fun))
@@ -75,7 +76,8 @@
 
     (inst :label loopl)
     (inst :inc *fun-number-of-arguments-reg*)
-    (inline-vop 'inline-cdr *tmp-reg* *tmp-reg* $stack-top-operand$)
+    (inst :mov :r12 *tmp-reg*)
+    (inline-vop 'inline-cdr *tmp-reg* :r12 new-stack-top)
 
     (inst :label startl)
 
@@ -110,8 +112,8 @@
     (inst :jump-fixup :jmp loopl)
 
     (inst :label stack-args-label)
-    (inline-vop 'inline-car :r11 *tmp-reg* new-stack-top)
-    (inst :push :r11) 
+    (inline-vop 'inline-car :r12 *tmp-reg* new-stack-top)
+    (inst :push :r12)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label end-label)
@@ -134,17 +136,19 @@
     (inst :mov *tmp-reg* $stack-top-operand$)
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
     (inst :jump-fixup :js no-stack-args-label)
+
+    ;; restore r12
+    (inst :mov :r12 spill-slot-1)
     
-    (inst :lea *tmp-reg* (@ nil *tmp-reg* *word-size* (* *word-size*
-							 (if fun-is-reg 2 1))))
+    (inst :lea *tmp-reg* (@ nil *tmp-reg* *word-size* (* *word-size* 4)))
     (inst :jump-fixup :jmp exit-label)
 
     (inst :label no-stack-args-label)
-    (inst :mov *tmp-reg* (* *word-size*
-			    (if fun-is-reg 2 1)))
+    (inst :mov *tmp-reg* (* *word-size* 4))
 
     (inst :label exit-label)
-    
+
+    ;; FIXME/TODO, here we need to handle multiple return values
     (inst :add *stack-pointer-reg* *tmp-reg*)
     (inst :mov res (first *fun-arguments-regs*)))
     
