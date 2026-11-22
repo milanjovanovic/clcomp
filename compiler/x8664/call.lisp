@@ -54,20 +54,15 @@
 	 (exit-label (make-vop-label "exit-label"))
 	 (fun-stack-ptr (bump-stack-operand $stack-top-operand$ 1))
 	 (fun-is-reg (find fun *fun-arguments-regs*))
-	 (current-stack-top (if fun-is-reg
-				(bump-stack-operand fun-stack-ptr 1)
-				fun-stack-ptr))
-	 (spill-slot-1 (bump-stack-operand current-stack-top 1))
-	 (new-stack-top spill-slot-1))
+	 (new-stack-top (if fun-is-reg
+			    (bump-stack-operand fun-stack-ptr 1)
+			    fun-stack-ptr)))
 
     (inst :mov *tmp-reg* arguments)
     (inst :mov *fun-number-of-arguments-reg* 0)
 
-    ;; make space to save RCX, r12, fun, align to 16 bytes
-    (inst :sub *stack-pointer-reg* (* 4 *word-size*))
-
-    ;; we need one more register here
-    (inst :mov spill-slot-1 :r12)
+    ;; make space to save RCX and fun, also always 16 bytes aligned
+    (inst :sub *stack-pointer-reg* (* 2 *word-size*))
 
     (when fun-is-reg
       (inst :mov fun-stack-ptr fun))
@@ -76,8 +71,9 @@
 
     (inst :label loopl)
     (inst :inc *fun-number-of-arguments-reg*)
-    (inst :mov :r12 *tmp-reg*)
-    (inline-vop 'inline-cdr *tmp-reg* :r12 new-stack-top)
+    ;; usin *fun-address-reg* as scratch register in the loop
+    (inst :mov *fun-address-reg* *tmp-reg*)
+    (inline-vop 'inline-cdr *tmp-reg* *fun-address-reg* new-stack-top)
 
     (inst :label startl)
 
@@ -112,8 +108,8 @@
     (inst :jump-fixup :jmp loopl)
 
     (inst :label stack-args-label)
-    (inline-vop 'inline-car :r12 *tmp-reg* new-stack-top)
-    (inst :push :r12)
+    (inline-vop 'inline-car *fun-address-reg* *tmp-reg* new-stack-top)
+    (inst :push *fun-address-reg*)
     (inst :jump-fixup :jmp loopl)
 
     (inst :label end-label)
@@ -137,14 +133,11 @@
     (inst :sub *tmp-reg* (length *fun-arguments-regs*))
     (inst :jump-fixup :js no-stack-args-label)
 
-    ;; restore r12
-    (inst :mov :r12 spill-slot-1)
-    
-    (inst :lea *tmp-reg* (@ nil *tmp-reg* *word-size* (* *word-size* 4)))
+    (inst :lea *tmp-reg* (@ nil *tmp-reg* *word-size* (* *word-size* 2)))
     (inst :jump-fixup :jmp exit-label)
 
     (inst :label no-stack-args-label)
-    (inst :mov *tmp-reg* (* *word-size* 4))
+    (inst :mov *tmp-reg* (* *word-size* 2))
 
     (inst :label exit-label)
 
