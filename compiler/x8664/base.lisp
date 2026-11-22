@@ -44,8 +44,15 @@
   (inst :mov (@ res nil nil (* 2 *word-size*)) *tmp-reg*)
   (inst :add res *pointer-tag*))
 
-(define-vop get-closure-env-from-fun-ptr (res :register :stack) ((fun :register))
-  (inst :mov res (@ fun nil nil (- *word-size* *pointer-tag*))))
+(define-mv-vop get-closure-env-from-fun-ptr
+
+    ((res :register :stack))
+
+    ()
+
+    ((:clobber (:rax)) ;;; is clobber actuyally good ? it's not classic clober though
+     (:alias-regs ()))
+  (inst :mov res (@ :rax nil nil (- *word-size* *pointer-tag*))))
 
 ;; closure-env format =  | header qword | count (row 64 bit int) | stack-info-or-bcell-ptr | ...
 (define-vop make-closure-env (res :register) ((count :immediate))
@@ -53,18 +60,6 @@
   (inst :mov (@ res) (get-extended-tag 'closure-env))
   (inst :mov (@ res nil nil *word-size*) count) ;; maybe put count in upper half of first qword
   (inst :add res *pointer-tag*))
-
-(define-vop get-from-closure-env (res :register :stack) ((env :register :stack)
-							 (index :immediate))
-  (inst :mov *tmp-reg* env)
-  ;; get bcell
-  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 2 *word-size*) ;; header type qword + count
-						  (* index *word-size*))
-					       *pointer-tag*)))
-  ;; get value
-  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (* 1 *word-size*) ;; header type qword
-					       *pointer-tag*)))
-  (inst :mov res *tmp-reg*))
 
 (define-vop get-bcell-from-closure-env (res :register :stack) ((env :register :stack)
 							       (index :immediate))
@@ -75,7 +70,6 @@
 					       *pointer-tag*)))
   (inst :mov res *tmp-reg*))
 
-
 (define-vop set-bcell-in-closure-env () ((env :register)
 					 (index :immediate)
 					 (bcell :register :stack :bcell))
@@ -84,17 +78,6 @@
 				  (* index *word-size*))
 			       *pointer-tag*))
 	*tmp-reg*))
-
-(define-vop set-bcell-value-in-closure-env () ((env :register :stack)
-					       (index :immediate)
-					       (value :register))
-  (inst :mov *tmp-reg* env)
-  (inst :mov *tmp-reg* (@ *tmp-reg* nil nil (- (+ (* 2 *word-size*) ;; header type qword + count
-						  (* index *word-size*))
-					       *pointer-tag*)))
-  (inst :mov (@ *tmp-reg* nil nil (- (* 1 *word-size*) ;; header type qword
-				     *pointer-tag*))
-	value))
 
 ;; bcell format =  | header qword | qword |
 (define-vop make-bcell (res :register) ((value :register))

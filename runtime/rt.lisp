@@ -302,6 +302,17 @@
   (setf *code-stubs-data* nil)
   (clrhash *code-stub-addresses*))
 
+(defun dump-compilation-units ()
+  (let ((output-directory (make-output-bin-file "output/")))
+    (ensure-directories-exist output-directory)
+    (loop for unit in (reverse (compilation-units *current-compilation*))
+	  for index from 0
+	  for file = (format nil "~Acompilation-unit-~3,'0D.txt" output-directory index)
+	  do (with-open-file (stream file :direction :output :if-exists :supersede)
+	       (write unit :stream stream :pretty t :readably nil :circle t)
+	       (terpri stream)))
+    output-directory))
+
 (defun test-compile-and-dump (form)
   (let ((*debug* nil)
 	(*load-time-fixups* nil))

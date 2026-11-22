@@ -11,7 +11,7 @@
 (defun open (filespec &key direction element-type if-exists if-does-not-exist external-format)
   (let* ((lisp-open (load-time-value (%lisp-symbol-address "lisp_open")))
 	 (fd (%c-call-one-args lisp-open filespec))
-	 (sstream (make-stream :stream fd :element-type t :open t :type :input)))
+	 (sstream (make-stream :element-type t :open t :type :input)))
     sstream))
 
 (defun close (stream &key abort))

@@ -38,10 +38,13 @@
 (defun vop-argument-metadata-bcell (metadata)
   (find :bcell metadata))
 
+;;; check if register that we need to alias is the same as aliasing register
 (defun generate-alias-proof-vop-body (body arguments res)
   `(let ,(loop for arg in arguments
 	       collect `(,(first arg) (if (eq ,(first arg) ,(first res))
 					  (progn
+					    (when (eq *tmp-reg-2* ,(first arg))
+					      (error "Can't alias the same register"))
 					    (inst :mov *tmp-reg-2* ,(first arg))
 					    *tmp-reg-2*)
 					  ,(first arg))))
@@ -56,6 +59,8 @@
 	(ar (gensym "alias-register-")))
     `(let ((,res-list (list ,@res))
 	   (,aregs ,alias-regs))
+       (declare (ignorable ,res-list)
+		(ignorable ,aregs))
        (let ,(loop for arg in args
 		   collect `(,arg (if (find ,arg ,res-list)
 				      (progn
