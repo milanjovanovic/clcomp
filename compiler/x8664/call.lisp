@@ -53,6 +53,9 @@
 	 (no-stack-args-label (make-vop-label "no-stack-args-label"))
 	 (exit-label (make-vop-label "exit-label"))
 	 (fun-stack-ptr (bump-stack-operand $stack-top-operand$ 1))
+	 ;; NOTE what if FUN is in RAX (can't happen now but probably in future)
+	 ;; this can lead to bugs because we are using RAX in the loop part
+	 ;; (find fun *fun-arguments-regs*) doesn't cover RAX
 	 (fun-is-reg (find fun *fun-arguments-regs*))
 	 (new-stack-top (if fun-is-reg
 			    (bump-stack-operand fun-stack-ptr 1)
