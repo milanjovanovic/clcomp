@@ -6,6 +6,8 @@
 
 (defparameter *dynamic-variables* nil)
 
+(defparameter *known-funs* nil)
+
 (defun %%get-struct-info (struct)
   (assoc struct *structs* ))
 

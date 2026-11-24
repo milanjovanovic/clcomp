@@ -3,6 +3,12 @@
 
 (defparameter *macros* (make-hash-table))
 
+;;; TODO
+;;; look at DEFSTRUCT macro and how it expand into EVAL-WHEN
+(defun macro-def-known-fun (data)
+  data)
+(setf (gethash 'def-known-fun *macros*) 'def-known-fun)
+
 (defun macro-defparameter (form)
   (list 'progn
 	(list 'eval-when (list ':compile-toplevel)
@@ -248,12 +254,21 @@
 	  bindings))
 
 (defun %clcomp-macroexpand-let (form env)
-  (list (first form) (%clcomp-macroexpand-let-bindings (second form) env)
-	(if (> (length (cddr form)) 1)
-	 (cons 'progn (mapcar (lambda (f)
-				(clcomp-macroexpand f env))
-			      (cddr form)))
-	 (clcomp-macroexpand (first (cddr form)) env))))
+  (let* ((got-declarations (and (listp (third form))
+				(eq 'declare (first (third form)))))
+	 (body (if got-declarations
+		   (cdddr form)
+		   (cddr form))))
+    (list (first form)
+	  (%clcomp-macroexpand-let-bindings (second form) env)
+	  (if got-declarations
+	      (third form)
+	      (list 'declare))
+	  (if (> (length body) 1)
+	      (cons 'progn (mapcar (lambda (f)
+				     (clcomp-macroexpand f env))
+				   body))
+	      (clcomp-macroexpand (first body) env)))))
 
 (defun %clcomp-macroexpand-block (form env)
   (let ((tagbody-symbol (block-to-label-name env (second form)))
@@ -409,8 +424,21 @@
 		    (incf oindex))))
 	    (reverse b)))))
 
+;;; our current keyword or optional arguments binding are in the LET form
+;;; so we must move all of variable oriented declaration to LET forma
+(defun reparse-declaration-form (declare-form)
+  (let ((defun-declare (remove-if-not (lambda (elem)
+					(member (first elem) '(inline safety debug optimize)))
+				      (rest declare-form)))
+	(let-declare  (remove-if (lambda (elem)
+				   (member (first elem) '(inline safety debug optimize)))
+				 (rest declare-form))))
+    (list (cons 'declare defun-declare)
+	  (cons 'declare let-declare))))
+
 (defun %clcomp-macroexpand-lambda (form env)
   (let* ((has-declarations (%lambda-has-declarations form))
+	 (parsed-declarations (reparse-declaration-form (if has-declarations (third form) (list 'declare))))
 	 (key-keywords (%lambda-list-&key-keywords (second form)))
 	 (optional-variables (%lambda-list-&optional-vars (second form)))
 	 (rearanged-llist (or (and (or key-keywords
@@ -424,7 +452,9 @@
 									 rest-var key-keywords optional-variables))))
     (list 'lambda
 	  (substitute '&compiler-rest '&rest rearanged-llist)
-	  (if has-declarations (third form) (list 'declare))
+	  (if rest-var
+	      (first parsed-declarations)
+	      (if has-declarations (third form) (list 'declare)))
 	  (clcomp-macroexpand
 	   (let ((body (if (> (length (cddr form)) 1)
 			   (cons 'progn
@@ -435,7 +465,7 @@
 				      (cdddr form)
 				      (cddr form))))))
 	     (if rest-var
-		 (append key-args-let-form (list body))
+		 (append key-args-let-form (list (second parsed-declarations)) (list body))
 		 body)) env))))
 
 ;; FIXME, implement setf macro expanders
@@ -464,6 +494,7 @@
 			      (eq 'declare (first (fourth form))))))
     (list 'multiple-value-bind (second form)
 	  (clcomp-macroexpand (third form))
+	  (fourth form)
 	  (if has-declaration
 	      (clcomp-macroexpand (cons 'progn (clcomp-macroexpand (cddddr form))))
 	      (clcomp-macroexpand (cons 'progn (clcomp-macroexpand (cdddr form))))))))

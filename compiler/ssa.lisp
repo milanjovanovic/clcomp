@@ -10,7 +10,7 @@
 (defstruct immediate-constant constant)
 
 (defstruct place)
-(defstruct (named-place (:include place)) name allocation)
+(defstruct (named-place (:include place)) name allocation dtype itype)
 
 (defstruct (fixed-place (:include place)))
 (defstruct (arg-place (:include fixed-place)) index)
@@ -49,8 +49,8 @@
 (defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
-(defstruct lambda-ssa id form name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals alloc
-  asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
+(defstruct lambda-ssa id form declarations name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals
+  alloc asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
   (phi-connections (make-hash-table)) loop-header-blocks loop-end-blocks
   (redundant-phis (make-hash-table :test #'equalp)) (nodes-id-var-cache (make-hash-table :test #'eql))
@@ -719,7 +719,7 @@
        (emit-ir2-ssa (make-ssa-function-epilogue) block)
        (emit-ir2-ssa (make-ssa-multiple-return :count 1) block)))))
 
-(defun lower-ir1-fun-call (ir1  block lambda-ssa)
+(defun lower-ir1-fun-call (ir1 block lambda-ssa)
   (let* ((fun (ir1-ssa-fun-call-fun ir1))
 	 (return-value (ir1-ssa-fun-call-return-values ir1))
 	 (args (ir1-ssa-fun-call-args ir1))
@@ -1279,6 +1279,8 @@
   (let ((form (clcomp::lexical-binding-node-form node))
 	(var (create-binding-var-place (clcomp::lexical-binding-node-bin-node node)
 				       lambda-ssa (clcomp::lexical-binding-node-closed-over node))))
+    (let ((var-type (clcomp::lexical-var-node-type (clcomp::lexical-binding-node-bin-node node))))
+      (setf (var-place-dtype var) var-type))
     (emit-binding-move form lambda-ssa nil var block)))
 
 (defun emit-let-node-ssa (node lambda-ssa leaf place block)
@@ -1394,17 +1396,23 @@
 	(incf i)))
     i))
 
-(defun emit-lambda-arguments-ssa (arguments lambda-ssa block)
+(defun emit-lambda-arguments-ssa (arguments lambda-decls lambda-ssa block)
   #.*fun-optimize-level*
   (let ((restify (some (lambda (bn)
 			 (clcomp::lexical-binding-node-rest bn))
 		       arguments))
 	(min-args (get-minimum-number-of-args arguments))
 	(bindings (mapcar (lambda (argument)
-			    (list (create-binding-var-place (clcomp::lexical-binding-node-bin-node argument)
-							    lambda-ssa (clcomp::lexical-binding-node-closed-over argument))
-				  (when (clcomp::lexical-binding-node-closed-over argument)
-				    (generate-virtual-place "TEMP-RECV-ARG-"))))
+			    (let* ((lexical-var (clcomp::lexical-binding-node-bin-node argument))
+				   (var (create-binding-var-place lexical-var
+								  lambda-ssa (clcomp::lexical-binding-node-closed-over argument)))
+				   (tmp-place (when (clcomp::lexical-binding-node-closed-over argument)
+						(generate-virtual-place "TEMP-RECV-ARG-")))
+				   (type (clcomp::declaration-type-for-var lambda-decls (clcomp::lexical-var-node-name lexical-var))))
+			      (if tmp-place
+				  (setf (named-place-dtype tmp-place) type)
+				  (setf (named-place-dtype var) type))
+			      (list var tmp-place)))
 			  arguments)))
     (when restify
       (setf (lambda-ssa-contains-rest-arg lambda-ssa) t))
@@ -1516,11 +1524,17 @@
 
 (defun emit-m-v-b-node-ssa (node lambda-ssa leaf place block)
   #.*fun-optimize-level*
-  (let ((mvb-place (make-mvb-place
-		    :var-places (mapcar (lambda (b)
-					  (create-binding-var-place (clcomp::m-v-b-binding-node-bin-node b)
-								    lambda-ssa (clcomp::m-v-b-binding-node-closed-over b)))
-					(clcomp::m-v-b-node-bindings node)))))
+  (let* ((decl (clcomp::m-v-b-node-declaration node))
+	 (mvb-place (make-mvb-place
+		     :var-places (mapcar (lambda (b)
+					   (let* ((lexical-node (clcomp::m-v-b-binding-node-bin-node b))
+						  (var (create-binding-var-place lexical-node lambda-ssa
+										 (clcomp::m-v-b-binding-node-closed-over b)))
+						  (var-name (clcomp::lexical-var-node-name lexical-node))
+						  (var-type (clcomp::declaration-type-for-var decl var-name)))
+					     (setf (var-place-dtype var) var-type)
+					     var))
+					 (clcomp::m-v-b-node-bindings node)))))
     (let ((block (emit-ssa (clcomp::m-v-b-node-form node) lambda-ssa nil mvb-place block)))
       (emit-ssa (clcomp::m-v-b-node-body node) lambda-ssa leaf place block)))) ; which BLOCK we need here 
 
@@ -1611,7 +1625,7 @@
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
     (clcomp::call-node (emit-call-node-ssa node lambda-ssa leaf place block))
-    (clcomp::vop-node (emit-vop-node-ssa node lambda-ssa leaf place block))
+    ;; (clcomp::vop-node (emit-vop-node-ssa node lambda-ssa leaf place block))
     (clcomp::let-node (emit-let-node-ssa node lambda-ssa leaf place block))
     (clcomp::progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
     (clcomp::lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))
@@ -1710,6 +1724,7 @@
 	   (optimize debug))
   (let ((vplace (generate-virtual-place "V-" (named-place-name place))))
     (setf (virtual-place-allocation vplace) (named-place-allocation place))
+    (setf (virtual-place-dtype vplace) (named-place-dtype place))
     (set-block-def block (named-place-name place) vplace)))
 
 ;;; we need to use reduced value here
@@ -2527,7 +2542,8 @@
 	 (entry-block (make-new-ssa-block lambda-ssa)))
     (ssa-add-block lambda-ssa entry-block)
     (emit-ir (make-lambda-entry) entry-block)
-    (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) lambda-ssa entry-block)
+    (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) (clcomp::lambda-node-declarations lambda-node)
+			       lambda-ssa entry-block)
     (when (clcomp::lambda-node-closed-over-vars lambda-node)
       (let* ((env-name (gensym "CLOSURE-ENV-"))
 	     (env-place (make-virtual-place :name env-name :variable env-name :allocation :register)))

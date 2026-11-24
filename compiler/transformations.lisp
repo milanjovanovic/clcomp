@@ -19,6 +19,12 @@
 					 (logand two-args-logand)
 					 (logior two-args-logior)))
 
+;;; http://www.ai.mit.edu/projects/iiip/doc/CommonLISP/HyperSpec/Body/sec_4-2-3.html
+;;; just some basic types
+(defparameter *known-types* '(string list cons fixnum number single-float double-float character array simple-array null))
+
+(defun known-type-p (type)
+  (find type *known-types*))
 
 ;;; this symbols need to be internet
 ;;; look at code/global.lisp
@@ -48,7 +54,7 @@
 (defparameter *node-id* 0)
 
 (defstruct tnode (id (incf *node-id*)))
-(defstruct (declaration-node (:include tnode)) safety optimize debug type)
+(defstruct (declaration-node (:include tnode)) safety optimize debug types inline ignore ignorable)
 (defstruct (rip-relative-node (:include tnode)))
 (defstruct (fun-rip-relative-node (:include rip-relative-node)) form)
 (defstruct (compile-time-bootstrap-constant-node (:include rip-relative-node)) form)
@@ -56,13 +62,12 @@
 (defstruct (lambda-node (:include rip-relative-node)) name arguments declarations body closed-over-vars)
 (defstruct (immediate-constant-node (:include tnode)) value)
 (defstruct (load-time-value-node (:include rip-relative-node)) form node)
-(defstruct (lexical-var-node (:include tnode)) lambda-id name symbol)
+(defstruct (lexical-var-node (:include tnode)) lambda-id name symbol type)
 (defstruct (lexical-binding-node (:include tnode)) name symbol bin-node lambda-id form rest closed-over)
 (defstruct (if-node (:include tnode)) test-form true-form false-form)
-(defstruct (let-node (:include tnode)) bindings form sequential)
+(defstruct (let-node (:include tnode)) bindings declarations form sequential)
 (defstruct (progn-node (:include tnode)) forms)
 (defstruct (call-node (:include tnode)) function arguments)
-(defstruct (vop-node (:include tnode)) vop arguments)
 (defstruct (block-node (:include tnode)) name form)
 (defstruct (return-from-node (:include tnode)) name form)
 (defstruct (tagbody-node (:include tnode)) forms)
@@ -73,20 +78,55 @@
 (defstruct (m-v-b-binding-node (:include tnode)) name symbol lambda-id value-index closed-over bin-node)
 (defstruct (m-v-b-node (:include tnode)) bindings form declaration body)
 
-;; (defstruct irnode)
-;; (defstruct (move-node (:include irnode)) to from)
-;; (defstruct (cmp-node (:include irnode)) arg1 arg2 )
-;; (defstruct (jmp-node (:include irnode)) target zf cf)
-
 (defstruct cenv lambda-declarations bindings declaration current-lambda)
 
 (defun make-constant-nil-node ()
   (make-immediate-constant-node :value *nil*))
 
-;;; FIXME
 (defun parse-declaration-form (form)
   (declare (ignorable form))
-  (make-declaration-node))
+  (let ((dnode (make-declaration-node)))
+    (dolist (dec (rest form))
+      (case (first dec)
+	((or safety optimize debug)
+	 (let ((v (second dec)))
+	   (assert (and (numberp v)
+			(>= v 0)
+			(<=  v 3)))
+	   (case (first dec)
+	     (safety
+	      (setf (declaration-node-safety dnode) v))
+	     (debug
+	      (setf (declaration-node-debug dnode) v))
+	     (optimize
+	      (setf (declaration-node-optimize dnode) v)))))
+	(inline
+	 (setf (declaration-node-inline dnode) (append (declaration-node-inline dnode)
+						       (rest dec))))
+	(ignorable
+	 (setf (declaration-node-ignorable dnode) (append (declaration-node-ignorable dnode)
+							  (rest dec))))
+	(ignore
+	 (setf (declaration-node-ignore  dnode) (append (declaration-node-ignore  dnode)
+							(rest dec))))
+	(type
+	 (let ((tp (second dec))
+	       (vars (nthcdr 2 dec)))
+	   (dolist (v vars)
+	     (push (list v tp)
+		   (declaration-node-types dnode)))))
+	(t
+	 (unless (known-type-p (first dec))
+	   (error "Unknown type specifier"))
+	 (let ((tp (first dec))
+	       (vars (rest dec)))
+	   (dolist (v vars)
+	     (push (list v tp)
+		   (declaration-node-types dnode)))))))
+    dnode))
+
+(defun declaration-type-for-var (dnode var)
+  (second (assoc var (declaration-node-types dnode))))
 
 (defun binding-node-name (node)
   (etypecase node
@@ -143,18 +183,6 @@
 		 (find fun (cdr declr)))
 	(return-from fun-inlined-p t)))))
 
-;; FIXME, for now we just check does number of arguments match with vop arguments count
-;; not sure about this
-(defun does-vop-match (arguments-nodes vop)
-  (= (length arguments-nodes) 
-     (length (vop-arguments vop))))
-
-(defun use-vop-p (environment fun argument-nodes)
-  (and (get-vop fun)
-       (fun-inlined-p environment fun)
-       (not *dont-inline*)
-       (does-vop-match argument-nodes (get-vop fun))))
-
 (defun create-lambda-arguments-nodes (arguments lambda-id)
   (let ((nodes nil)
 	(rest-node nil))
@@ -166,7 +194,9 @@
 								       :rest t
 								       :lambda-id lambda-id
 								       :bin-node var-node))
-			      (name (make-symbol (concatenate 'string (symbol-name argument) "-" (write-to-string (lexical-var-node-id var-node))))))
+			      (name (make-symbol (concatenate 'string
+							      (symbol-name argument) "-"
+							      (write-to-string (lexical-var-node-id var-node))))))
 			 (setf (lexical-var-node-symbol var-node) name)
 			 (setf (lexical-binding-node-symbol binding-node) name)
 			 (push binding-node nodes))
@@ -174,23 +204,20 @@
 	    (t (let* ((var-node (make-lexical-var-node :name argument :lambda-id lambda-id))
 		      (binding-node (make-lexical-binding-node :name argument :lambda-id lambda-id
 							       :bin-node var-node))
-		      (name (make-symbol (concatenate 'string (symbol-name argument) "-" (write-to-string (lexical-var-node-id var-node))))))
+		      (name (make-symbol (concatenate 'string (symbol-name argument) "-"
+						      (write-to-string (lexical-var-node-id var-node))))))
 		 (setf (lexical-var-node-symbol var-node) name)
 		 (setf (lexical-binding-node-symbol binding-node) name)
 		 (push binding-node
 		       nodes)))))
     (reverse nodes)))
 
-;;; FIXME, create struct object that is easy to query
-(defun parse-declarations (form)
-  (cdr form))
-
 (defun get-lambda-new-bindings (lambda-list)
   (filter lambda-list '&compiler-rest))
 
 (defun create-lambda-node (form environment)
   (declare (optimize debug))
-  (let* ((declarations (parse-declarations (third form)))
+  (let* ((declarations (parse-declaration-form (third form)))
 	 (lambda-node (make-lambda-node)))
     (setf (lambda-node-declarations lambda-node) declarations)
     (let* ((argument-nodes (create-lambda-arguments-nodes (second form) (tnode-id lambda-node)))
@@ -219,9 +246,11 @@
 (defun create-lexical-or-dynamic-node (form lambda-id environment)
   (let* ((binding-info (lexical-binding-exist environment (first form)))
 	 (var-node (make-lexical-var-node :name (first form) :lambda-id lambda-id))
-	 (binding-node (make-lexical-binding-node :name (first form) :form (create-node (second form) environment) :lambda-id lambda-id
+	 (binding-node (make-lexical-binding-node :name (first form)
+						  :form (create-node (second form) environment) :lambda-id lambda-id
 						  :bin-node var-node))
-	 (uniq-name-symbol (make-symbol (concatenate 'string (symbol-name (first form)) "-" (write-to-string (lexical-var-node-id var-node))))))
+	 (uniq-name-symbol (make-symbol (concatenate 'string (symbol-name (first form)) "-"
+						     (write-to-string (lexical-var-node-id var-node))))))
     (declare (ignore binding-info))
     (setf (lexical-var-node-symbol var-node) uniq-name-symbol)
     (setf (lexical-binding-node-symbol binding-node) uniq-name-symbol)
@@ -230,7 +259,7 @@
     binding-node))
 
 ;; FIXME (let ((a 1) (a 2))) should throw error, (let* ((a 1) (a 2))) should 
-(defun create-let-binding-nodes (bindings lambda-id sequential environment)
+(defun create-let-binding-nodes (bindings lambda-id sequential environment declarations)
   (let ((binstruct nil)
 	(current-bin nil)
 	(vars nil))
@@ -246,19 +275,32 @@
 	  (push node binstruct)
 	  (push node current-bin))))
     ;; we need to reverse because of order of evaluatin
-    (reverse binstruct)))
+    (let ((tds (declaration-node-types declarations)))
+      ;; not happy with this but it works
+      (when tds
+	(dolist (td tds)
+	  (dolist (bin binstruct)
+	    (when (eq (first td)
+		      (lexical-var-node-name (lexical-binding-node-bin-node bin)))
+	      (setf (lexical-var-node-type (lexical-binding-node-bin-node bin)) (second td))
+	      (return)))))
+      (reverse binstruct))))
 
 ;;; FIXME, form in LET binding can consist of symbol that can be lexical or dynamic scoope
 ;;; see FIXME in CREATE-LEXICAL-OR-DYNAMIC-NODE
 (defun create-let-node (form environment)
   (let* ((sequential (eq (first form) 'let*))
-	(current-lambda (get-current-lambda-node environment))
-	(this-lambda-id (lambda-node-id current-lambda))
-	(let-node (make-let-node)))
+	 (current-lambda (get-current-lambda-node environment))
+	 (this-lambda-id (lambda-node-id current-lambda))
+	 (let-node (make-let-node))
+	 (declarations (parse-declaration-form (third form)))
+	 (body-form (fourth form)))
     (assert this-lambda-id)
-    (setf (let-node-bindings let-node) (create-let-binding-nodes (second form) this-lambda-id sequential environment))
+    (setf (let-node-declarations let-node) declarations)
+    (setf (let-node-bindings let-node) (create-let-binding-nodes (second form) this-lambda-id sequential
+								 environment declarations))
     (setf (let-node-form let-node)
-	  (create-node (third form)
+	  (create-node body-form
 		       (cons (make-cenv :bindings (reverse (let-node-bindings let-node)))
 			     environment)))
     (setf (let-node-sequential let-node) sequential)
@@ -273,11 +315,8 @@
   (let* ((form (maybe-transform-to-two-args-fun form))
 	 (arg-nodes (mapcar (lambda (f)
 			      (create-node f environment))
-			    (rest form)))
-	 (use-vop (use-vop-p environment (first form) arg-nodes)))
-    (if use-vop
-	(make-vop-node :vop (first form) :arguments arg-nodes)
-	(make-call-node :function (first form) :arguments arg-nodes))))
+			    (rest form))))
+    (make-call-node :function (first form) :arguments arg-nodes)))
 
 (defun create-constant-node (form)
   (cond ((eq form nil)
@@ -348,7 +387,8 @@
       (let* ((var-node (make-lexical-var-node :name s :lambda-id current-lambda-id ))
 	     (binding-node (make-m-v-b-binding-node :name s :value-index index :lambda-id current-lambda-id
 						    :bin-node var-node) )
-	     (uniq-name-symbol (make-symbol (concatenate 'string (symbol-name s) "-" (write-to-string (lexical-var-node-id var-node))))))
+	     (uniq-name-symbol (make-symbol (concatenate 'string (symbol-name s) "-"
+							 (write-to-string (lexical-var-node-id var-node))))))
 	(setf (lexical-var-node-symbol var-node) uniq-name-symbol)
 	(setf (m-v-b-binding-node-symbol binding-node) uniq-name-symbol)
 	(push binding-node bindings)

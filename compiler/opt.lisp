@@ -206,6 +206,8 @@
 					  :uncond uncond-succ
 					  :fall-trough fall-trough-succ))))
 
+;;; FIXME, we should collect every usage of every variable
+;;; because at the end we must replace every use of some variable with constant value
 (defun collect-ssa-edges-from-block (graph block)
   (declare (optimize debug))
   (dolist (phi (cssa::ssa-block-phis block))
@@ -511,3 +513,11 @@
 			)))
 
 ;; FIXME, we don't follow successor blocks
+
+
+;;; TODO
+;;; DCE
+
+
+;;; TODO
+;;; GVN
