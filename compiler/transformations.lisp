@@ -54,7 +54,7 @@
 (defparameter *node-id* 0)
 
 (defstruct tnode (id (incf *node-id*)))
-(defstruct (declaration-node (:include tnode)) safety optimize debug types inline ignore ignorable)
+(defstruct (declaration-node (:include tnode)) safety speed debug space types inline ignore ignorable)
 (defstruct (rip-relative-node (:include tnode)))
 (defstruct (fun-rip-relative-node (:include rip-relative-node)) form)
 (defstruct (compile-time-bootstrap-constant-node (:include rip-relative-node)) form)
@@ -83,23 +83,28 @@
 (defun make-constant-nil-node ()
   (make-immediate-constant-node :value *nil*))
 
+;; FIXME, create default value for all qualities
+(defun parse-optimize-declaration (optimize-form dnode)
+  (dolist (opt (cdr optimize-form))
+    (multiple-value-bind (quality value)
+	(if (consp opt)
+	    (values (first opt) (second opt))
+	    (values opt 3))
+      (when (and (>= value 0)
+		 (<= value 3))
+	(ecase quality
+	  (speed (setf (declaration-node-speed dnode) value))
+	  (debug (setf (declaration-node-debug dnode) value))
+	  (safety (setf (declaration-node-safety dnode) value))
+	  (space (setf (declaration-node-space dnode) value)))))))
+
+
 (defun parse-declaration-form (form)
   (declare (ignorable form))
   (let ((dnode (make-declaration-node)))
     (dolist (dec (rest form))
       (case (first dec)
-	((or safety optimize debug)
-	 (let ((v (second dec)))
-	   (assert (and (numberp v)
-			(>= v 0)
-			(<=  v 3)))
-	   (case (first dec)
-	     (safety
-	      (setf (declaration-node-safety dnode) v))
-	     (debug
-	      (setf (declaration-node-debug dnode) v))
-	     (optimize
-	      (setf (declaration-node-optimize dnode) v)))))
+	(optimize (parse-optimize-declaration dec dnode ))
 	(inline
 	 (setf (declaration-node-inline dnode) (append (declaration-node-inline dnode)
 						       (rest dec))))
@@ -380,8 +385,9 @@
 	 (bindings nil)
 	 (index 0)
 	 (form-node (create-node (third form) environment))
-	 (declaration (when (eq 'declare (first (fourth form)))
-			(parse-declaration-form (fourth form)))))
+	 (declaration (if (eq 'declare (first (fourth form)))
+			  (parse-declaration-form (fourth form))
+			  (parse-declaration-form (list 'declare)))))
     (assert current-lambda-id)
     (dolist (s (second form))
       (let* ((var-node (make-lexical-var-node :name s :lambda-id current-lambda-id ))

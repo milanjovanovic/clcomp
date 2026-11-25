@@ -49,6 +49,7 @@
 (defstruct (compile-time-bootstrap-constant-fixup (:include fixup)) form)
 (defstruct lexenv scope)
 (defstruct ssa-env labels blocks)
+(defstruct decls safety speed debug inline types ignore ignorable)
 (defstruct lambda-ssa id form declarations name contains-rest-arg blocks (delayed-blocks (make-hash-table)) intervals
   alloc asm (blocks-index (make-hash-table)) (block-order-index (make-hash-table))
   (env (make-ssa-env)) fixups sub-lambdas (all-phis (make-hash-table))
@@ -62,8 +63,10 @@
   exit cond-jump-moves uncond-jump-moves succ-moves spill-moves)
 
 (defstruct ssa-form index)
+
 ;; This means that this form can clobber arguments passing/return values registers
 (defstruct (ssa-kill-form (:include ssa-form)))
+
 (defstruct (lambda-entry (:include ssa-kill-form)))
 (defstruct (arg-check (:include ssa-form)) arg-count min-arg-count)
 (defstruct (deallocate-function-frame (:include ssa-form)) count)
@@ -89,8 +92,6 @@
 (defstruct (ssa-unknown-return (:include ssa-return)))
 (defstruct (ssa-multiple-return (:include ssa-return)) count)
 
-
-;;; FIXME, maybe we can split VOP to siple LOAD and WRITE IR instructions
 (defstruct (ssa-vop (:include ssa-form-rw)) name return-values args )
 
 (defstruct (ssa-rest-listify (:include ssa-kill-form)) count)
@@ -109,14 +110,23 @@
 (defstruct (ir1-ssa-fun-call (:include ir1-ssa-form-rw)) fun return-values args tail)
 (defstruct (ir1-ssa-return (:include ir1-ssa-form-rw)))
 (defstruct (ir1-ssa-mv-return (:include ir1-ssa-form-rw)) return-value)
-;; (defstruct (ir1-ssa-make-closure (:include ir1-ssa-form-rw)) return-value args fixup)
 
+
+(defun decl-from-declaration-node (dnode)
+  (make-decls :safety (clcomp::declaration-node-safety dnode)
+	      :speed (clcomp::declaration-node-speed dnode)
+	      :debug (clcomp::declaration-node-debug dnode)
+	      :inline (clcomp::declaration-node-inline dnode)
+	      :types (clcomp::declaration-node-types dnode)
+	      :ignore (clcomp::declaration-node-ignore dnode)
+	      :ignorable (clcomp::declaration-node-ignorable dnode)))
 
 (defun ret-places-as-list (place)
   (etypecase place
     (mvb-place
      (mvb-place-var-places place))
-    (t (list place))))
+    (t (when place
+	 (list place)))))
 
 (defun ir1-ssa-mv-return-ret-places (ir)
   (let ((ret-place (ir1-ssa-mv-return-return-value ir)))
@@ -235,6 +245,12 @@
       (make-virtual-place :name (make-symbol (concatenate 'string s (write-to-string *ssa-symbol-counter*)))
 			  :variable variable)
     (incf *ssa-symbol-counter*)))
+
+(defun generate-number-of-virtual-places (n)
+  (let (places)
+    (dotimes (i n)
+      (push (generate-virtual-place) places))
+    places))
 
 (defparameter *if-label-counter* 0)
 (defun generate-if-label-symbol ()
@@ -685,8 +701,20 @@
 ;;; so when lowering IR1 we need to know where we want to insert lowered IR1 instructions
 ;;; not very proud of this
 
-(defun lower-ir1-receive-arguments (ir1 block lambda-ssa)
+(defstruct instr-stream instructions)
+
+(defun instr-stream-next (is)
+  (pop (instr-stream-instructions is)))
+
+(defun instr-stream-peek (is)
+  (first (instr-stream-instructions is)))
+
+(defun instr-stream-push (is instr)
+  (push instr (instr-stream-instructions is)))
+
+(defun lower-ir1-receive-arguments (ir1 istream block lambda-ssa)
   #.*fun-optimize-level*
+  (declare (ignore istream))
   (declare (ignore lambda-ssa))
   (let ((arg-count (ir1-ssa-receive-arguments-arg-count ir1))
 	(min-args-count (ir1-ssa-receive-arguments-min-args ir1))
@@ -708,8 +736,9 @@
 		    block)
       (incf arg-index))))
 
-(defun lower-ir1-mv-return (ir1 block lambda-ssa)
+(defun lower-ir1-mv-return (ir1 istream block lambda-ssa)
   #.*fun-optimize-level*
+  (declare (ignore istream))
   (let ((ret-value (ir1-ssa-mv-return-return-value ir1)))
     (typecase ret-value
       (mvb-place  (lower-i1-values ret-value lambda-ssa block))
@@ -719,7 +748,9 @@
        (emit-ir2-ssa (make-ssa-function-epilogue) block)
        (emit-ir2-ssa (make-ssa-multiple-return :count 1) block)))))
 
-(defun lower-ir1-fun-call (ir1 block lambda-ssa)
+(defun lower-ir1-fun-call (ir1 istream block lambda-ssa)
+  #.*fun-optimize-level*
+  (declare (ignore istream))
   (let* ((fun (ir1-ssa-fun-call-fun ir1))
 	 (return-value (ir1-ssa-fun-call-return-values ir1))
 	 (args (ir1-ssa-fun-call-args ir1))
@@ -762,6 +793,59 @@
 	  (emit-ir2-ssa (make-maybe-mv-adjust-stack) block)
 	  (when (> stack-arguments 0)
 	    (emit-ir2-ssa (make-deallocate-stack :count stack-arguments) block))))))
+
+(defun lower-i1-fun-to-vop (ir1 istream block lambda-ssa vop)
+  #.*fun-optimize-level*
+  (declare (ignorable lambda-ssa))
+  (let* ((arguments (ir1-ssa-fun-call-args ir1))
+	 (ret-places (ret-places-as-list (ir1-ssa-fun-call-return-values ir1)))
+	 (vop-arguments (clcomp::vop-arguments vop))
+	 (vop-res (clcomp::vop-res vop)))
+    (assert (= (length arguments)
+	       (length vop-arguments)))
+    (if (ir1-ssa-fun-call-tail ir1)
+	;; when function is at tail position we need to fill up return places
+	;; also next instruction is UNKNOWN-RETURN which we can transform tu known number of return values
+	;; because we know how many values VOP returns
+	(progn
+	  ;; when fun is at tail position we should not have arguments set
+	  (assert (null ret-places))
+	  (let ((ret-places (generate-number-of-virtual-places (length vop-res)))
+		(ret-instr (instr-stream-next istream)))
+	    (assert (ssa-unknown-return-p ret-instr))
+	    (emit-ir2-ssa (make-ssa-vop
+			   :name (clcomp::vop-name vop)
+			   :return-values ret-places
+			   :args arguments)
+			  block)
+	    (instr-stream-push istream (make-ir1-ssa-mv-return :index (ssa-form-index ret-instr)
+							       :return-value (if (= (length ret-places) 1)
+										 (first ret-places)
+										 (make-mvb-place :var-places ret-places))))))
+	(let ((ret-diff (- (length vop-res) (length ret-places))))
+	  (assert (>= ret-diff 0))
+	  ;; when we bind less values than vop returns we need to generate enough return places for VOP
+	  (when (> ret-diff 0)
+	    (setf ret-places (reverse ret-places))
+	    (dotimes (i ret-diff)
+	      (push (generate-virtual-place) ret-places)))
+	  (emit-ir2-ssa (make-ssa-vop
+			 :name (clcomp::vop-name vop)
+			 :return-values (reverse ret-places)
+			 :args arguments)
+			block)))))
+
+(defun maybe-use-vop (fun lambda-ssa)
+  (and (find fun (decls-inline (lambda-ssa-declarations lambda-ssa)) :test #'eq)
+       (clcomp::get-vop fun)))
+
+;;; FIXME, for now we just look if function is inline and there is matching VOP
+;;; NOTE, if FUN is TAIL = T we know how many return values it will have
+(defun lower-ir1-fun-call-or-vop (ir1 istream block lambda-ssa)
+  (let ((vop (maybe-use-vop (ir1-ssa-fun-call-fun ir1) lambda-ssa)))
+    (if vop
+	(lower-i1-fun-to-vop ir1 istream block lambda-ssa vop)
+	(lower-ir1-fun-call ir1 istream block lambda-ssa))))
 
 ;;;MULTIPLE VALUE CALLING CONVENTION
 ;;;If we have more values than registers extra values are put in the extended caller stack frame
@@ -882,20 +966,23 @@
 		(emit-ir2-ssa (make-ssa-multiple-return :count vals-count)
 			      block))))))))
 
-(defun lower-ir1-instruction (ir block lambda-ssa)
+(defun lower-ir1-instruction (ir istream block lambda-ssa)
   #.*fun-optimize-level*
   (etypecase ir
-    (ir1-ssa-receive-arguments (lower-ir1-receive-arguments ir block lambda-ssa))
-    (ir1-ssa-fun-call (lower-ir1-fun-call ir block lambda-ssa))
-    (ir1-ssa-mv-return (lower-ir1-mv-return ir block lambda-ssa))
-    (t (emit-ir2-ssa ir block))))
+    (ir1-ssa-receive-arguments (lower-ir1-receive-arguments ir istream block lambda-ssa))
+    (ir1-ssa-fun-call (lower-ir1-fun-call-or-vop ir istream block lambda-ssa))
+    (ir1-ssa-mv-return (lower-ir1-mv-return ir istream block lambda-ssa))
+    (t (emit-ir2-ssa ir block)))) ; FIXME, consume instruction
 
 (defun lower-ir1-block (block lambda-ssa)
   #.*fun-optimize-level*
-  (let ((instructions (ssa-block-ssa block)))
+  (let* ((instructions (ssa-block-ssa block))
+	 (instr-stream (make-instr-stream :instructions instructions)))
     (setf (ssa-block-ssa block) nil)
-    (dolist (inst instructions)
-      (lower-ir1-instruction inst block lambda-ssa))
+    (tagbody loop
+       (lower-ir1-instruction (instr-stream-next instr-stream) instr-stream block lambda-ssa)
+       (when (instr-stream-instructions instr-stream)
+	 (go loop)))
     (finish-block-ir2 block)))
 
 (defun lower-ir1-lambda (lambda-ssa)
@@ -1242,37 +1329,6 @@
     (dotimes (i places-count)
       (push (generate-virtual-place) places))
     (make-mvb-place :var-places places)))
-
-(defun emit-vop-node-ssa (node lambda-ssa leaf place block)
-  #.*fun-optimize-level*
-  (let* ((arguments (clcomp::vop-node-arguments node))
-	 (vop (clcomp::get-vop (clcomp::vop-node-vop node)))
-	 (ret-vals (length (clcomp::vop-res vop)))
-	 (args-places nil))
-    (when (and (null place)
-	       (> ret-vals 0))
-      (setf place (if (> ret-vals 1)
-		      (make-n-virtual-mvb-place ret-vals)
-		      (generate-virtual-place))))
-    (dolist (arg arguments)
-      (let ((direct-place (make-direct-place-or-nil arg lambda-ssa)))
-	(if direct-place
-	    (push direct-place args-places)
-	    (let* ((place (generate-virtual-place))
-		   (new-block (maybe-emit-direct-load arg lambda-ssa nil place block)))
-	      (setf block new-block)
-	      (push place args-places)))))
-    (let ((return-places (ret-places-as-list place)))
-      (unless (= (length return-places) ret-vals)
-	(error "VOP return places mismatch"))
-      (emit-ir (make-ssa-vop
-		:name (clcomp::vop-node-vop node)
-		:return-values return-places
-		:args (reverse args-places))
-	       block))
-    (when leaf
-      (emit-ir (make-ir1-ssa-mv-return :return-value place) block))
-    block))
 
 (defun emit-lexical-binding-node-ssa (node lambda-ssa leaf block)
   (declare (ignore leaf))
@@ -1625,7 +1681,6 @@
   (etypecase node
     (clcomp::if-node (emit-if-node-ssa node lambda-ssa leaf place block))
     (clcomp::call-node (emit-call-node-ssa node lambda-ssa leaf place block))
-    ;; (clcomp::vop-node (emit-vop-node-ssa node lambda-ssa leaf place block))
     (clcomp::let-node (emit-let-node-ssa node lambda-ssa leaf place block))
     (clcomp::progn-node (emit-progn-node-ssa node lambda-ssa leaf place block))
     (clcomp::lexical-var-node (emit-lexical-var-node-ssa node lambda-ssa leaf place block))
@@ -1956,17 +2011,7 @@
 						:var-places (mapcar (lambda (p)
 								      (transform-read p b lambda-ssa))
 								    (mvb-place-var-places (ir1-ssa-mv-return-return-value ir)))))
-					      (t (transform-read (ir1-ssa-mv-return-return-value ir) b lambda-ssa)))))
-		   ;; (ir1-ssa-make-closure
-		   ;;  (let ((args (mapcar (lambda (p)
-		   ;; 			  (transform-read p b lambda-ssa))
-		   ;; 			(ir1-ssa-make-closure-args ir))))
-		   ;;    (make-ir1-ssa-make-closure :index (ssa-form-index ir)
-		   ;; 				 :args args
-		   ;; 				 :return-value (transform-write
-		   ;; 						(ir1-ssa-make-closure-return-value ir)
-		   ;; 						b lambda-ssa))))
-		   ))
+					      (t (transform-read (ir1-ssa-mv-return-return-value ir) b lambda-ssa)))))))
 		(t ir))))
 	(push irssa ssa-ir)))
     (setf (ssa-block-ssa b) (reverse ssa-ir))))
@@ -2540,6 +2585,8 @@
 					       (make-ssa-env))
 				      :id (clcomp::lambda-node-id lambda-node)))
 	 (entry-block (make-new-ssa-block lambda-ssa)))
+    (setf (lambda-ssa-declarations lambda-ssa)
+	  (decl-from-declaration-node (clcomp::lambda-node-declarations lambda-node)))
     (ssa-add-block lambda-ssa entry-block)
     (emit-ir (make-lambda-entry) entry-block)
     (emit-lambda-arguments-ssa (clcomp::lambda-node-arguments lambda-node) (clcomp::lambda-node-declarations lambda-node)
