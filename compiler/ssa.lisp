@@ -64,6 +64,8 @@
 
 (defstruct ssa-form index)
 
+(defstruct (ssa-nop (:include ssa-form)))
+
 ;; This means that this form can clobber arguments passing/return values registers
 (defstruct (ssa-kill-form (:include ssa-form)))
 
@@ -442,6 +444,10 @@
       (progn
 	(setf (ssa-block-succ b1) (ssa-block-index b2))
 	(push (ssa-block-index b1) (ssa-block-predecessors b2)))))
+
+(defun ssa-block-remove-predecessor (from-index block)
+  (setf (ssa-block-predecessors block)
+	(remove from-index (ssa-block-predecessors block))))
 
 ;; FIXME, see where else we use this, maybe inserting SSA-GO brakes something else
 (defun ssa-maybe-connect-blocks (b1 b2)
@@ -1694,7 +1700,6 @@
     (clcomp::block-node (emit-block-node-ssa node lambda-ssa leaf place block))
     (clcomp::return-from-node (emit-return-from-node-ssa node lambda-ssa leaf place block))))
 
-
 (defun fix-cond-jump-index (from-block to-block)
   (declare (optimize (debug 3)))
   (let ((last-instr (ssa-block-ir-last-instr from-block)))
@@ -1879,11 +1884,8 @@
 		(mvb-place (mvb-place-var-places (ir1-ssa-mv-return-return-value ir)))
 		(t (when (ir1-ssa-mv-return-return-value ir)
 		     (list (ir1-ssa-mv-return-return-value ir)))))
-	      nil))
-       ;; (ir1-ssa-make-closure
-       ;; 	(list (ir1-ssa-make-closure-args ir) (list (ir1-ssa-make-closure-return-value ir))))
-       ))
-    (t ir)))
+	      nil))))
+    (t nil)))
 
 (defun ssa-form-rw-replace-reads (ir old-virt new-virt)
   (flet ((replace-in-list (l old new)
@@ -1917,9 +1919,8 @@
 	 (t
 	  (when (eq old-virt (ir1-ssa-mv-return-return-value ir))
 	    (setf (ir1-ssa-mv-return-return-value ir) new-virt)))))
-      ;; (ir1-ssa-make-closure
-      ;;  (replace-in-list (ir1-ssa-make-closure-args ir) old-virt new-virt))
-      )))
+      (phi
+       (replace-in-list (phi-operands ir) old-virt new-virt)))))
 
 (defun ssa-read-variable (place block lambda-ssa)
   #.*fun-optimize-level*
@@ -2419,6 +2420,32 @@
 	(debug-blocks-print "REMOVE-NOT-ACCESSIBLE-BLOCKS: What, Removing again block: " (ssa-block-index block))
 	(destroy-ssa-block block lambda-ssa)))))
 
+(defun ssa-block-fold-if (block test-value)
+  #.*fun-optimize-level*
+  (let ((last-instr (ssa-block-last-instruction block)))
+    (assert (ssa-if-p last-instr))
+    (let ((succ (ssa-block-succ block)))
+      (if test-value
+	  (progn
+	    (setf (car (ssa-block-ir-last-cons block))
+		  (make-ssa-go :label (ssa-if-true-block-label last-instr) :index (ssa-form-index last-instr)))
+	    (setf (ssa-block-succ block) nil)
+	    (setf (ssa-block-uncond-jump block) nil))
+	  (progn
+	    (setf (ssa-block-cond-jump block) nil)
+	    (if succ
+		(progn
+		  ;; no need for SSA-GO here, it's just a fall through
+		  (assert (ssa-block-cond-jump block))
+		  (assert (null (ssa-block-uncond-jump block)))
+		  (setf (car (ssa-block-ir-last-cons block))
+			(make-ssa-nop :index (ssa-form-index last-instr))))
+		(progn
+		  (assert (ssa-block-uncond-jump block))
+		  (assert (ssa-block-cond-jump block))
+		  (setf (car (ssa-block-ir-last-cons block))
+			(make-ssa-go :label (ssa-if-false-block-label last-instr) :index (ssa-form-index last-instr))))))))))
+
 (defun ssa-block-change-succ-to-uncond-jump (lambda-ssa block)
   (let* ((succ-index (ssa-block-succ block))
 	 (succ-block (ssa-find-block-by-index lambda-ssa succ-index))
@@ -2613,11 +2640,13 @@
     (setf *error-on-ssa-touch* nil)
     (construct-ssa lambda-ssa)
     (ssa-reset-original-ir lambda-ssa)
+    (print lambda-ssa)
     (setf *error-on-ir-touch* t)
     (when *copy-prop-1*
       (clcomp.ssa.opt::do-copy-prop-1 lambda-ssa))
     (when *sccp*
       (clcomp.ssa.opt::do-sccp lambda-ssa))
+    (print lambda-ssa)
     (lower-ir1-lambda lambda-ssa)
     (set-block-virtuals lambda-ssa)
     (when *optimize-redundant-phis*

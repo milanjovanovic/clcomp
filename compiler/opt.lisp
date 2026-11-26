@@ -4,6 +4,7 @@
 (in-package :clcomp.ssa.opt)
 
 ;; this is just simple LOAD VIRTUAl, VIRTUAL elimination so gdb tracing is easier to follow
+
 (defun copy-prop-1 (lambda-ssa)
   (let ((loads (make-hash-table))
 	(ir-indexes (make-hash-table)))
@@ -106,11 +107,21 @@
 ;;; so we are not doing constant propagation across function calls and VOP calls
 ;;; but implementation will support that though
 
+(defparameter *debug-print-scc* t)
+(defmacro sccp-debug-print (&rest rest)
+  (let ((ev (gensym)))
+    `(let((,ev (list ,@(mapcan (lambda (x) (list `',x x))
+			       rest))))
+       (when *debug-print-scc*
+	 (print ,ev))
+       (car (last ,ev)))))
+
 (defun get-place (place)
   (etypecase place
     (cssa::phi (cssa::get-maybe-reduced-place (cssa::phi-place place)))
     (cssa::phi-place (cssa::get-maybe-reduced-place place))
-    (cssa::named-place place)))
+    (cssa::named-place place)
+    (cssa::immediate-constant place)))
 
 (defstruct ssa-graph def uses index-block flow-edges blocks reachable-blocks successors)
 
@@ -223,9 +234,7 @@
 		 (reads (first rws))
 		 (writes (second rws)))
 	    ;; we want IR that has READ and WRITE places but also we want SSA-IF
-	    (when (and reads (or writes
-				 (cssa::ssa-if-p ir)))
-	      (print (list 'adding-edges ir))
+	    (when (or reads writes)
 	      (dolist (write writes)
 		(typecase write
 		  (cssa::named-place
@@ -236,7 +245,8 @@
 		   (ssa-graph-add-use graph read ir)))))
 	    ;; set block index for instruction
 	    (ssa-graph-connect-ir-block graph (cssa::ssa-form-index ir) block-index))
-	  (print (list 'collect-ssa-edges-from-block 'skip ir))))))
+	  ;; (print (list 'collect-ssa-edges-from-block 'skip ir))
+	  ))))
 
 (defun init-lattice-map (lambda-ssa)
   (declare (optimize debug))
@@ -265,6 +275,13 @@
     (when (not (lattice-value-equal old lattice-value))
       (set-lattice-value p lattice-value lattice-map))))
 
+(defun get-constant-places (lattice-map)
+  (let (res)
+    (dolist (k (clcomp::hash-keys lattice-map))
+      (when (is-constant (get-lattice-value k lattice-map))
+	(push k res)))
+    res))
+
 (defun is-constant (p)
   (cssa::immediate-constant-p p))
 
@@ -272,9 +289,11 @@
   (and (cssa::immediate-constant-p p)
        (= clcomp::*nil* (cssa::immediate-constant-constant p))))
 
+
 (defun get-lattice-value (p lattice-map)
   (typecase p
     (cssa::immediate-constant p)
+    (cssa::fixup 'BOTTOM)
     (t
      (gethash p lattice-map))))
 
@@ -387,7 +406,7 @@
 	 (push  (cons block-index uncond-succ) flow-edges)))
       (cssa::ssa-form-rw
        (let* ((rws (cssa::ssa-form-rw-reads-writes ir))
-	      (reads (first rws))
+	      (reads (mapcar #'get-place (first rws)))
 	      (writes (second rws))
 	      (fixed-place-read (some #'cssa::fixed-place-p reads))
 	      (produce-bottom (ir-produce-bottom ir))
@@ -406,7 +425,8 @@
 		 (set-lattice-value w reads-meet lattice-map)
 		 (let ((uses (ssa-graph-get-use ssa-graph w)))
 		   (setf ssa-work-list (append ssa-work-list uses))))))))
-      (t (print (list 'visit-expression 'skip ir))))
+      (t ;; (print (list 'visit-expression 'skip ir))
+       ))
     (values flow-edges ssa-work-list)))
 
 (defun visit-expression-if-block-reachable (ir lattice-map ssa-graph)
@@ -432,6 +452,13 @@
       (multiple-value-bind (new-edges new-ssa-work-list) (visit-expression ir lattice-map ssa-graph block-index)
 	(setf ssa-work-list (append ssa-work-list new-ssa-work-list))
 	(setf flow-edges (append flow-edges new-edges))))
+    ;; special case for fall through block, we don't have IR for that so we need to do it like this
+    (when (and (cssa::ssa-block-succ b)
+	       (not (cssa::ssa-block-cond-jump b))
+	       (not (cssa::ssa-block-uncond-jump b)))
+      (push (cons (cssa::ssa-block-index b)
+		  (cssa::ssa-block-succ b))
+	    flow-edges))
     (values flow-edges ssa-work-list)))
 
 ;; FIXME, this need to return new SSA-WORK-LIST and FLOW-WORK-LIST
@@ -455,6 +482,77 @@
 	    (setf flow-work-list (append flow-work-list new-edges))
 	    (setf ssa-work-list (append ssa-work-list new-ssa-work-list))))))
     (values flow-work-list ssa-work-list)))
+
+
+;;; Remove unreachable blocks, if they provide PHI operands remove that PHI operand
+;;; this function doesn't remove connections from block to the block that we are deleting
+;;; REWRITE-INSTRUCTION will do this when removing IF
+(defun remove-unreachable-flow-edges (lambda-ssa graph)
+  (declare (optimize debug))
+  (let* ((reachable-blocks (clcomp::hash-keys (ssa-graph-reachable-blocks graph)))
+	 (all-blocks (clcomp::hash-keys (ssa-graph-blocks graph)))
+	 (unreachable (set-difference all-blocks reachable-blocks)))
+    (dolist (ubl-index unreachable)
+      (sccp-debug-print "Deleting block" ubl-index)
+      (let* ((ubl (ssa-graph-get-block graph ubl-index))
+	     (successors (cssa::ssa-block-successors ubl lambda-ssa)))
+	(dolist (succ-block successors)
+	  (dolist (phi (cssa::ssa-block-phis succ-block))
+	    (unless (cssa::get-phi-place-reduced-value (cssa::phi-place phi))
+	      (let ((pos (position ubl-index (cssa::phi-operands-blocks phi))))
+		(when pos
+		  (sccp-debug-print  "Rewrite" phi pos)
+		  (setf (cssa::phi-operands phi)
+			(remove-if (constantly t) (cssa::phi-operands phi) :start pos :count 1))
+		  (setf (cssa::phi-operands-blocks phi)
+			(remove-if (constantly t) (cssa::phi-operands-blocks phi) :start pos :count 1))
+		  ;; simplify PHI if only one operand left
+		  (when (= 1 (length (cssa::phi-operands phi)))
+		    (cssa::add-phi-value-replacement phi  (first (cssa::phi-operands phi)) lambda-ssa))
+		  (sccp-debug-print "Post rewrite" phi)))))
+
+	  ;; remove ubl block from predecessors
+	  (cssa::ssa-block-remove-predecessor ubl-index succ-block)
+	  (unless (cssa::ssa-block-predecessors succ-block )
+	    ;; this block doesn't have any more predecessors block
+	    ;; it must be in unreachable list
+	    (assert (find (cssa::ssa-block-index succ-block) unreachable))))))
+    unreachable))
+
+(defun rewrite-instructions (lambda-ssa graph lattice-map)
+  (declare (optimize debug))
+  (let ((constant-places (get-constant-places lattice-map)))
+    (when constant-places
+      (dolist (place constant-places)
+	(let ((usage (ssa-graph-get-use graph place)))
+	  ;; (sccp-debug-print place usage)
+	  (dolist (ir usage)
+	    (let* ((rw (cssa::ssa-form-rw-reads-writes ir))
+		   (reads (first rw))
+		   (writes (second rw)))
+	      (declare (ignore writes))
+	      ;; (when (intersection constant-places writes)
+	      ;; 	(error "Unknown state"))
+	      (let ((reads-intersection (intersection constant-places reads)))
+		(when reads-intersection
+		  (sccp-debug-print "Rewriting IR" ir)
+		  (dolist (old-place reads-intersection)
+		    (let ((lattice-value (get-lattice-value old-place lattice-map)))
+		      (assert lattice-value)
+		      (cssa::ssa-form-rw-replace-reads ir old-place lattice-value )))
+		  (sccp-debug-print "New IR" ir)
+		  ;; If we have IF then we need to replace it with SSA-GO
+		  (when (cssa::ssa-if-p ir)
+		    (let* ((is-false-test (is-nil-constant (cssa::ssa-if-test ir)))
+			   (instr-block-index (ssa-graph-get-ir-block-index graph ir))
+			   (if-block (ssa-graph-get-block graph instr-block-index)))
+		      (cssa::ssa-block-fold-if if-block (not is-false-test)))))))))))))
+
+(defun sccp-rewrite (lambda-ssa graph lattice-map)
+  (declare (optimize debug))
+  (let ((deleted-blocks (remove-unreachable-flow-edges lambda-ssa graph)))
+    ;; FIXME, remove blocks from lambda-ssa
+    (rewrite-instructions lambda-ssa  graph lattice-map)))
 
 (defun do-sccp (lambda-ssa)
   (declare (optimize debug))
@@ -489,31 +587,19 @@
 	   (go start)
 
 	 end)))
-    ;; (maphash (lambda (k v)
-    ;; 	       (print (list k v)))
-    ;; 	     lattice-map)
-    ;; (maphash (lambda (k v)
-    ;; 	       (print (list 'flow-edges k v)))
-    ;; 	     (ssa-graph-flow-edges ssa-graph))
-    ;; (maphash (lambda (k v)
-    ;; 	       (print (list 'reachable-blocks k v)))
-    ;; 	     (ssa-graph-reachable-blocks ssa-graph))
-    ))
+    
+    (sccp-rewrite lambda-ssa ssa-graph lattice-map)))
+
 
 
 #+nil
-(clcomp-compile nil '(lambda (a)
-		      (let ((x 1)
-			    (y 1)
-			    (r nil))
-			(if a
-			    (setf r x)
-			    (setf r y))
-			r
-			)))
-
-;; FIXME, we don't follow successor blocks
-
+(clcomp-compile nil '(lambda ()
+			      (let ((a 1)
+				    (b nil))
+				(if a
+				    (setf b 1)
+				    (setf b 1))
+				b)))
 
 ;;; TODO
 ;;; DCE
